@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from overtime_core import overlay, rules as RU
+from overtime_core import overlay, rules as RU, xmlpatch
 from overtime_roster.app import gamesetup, keypress, launch, lobby_client as LC, multiplayer_ctl as MC
 
 
@@ -25,7 +25,8 @@ class FakeCtl:
         self.host = Host()
         self.game_dir = str(tmp_path / 'game')
         self.game = types.SimpleNamespace(ok=True)
-        self.setup = types.SimpleNamespace(server={'host': host}, known_emulator=lambda: str(tmp_path / 'emu' / 'shadPS4.exe'))
+        self.setup = types.SimpleNamespace(server={'host': host}, known_emulator=lambda: str(tmp_path / 'emu' / 'shadPS4.exe'),
+                                           ctl=self, _xml=lambda: xmlpatch.build(host))
 
     def remember(self, **kv):
         self.prefs.update(kv)
@@ -134,6 +135,7 @@ def test_the_id_comes_from_the_log_and_a_typed_one_wins(mp, tmp_path, monkeypatc
     mp.look()
     v = mp.view()['you']
     assert (v['ext'], v['ext_from'], v['name'], v['name_from']) == (16349, 'log', 'iksperial', 'game')
+    assert v['ext_why'] == ''                                                  # the id is known: nothing to explain
     assert mp.set_ext('777') == {'ok': True}
     assert mp.view()['you']['ext'] == 777 and mp.view()['you']['ext_from'] == 'typed'
     assert mp.ctl.prefs['multiplayer']['ext'] == 777

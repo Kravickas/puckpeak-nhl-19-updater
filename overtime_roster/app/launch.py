@@ -10,7 +10,7 @@ import sys
 
 from overtime_core import gamefiles, overlay
 
-from . import gamesetup
+from . import gamesetup, selfupdate
 
 
 class LaunchError(RuntimeError):
@@ -38,7 +38,7 @@ def start(emu_exe, game_dir, patch_file=None, running=None, popen=subprocess.Pop
     if sys.platform == 'win32':
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     return popen(command(emu_exe, game_dir, patch_file), cwd=os.path.dirname(os.path.abspath(emu_exe)),
-                 creationflags=flags, close_fds=True)
+                 creationflags=flags, close_fds=True, env=selfupdate.clean_environment())
 
 
 def log_path(emu_exe):

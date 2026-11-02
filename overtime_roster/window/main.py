@@ -9,7 +9,7 @@ import time
 import webbrowser
 
 from .. import APP_NAME, SITE, SITE_LABEL, TAGLINE, VERSION
-from . import startup, webview2
+from . import startlog, startup, watchdog, webview2
 from .server import QUEUE, WEB
 
 PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,7 +20,7 @@ TABS = ('setup', 'patch', 'update', 'roster', 'lines', 'strategy', 'jerseys', 'c
         'multiplayer')   # web/js/main.js
 NEEDED = [os.path.join(WEB, *p) for p in (
     ('index.html',), ('css', 'app.css'), ('css', 'tokens.css'), ('img', 'logo.png'),
-    *(('js', f'{name}.js') for name in ('main', 'bridge', 'store', 'lib', 'ui', 'shell', 'rail', 'savebar')),
+    *(('js', f'{name}.js') for name in ('boot', 'main', 'bridge', 'store', 'lib', 'ui', 'shell', 'rail', 'savebar')),
     *(('js', 'tabs', f'{name}.js') for name in TABS + ('roster-face', 'roster-gear')),
     *(('css', 'tabs', f'{name}.css') for name in TABS),
     ('vendor', 'react.production.min.js'), ('vendor', 'react-dom.production.min.js'), ('vendor', 'htm.module.js'))]
@@ -89,11 +89,11 @@ def asking(ctl):
     return bool(getattr(shell, 'asking', None))
 
 
-def update_check(host, quit, ask=webview2.message, force=False, ctl=None, first=False):
+def update_check(host, quit, ask=None, force=False, ctl=None, first=False):
     """Look for a newer exe (`first`: the look at start; later ones at most every 12 hours) and, on Yes, swap it in
     and restart. Returns what happened: 'off' / 'busy' (a job of `ctl` runs or the page asks a question: offered
     again soon) / 'none' / 'told' (a newer one exists but this copy can't install it) / 'declined' / 'refused' /
-    'failed' / 'updated'.
+    'failed' / 'updated' / 'asked' (the app's own question is shown).
     `ctl` (the Controller): while one of its jobs writes (patch, save, copy) nothing is swapped and the app is not
     closed; from Yes to the restart the update holds its busy flag."""
     from ..app import selfupdate
@@ -112,6 +112,15 @@ def update_check(host, quit, ask=webview2.message, force=False, ctl=None, first=
         ctl.changed('setup')
     if not selfupdate.running_exe() or not release.can_install():
         return 'told'
+    shell = getattr(ctl, 'shell', None)
+    if setup is not None and shell is not None and ask is None:
+        # the app's own question (Update now / Later / Skip), with the download's progress in the Help bar: one
+        # question, no Windows box. Setup asks about unsaved edits first, installs, and closes this copy.
+        if setup.skipped == release.text:
+            return 'declined'
+        setup._ask_newer(release)
+        return 'asked'
+    ask = ask or webview2.message
     if unsaved_edits(ctl):  # the box cannot ask about them: Setup's card offers it (it asks first, Shell.ask_unsaved)
         selfupdate.mark_checked(now=0)      # and the next tick looks again
         host.log(f'{APP_NAME} {release.text} waits: your edits are not saved yet (Setup has the update).')
@@ -187,6 +196,7 @@ def start_update_ticks(host, quit, ctl=None):
 
     def loop():
         time.sleep(5)       # let the window come up first
+        selfupdate.clean_leftovers()    # the old exe has quit by now (it is still closing when this one starts)
         first = True        # every start looks (Legacy 0.50.3: a version out the same day was not offered)
         while True:
             try:
@@ -298,10 +308,27 @@ def roomy_server():
     WSGIServer.request_queue_size = QUEUE
 
 
+WEB_TYPES = {'.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
+             '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json'}
+
+
+def web_types():
+    """pywebview's server names each file's type from `mimetypes`, which reads the Windows registry, where another
+    program can have changed it. A browser refuses a module of another type and the window stays empty."""
+    import mimetypes
+    for ending, kind in WEB_TYPES.items():
+        said = mimetypes.guess_type('file' + ending)[0]
+        if said != kind:
+            if said:
+                startlog.note(f'this PC says {ending} files are {said}: using {kind}')
+            mimetypes.add_type(kind, ending)
+
+
 def run_window(host, api, quit=None, ctl=None):
     import webview
-    from ..app import paths
+    startlog.begin(VERSION)
     roomy_server()
+    web_types()
     # The page is flat UI: software drawing keeps it alive when a screen grabber (Snipping Tool, Win+Shift+S, OBS) or a
     # GPU reset takes the window's GPU surface away, which left it black or empty until a restart. OVERTIME_GPU=1 undoes it.
     if os.environ.get('OVERTIME_GPU') != '1':
@@ -317,6 +344,8 @@ def run_window(host, api, quit=None, ctl=None):
     def send(text):
         window.evaluate_js(f'window.OT && window.OT.receive({text})')
     host.add_transport(send)
+    dog = watchdog.Watchdog(window)
+    api.way_out = dog.to_browser
 
     def shown():
         startup.mark('window shown')
@@ -326,13 +355,18 @@ def run_window(host, api, quit=None, ctl=None):
     def loaded():
         startup.mark('page loaded')
         startup.write()
+        startlog.note('page loaded')
     window.events.shown += shown
     window.events.loaded += loaded
     window.events.closing += closing_guard(ctl, window.destroy)
     if quit is not None:
         quit.fn = window.destroy
-    webview.start(http_server=True, private_mode=True, storage_path=paths.app_dir('webview'),
+    dog.start()
+    webview.start(http_server=True, private_mode=True, storage_path=watchdog.browser_folder(),
                   debug=os.environ.get('OVERTIME_DEVTOOLS') == '1', icon=ICON if os.path.exists(ICON) else None)
+    if dog.outcome == 'browser':
+        host.remove_transport(send)
+        return run_browser(host, api, quit=quit)
     return 0
 
 

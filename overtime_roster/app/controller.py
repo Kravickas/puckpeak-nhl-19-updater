@@ -13,7 +13,7 @@ import threading
 
 from overtime_core import calendar, overlay, rosterupdate as U, teams as T
 
-from . import editors_controller, install, jobs, labels as L, patch, paths, registry, settings, sources, update
+from . import editors_controller, gamesetup, install, jobs, labels as L, patch, paths, registry, settings, sources, update
 
 # beta1's slice names (pushed as before: changed() turns them into the new slices that show the same things)
 OLD_SLICES = ('source', 'editor', 'lines', 'save', 'update', 'strategy', 'calendar', 'patch', 'status', 'faces',
@@ -113,7 +113,7 @@ class Controller:
         prefs = _no_temporary(settings.load())
         self.prefs = prefs
         self.game_dir = game_dir or prefs.get('game_dir') or paths.default_game_dir()
-        self.save_dir = save_dir or prefs.get('save_dir') or paths.default_save_dir()
+        self.save_dir = save_dir or prefs.get('save_dir') or paths.default_save_dir(gamesetup.use_game(self.game_dir))
         self.game = sources.GameData(self.game_dir)
         self.sources = []
         self.selected = None
@@ -161,6 +161,7 @@ class Controller:
         self.tab_parts = registry.tab_parts(self)
         self.shell, self.rail, self.setup = self.parts['shell'], self.parts['rail'], self.parts['setup']
         self.refresh_sources(quiet=True)
+        self.parts['rosters'].repair_saves()
         jobs.set_context(self.error_context)
         if reopen:
             self.parts['rosters'].start()
@@ -193,7 +194,8 @@ class Controller:
 
     def remember(self, **kv):
         self.prefs.update(_no_temporary(kv))
-        settings.save(self.prefs)
+        if not settings.save(self.prefs):
+            self.host.log('Settings could not be saved: settings.json cannot be written.')
 
     # --- shared by the parts -----------------------------------------------------------------------------------------
     def _fresh_update(self):

@@ -157,3 +157,16 @@
 .tab-multiplayer .mp-chat-chip { font: inherit; font-size: 12px; padding: 4px 10px; color: var(--text-2); background: var(--tile); border: 0; cursor: pointer; box-shadow: inset 2px 0 0 var(--text-off); }
 .tab-multiplayer .mp-chat-chip:hover { background: var(--tile-hi); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 
+
+/* My games: per-game averages and a box score under each game */
+.mp-avg { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.mp-avg-cell { display: flex; flex-direction: column; padding: 8px 10px; border: 1px solid var(--line, #3a3a3a); border-radius: 6px; }
+.mp-avg-v { font-size: 1.25rem; font-weight: 700; }
+.mp-rates { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; }
+.mp-game > summary { cursor: pointer; list-style: none; }
+.mp-game > summary::-webkit-details-marker { display: none; }
+.mp-box { display: grid; gap: 2px; padding: 6px 10px 10px 34px; }
+.mp-box-row { display: grid; grid-template-columns: 1fr 72px 72px; text-align: right; }
+.mp-box-row > :first-child { text-align: left; }
+.mp-box-row.head { opacity: .7; }
+.mp-box-none { padding: 4px 10px 8px 34px; }

@@ -59,8 +59,8 @@ function ExtId({ you, quoted }) {
   const use = () => { call('mp_set_ext', text.trim()); setEdit(false); setText(''); };
   if (!you.ext) {
     return html`<${Fact} label="ShadNet id" tone="caution" action=${html`<${Tag} tone="caution">needed<//>`}>not found yet<//>
-      <div class="mp-note">The id is in shadPS4's log after NHL 19 has signed in once. Start the game from Setup, then come
-        back and press <b>Check again</b>. Or type it: the log line reads <i>${quoted}</i>.</div>
+      <div class="mp-note">${you.ext_why || html`The id is in shadPS4's log after NHL 19 has signed in once. Start the game from Setup, then come
+        back and press <b>Check again</b>.`} Or type it: the log line reads <i>${quoted}</i>.</div>
       <div class="mp-row">
         <input class="field" placeholder="ShadNet id (numbers)" value=${text} spellcheck="false"
           onInput=${(e) => setText(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter') use(); }}/>
@@ -294,6 +294,35 @@ function RatingStrip({ r }) {
   </div>`;
 }
 
+// My games: how I played, over every game that has the game's own numbers, then each game with its box score.
+function MyGames({ g }) {
+  const o = g.overall;
+  return html`<div class="mp-games">
+    <div class="mp-tally"><span class="mp-tally-n">${g.w}–${g.l}</span>
+      <span class="mp-note">${g.played} confirmed ${g.played === 1 ? 'game' : 'games'}, goals ${g.gf}–${g.ga}</span></div>
+    ${o
+      ? html`<div class="caps mp-sub">Per game over ${o.games} ${o.games === 1 ? 'game' : 'games'} with the game's numbers</div>
+        <div class="mp-avg">${o.avg.map((a) => html`<div class="mp-avg-cell" key=${a.key} title=${`Total ${a.total}`}>
+          <span class="mp-avg-v">${a.value}</span><span class="mp-note">${a.label}</span></div>`)}</div>
+        ${o.rates.length > 0 && html`<div class="mp-rates">${o.rates.map((r) => html`<span key=${r.label}><b>${r.value}</b> <span class="mp-note">${r.label}</span></span>`)}</div>`}`
+      : html`<div class="mp-empty">No numbers yet. They come from the game's own match report after an online game;
+        a result typed in the app has no numbers.</div>`}
+    <div class="caps mp-sub">My games</div>
+    <div class="mp-recent">${g.games.map((m) => html`<details class=${cls('mp-game', m.result)} key=${m.id}>
+      <summary class=${cls('mp-recent-row', m.result)}>
+        <span class="mp-res">${m.result || '–'}</span>
+        <span class="mp-recent-main">${m.for != null && m.status === 'confirmed'
+          ? html`${m.team || '?'} ${m.for}–${m.against} ${m.opp_team || '?'}<span class="mp-note"> against ${m.opponent}</span>`
+          : html`Against ${m.opponent}`}</span>
+        <span class="mp-ago">${m.status === 'confirmed' ? '' : m.status + ' · '}${m.ago}</span></summary>
+      ${m.box.length
+        ? html`<div class="mp-box"><div class="mp-box-row head caps"><span></span><span>Me</span><span>Them</span></div>
+            ${m.box.map((r) => html`<div class="mp-box-row" key=${r.label}><span>${r.label}</span><b>${r.me}</b><span>${r.them}</span></div>`)}</div>`
+        : html`<div class="mp-note mp-box-none">No numbers for this game.</div>`}
+    </details>`)}</div>
+  </div>`;
+}
+
 function History({ h }) {
   const [view, setView] = useState('matches');
   const [sort, setSort] = useState('rating');
@@ -306,11 +335,13 @@ function History({ h }) {
       ${h.banner && html`<div class="mp-banner" role="status"><span>Match review ready: ${h.banner.text}</span>
         <${Button} small kind="primary" onClick=${() => call('mp_review_open', h.banner.match)}>View<//></div>`}
       <${Segmented} value=${view} onChange=${setView}
-        options=${[{ value: 'matches', label: 'Recent matches' }, { value: 'players', label: 'Leaderboard' }]}/>
+        options=${[{ value: 'matches', label: 'Recent matches' }, ...(h.games ? [{ value: 'games', label: 'My games' }] : []),
+          { value: 'players', label: 'Leaderboard' }]}/>
       ${h.error && html`<div class="mp-note warn" role="alert">${h.error}</div>`}
       ${!h.loaded && !h.error && html`<div class="mp-empty">Loading the history...</div>`}
       ${empty && html`<div class="mp-empty">No matches yet. Every game two players start from a lobby shows up here;
         after it, both enter the result and it counts.</div>`}
+      ${view === 'games' && h.games && html`<${MyGames} g=${h.games}/>`}
       ${view === 'matches' && h.matches.length > 0 && html`<div class="mp-matches">${h.matches.map((m) => html`<${MatchRow} key=${m.id} m=${m}/>`)}</div>
         <div class="mp-note">A result counts once both players say the same: enter yours after the game.</div>`}
       ${view === 'players' && h.players.some((p) => p.rating != null) && html`<${Segmented} value=${sort} onChange=${setSort}

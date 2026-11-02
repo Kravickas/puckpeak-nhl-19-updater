@@ -88,7 +88,7 @@ class Shell(Part):
             roster = rosters.open_roster()
             known = roster is not None or rosters.remembered() is not None
             return {'emulator_known': bool(emulator), 'roster_known': known,
-                    'start': 'update' if emulator and known else 'setup',
+                    'start': 'setup',
                     'roster': {'id': roster['id'], 'name': roster['name']} if roster else None,
                     'busy': bool(c.busy)}
 

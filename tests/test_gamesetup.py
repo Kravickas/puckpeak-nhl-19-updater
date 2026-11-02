@@ -96,6 +96,45 @@ def test_install_and_remove_leave_nothing_behind(world):
     assert not folder.exists() and gamesetup.load_manifest() is None
 
 
+def test_adopt_takes_over_a_patch_another_record_wrote(world):
+    """2026-10-29 17:59: a lab run patched the real shadPS4 under its own app folder, so the owner's record held an
+    older sha and the app said "Patched, with 1 problem". A file that is exactly this Overtime's own is taken over;
+    anything else stays a problem."""
+    emu = str(world['emu'])
+    old = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
+    gamesetup.install(emu, old, running=lambda: False)
+    patch_file = world['user'] / 'patches' / 'Overtime' / 'overtime.xml'
+    mine = old.replace('91.98.195.150', '91.98.195.151')       # another text of the same kind, now on disk
+    patch_file.write_bytes(mine.encode('utf-8'))
+    assert gamesetup.status(emu)['problems'] and not gamesetup.adopt((old.replace('150', '152'),))    # not ours: kept
+    assert gamesetup.status(emu)['problems']
+    assert gamesetup.adopt((mine, old)) is True
+    st = gamesetup.status(emu)
+    assert st['intact'] and not st['problems']
+    assert gamesetup.adopt((mine,)) is False                    # nothing left to change
+    patch_file.write_bytes(b'hand edited')
+    assert gamesetup.adopt((mine, old)) is False and gamesetup.status(emu)['problems']
+    gamesetup.remove(running=lambda: False)
+
+
+def test_adopt_patch_notes_the_version_too(world):
+    import types
+    from overtime_roster import VERSION
+    from overtime_roster.app import patch_ctl
+    emu = str(world['emu'])
+    xml = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
+    gamesetup.install(emu, xml + ' ', running=lambda: False)           # recorded under another text...
+    (world['user'] / 'patches' / 'Overtime' / 'overtime.xml').write_bytes(xmlpatch.expansion32_off(xml).encode('utf-8'))
+    prefs, logs = {}, []
+    setup = types.SimpleNamespace(_xml=lambda: xml, ctl=types.SimpleNamespace(
+        prefs=prefs, remember=prefs.update, host=types.SimpleNamespace(log=logs.append)))
+    patch_ctl.adopt_patch(setup)                                        # ...and on disk the 31-team variant of ours
+    assert prefs == {'patched_by': VERSION} and len(logs) == 1 and gamesetup.status(emu)['intact']
+    patch_ctl.adopt_patch(setup)                                        # nothing more to adopt: quiet
+    assert len(logs) == 1
+    gamesetup.remove(running=lambda: False)
+
+
 def test_existing_custom_config_restored_byte_exact(world):
     path = world['user'] / 'custom_configs' / 'CUSA11126.json'
     raw = b'{\n  "General": {"connected_to_network": false, "volume_slider": 50}\n}\n'
@@ -273,16 +312,50 @@ def test_shadnet_log_says_how_the_last_run_signed_in(world):
     assert (out['npid'], out['account']) == ('skater', 16349)
 
 
+def _header(branch='NHL19-Build', own='true', net='true', shadnet='true', extra=''):
+    """The top of a real shad_log.txt (cut down): the build, the settings, the game."""
+    return (f'[Loader] <Info> emulator.cpp:468 Run: Branch {branch}\n'
+            f'[Config] <Info> emulator.cpp:473 Run: Game-specific config used: {own}\n'
+            f'[Config] <Info> emulator.cpp:477 Run: General isConnectedToNetwork: {net}\n'
+            f'[Config] <Info> emulator.cpp:478 Run: General isShadNetEnabled: {shadnet}\n' + extra).encode()
+
+
+def test_shadnet_why_names_the_reason(world):
+    """Player report 2026-10-29: "ShadNet id not found yet" with no reason; each cause of a missing id says its own."""
+    user = str(world['user'])
+    (world['user'] / 'log').mkdir()
+    put = lambda raw: (world['user'] / 'log' / 'shad_log.txt').write_bytes(raw)
+    assert 'no log yet' in gamesetup.shadnet_why(gamesetup.shadnet_log(user))
+    off = b'[NpHandler] np_handler.cpp:138 Initialize: shadNet disabled globally we are in offline mode\n'
+    put(_header(branch='main', own='false', net='false', shadnet='false', extra=off.decode()))   # the Pre-release build
+    log = gamesetup.shadnet_log(user)
+    assert (log['branch'], log['own_config'], log['shadnet_on'], log['network_on'], log['disabled_globally']) == (
+        'main', False, False, False, True)
+    why = gamesetup.shadnet_why(log)
+    assert 'ShadNet and the network turned off' in why                              # the build does not matter
+    put(_header(own='false', net='false', shadnet='false', extra=off.decode()))
+    why = gamesetup.shadnet_why(gamesetup.shadnet_log(user))
+    assert 'ShadNet and the network turned off' in why and 'shared ones applied' in why and 'Online card' in why
+    put(_header(extra="[Lib.Np] Login rejected error code 8\n"))
+    assert 'code 8' in gamesetup.shadnet_why(gamesetup.shadnet_log(user))
+    put(_header(extra='[Lib.Np] no users connected to shadNet\n'))
+    assert 'nobody was signed in' in gamesetup.shadnet_why(gamesetup.shadnet_log(user))
+    put(_header(extra="[Lib.Np] ConnectUser: user_id=1000 signed in npid='skater'\n"))
+    assert 'skater' in gamesetup.shadnet_why(gamesetup.shadnet_log(user)) and 'Type the id' in gamesetup.shadnet_why(
+        gamesetup.shadnet_log(user))
+    put(_header())
+    assert 'ended before it signed in' in gamesetup.shadnet_why(gamesetup.shadnet_log(user))
+    put(_header(extra="[Lib.Np] ConnectUser: user_id=1000 signed in npid='skater' accountId=16349\n"))
+    assert gamesetup.shadnet_why(gamesetup.shadnet_log(user)) == ''
+
+
 def test_emulator_build_reads_the_version_block(tmp_path):
     exe = tmp_path / 'shadPS4.exe'
     block = (b'0.20.1 WIP\x00' + b'a' * 40 + b'\x00NHL19-Build\x00v0.20.1-12-gabc\x00'
              b'https://github.com/Kravickas/shadPS4\x00')
     exe.write_bytes(b'MZ' + b'\x01' * 5000 + block + b'\x02' * 100)
     assert gamesetup.emulator_build(str(exe)) == {'version': '0.20.1 WIP', 'rev': 'a' * 40, 'branch': 'NHL19-Build',
-                                                  'remote': 'https://github.com/Kravickas/shadPS4', 'nhl19': True}
-    other = tmp_path / 'other.exe'
-    other.write_bytes(b'MZ\x00' + block.replace(b'NHL19-Build', b'main'))
-    assert gamesetup.emulator_build(str(other))['nhl19'] is False
+                                                  'remote': 'https://github.com/Kravickas/shadPS4'}
     (tmp_path / 'plain.exe').write_bytes(b'MZ no version block here')
     assert gamesetup.emulator_build(str(tmp_path / 'plain.exe')) is None
     assert gamesetup.emulator_build(str(tmp_path / 'gone.exe')) is None
@@ -350,3 +423,76 @@ def test_trash_moves_only_roster_saves(tmp_path, monkeypatch):
     with pytest.raises(trash.TrashError, match='could not move RosterCustom4'):
         trash.recycle(str(saves / 'RosterCustom4'), str(saves))
     assert (saves / 'RosterCustom4').is_dir()
+
+
+def test_other_disc_cusa11116_is_the_same_game(world, monkeypatch):
+    """CUSA11116 is read as NHL 19; its id names the save folder, the custom config and the save's param.sfo."""
+    from overtime_roster.app import paths, savegame
+    monkeypatch.setattr(gamesetup, '_active', ['CUSA11126'])
+    monkeypatch.delenv('OVERTIME_SAVE_DIR')
+    other = _game(world['tmp'] / 'Other', title_id='CUSA11116')
+    assert gamesetup.read_game(str(other))['ok']
+    assert [g['title_id'] for g in gamesetup.find_games(str(world['user']))] == ['CUSA11126']
+    assert gamesetup.use_game(str(world['game'])) == 'CUSA11126'
+    assert gamesetup.use_game(str(other)) == 'CUSA11116'
+    assert gamesetup.save_dir(str(world['user'])).endswith('CUSA11116')
+    assert gamesetup.custom_config_path(str(world['user'])).endswith('CUSA11116.json')
+    assert paths.default_save_dir('CUSA11116').endswith('CUSA11116')
+    entries = {e.key: e.value for e in sfo.parse(savegame.default_sfo('SAVE0', title='CUSA11116'))}
+    assert entries['TITLE_ID'] == 'CUSA11116'
+    # a folder that is not NHL 19 changes nothing
+    assert gamesetup.use_game(str(_game(world['tmp'] / 'Third', title_id='CUSA00001'))) == 'CUSA11116'
+
+
+def _launcher(tmp_path, monkeypatch, selected=True):
+    """A QtLauncher as it lies on a PC: its data in %APPDATA%, the selected version with Qt's doubled backslash."""
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'roaming'))
+    data = tmp_path / 'roaming' / 'shadPS4QtLauncher'
+    for name in ('v0.19.0', 'Pre-release'):
+        (data / 'versions' / name).mkdir(parents=True)
+        (data / 'versions' / name / 'shadPS4.exe').write_bytes(b'MZ')
+    ini = '[version_manager]\n'
+    if selected:
+        ini += f"versionSelected={(data / 'versions').as_posix()}/Pre-release\\\\shadPS4.exe\n"
+    (data / 'qt_ui.ini').write_text(ini, encoding='utf-8')
+    folder = tmp_path / 'PS4 Emulator'
+    folder.mkdir()
+    (folder / 'shadPS4QtLauncher.exe').write_bytes(b'MZ')
+    return data / 'versions' / 'Pre-release' / 'shadPS4.exe', folder
+
+
+def test_the_launcher_or_its_folder_leads_to_the_selected_shadps4(tmp_path, monkeypatch):
+    exe, folder = _launcher(tmp_path, monkeypatch)
+    assert os.path.samefile(gamesetup.launcher_emulators()[0], exe)
+    assert os.path.samefile(gamesetup.resolve_emulator(str(folder)), exe)
+    assert os.path.samefile(gamesetup.resolve_emulator(str(folder / 'shadPS4QtLauncher.exe')), exe)
+    assert os.path.samefile(gamesetup.find_emulators()[0], exe)     # the app finds it with no pick at all
+
+
+def test_a_launcher_with_nothing_selected_takes_a_version_it_has(tmp_path, monkeypatch):
+    exe, folder = _launcher(tmp_path, monkeypatch, selected=False)
+    assert os.path.basename(gamesetup.resolve_emulator(str(folder))) == 'shadPS4.exe'
+
+
+def test_a_folder_or_any_shadps4_exe_is_taken(tmp_path, monkeypatch):
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'roaming'))
+    (tmp_path / 'emu' / 'inner').mkdir(parents=True)
+    exe = tmp_path / 'emu' / 'inner' / 'shadPS419.exe'
+    exe.write_bytes(b'MZ')
+    assert gamesetup.resolve_emulator(str(tmp_path / 'emu')) == str(exe)
+    assert gamesetup.resolve_emulator(str(exe)) == str(exe)
+    other = tmp_path / 'emu' / 'notes.exe'
+    other.write_bytes(b'MZ no version block here')
+    assert gamesetup.resolve_emulator(str(other)) == ''
+    assert gamesetup.resolve_emulator(str(tmp_path / 'gone')) == ''
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+    assert gamesetup.resolve_emulator(str(empty)) == ''
+
+
+def test_a_launcher_with_no_version_is_not_taken(tmp_path, monkeypatch):
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'roaming'))
+    (tmp_path / 'emu').mkdir()
+    (tmp_path / 'emu' / 'shadPS4QtLauncher.exe').write_bytes(b'MZ')
+    assert gamesetup.resolve_emulator(str(tmp_path / 'emu')) == ''
+    assert gamesetup.resolve_emulator(str(tmp_path / 'emu' / 'shadPS4QtLauncher.exe')) == ''

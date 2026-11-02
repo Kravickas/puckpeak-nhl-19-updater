@@ -77,8 +77,10 @@ def test_route_into_new_archives_per_family(game):
     gam = os.path.join(game, 'databigs', 'patch_game_97.big')
     assert set(edits[inxp]) == {LOGO, NEW_LOGO, PORTRAIT}  # the new logo goes where its folder is
     assert set(edits[gam]) == {KIT, PORTRAIT}  # a texture in both families goes into both
-    assert record == {'game': {'archive': 'databigs/patch_game_97.big', 'textures': 2},
-                      'inxp': {'archive': 'databigs/patch_inxp_57.big', 'textures': 3}}
+    assert record == {'game': {'archive': 'databigs/patch_game_97.big', 'archives': ['databigs/patch_game_97.big'],
+                               'textures': 2},
+                      'inxp': {'archive': 'databigs/patch_inxp_57.big', 'archives': ['databigs/patch_inxp_57.big'],
+                               'textures': 3}}
     with pytest.raises(art.ArtError, match='unknown'):
         art.edits(game, {'nhl/ui/kettle_assets/nowhere/t1.gnf': gnf('x')})
     assert art.family('patch_inxp_56.big') == 'inxp' and art.family('game_90.big') == 'game'
@@ -101,10 +103,11 @@ def test_art_layer_apply_reapply_undo_byte_exact(game, tmp_path):
         assert list(arc.entries) == [KIT] and arc.read(KIT) == files[KIT]
     assert overlay.status(game)['problems'] == []
     served = tree(mods)
+    same = lambda a, b: {**a, 'overtime-patch.json': 0} == {**b, 'overtime-patch.json': 0}  # it holds the time, to the second
 
     # another apply without packs keeps the served art, byte for byte
     st2 = overlay.apply(game, ('art',), **IDLE)
-    assert tree(mods) == served and st2['layers']['art']['packs'] == st['layers']['art']['packs']
+    assert same(tree(mods), served) and st2['layers']['art']['packs'] == st['layers']['art']['packs']
 
     # a later pack wins on a shared path
     faces = pack(tmp_path, 'faces', {LOGO: gnf('utah v2')})
@@ -114,7 +117,7 @@ def test_art_layer_apply_reapply_undo_byte_exact(game, tmp_path):
 
     # dropping the layer removes its archives
     overlay.apply(game, ('art',), art=[looks], **IDLE)
-    assert tree(mods) == served
+    assert same(tree(mods), served)
 
     assert sorted(overlay.undo(game, **IDLE)) == sorted(
         os.path.join(mods, 'databigs', n) for n in ('patch_game_97.big', 'patch_inxp_57.big'))
@@ -293,3 +296,83 @@ def test_photos_switch_is_a_part_with_its_own_restore(game, tmp_path, monkeypatc
     overlay.apply(game, ('art',), art=off, **IDLE)
     assert tree(mods) == after                   # the same files as a fresh patch without the photos
     assert overlay.undo(game, **IDLE) and not os.path.exists(mods) and tree(game) == stock
+
+
+def test_more_art_than_one_archive_holds_goes_in_several_mounted_after_the_game(monkeypatch):
+    monkeypatch.setattr(art, 'ARCHIVE_ROOM', 100)
+    entries = {f'nhl/data/t{i:02}.gnf': b'x' * 40 for i in range(7)}
+    parts = art.split(entries)
+    assert [len(p) for p in parts] == [2, 2, 2, 1] and {k for p in parts for k in p} == set(entries)
+    names = art.archive_names('databigs/patch_game_97.big')
+    got = [next(names) for _ in range(5)]
+    assert got == [f'databigs/patch_game_{n}.big' for n in (97, 98, 99, 990, 991)]
+    assert got == sorted(got) and got[0] > 'databigs/patch_game_96.big'     # the game sorts by name, the last wins
+
+
+def test_a_pack_keeps_no_file_in_memory_and_says_when_it_changed(tmp_path):
+    path, data = str(tmp_path / 'p.zip'), gnf('a')
+    art.write_pack(path, 'p', {LOGO: data})
+    pack = art.load_pack(path)
+    stored = pack.files[LOGO]
+    assert isinstance(stored, art.Stored) and len(stored) == len(data) and stored == data and stored.read() == data
+    assert data == stored and not data != stored and pack.sha256
+    art.write_pack(path, 'p', {LOGO: gnf('b')})
+    with pytest.raises(art.ArtError, match='does not match'):
+        stored.read()
+
+
+def test_name_plates_are_dds_and_the_rest_gnf():
+    plate = 'nhl/data/kettle/rendering/characters/player/name_adidas_anaheim_home.gnf'
+    jersey = 'nhl/data/kettle/rendering/characters/player/jersey_adidas_anaheim_home_cm.gnf'
+    art.check_file(plate, b'DDS ' + bytes(60))
+    art.check_file(jersey, b'GNF ' + bytes(60))
+    with pytest.raises(art.ArtError, match='DDS'):
+        art.check_file(plate, b'GNF ' + bytes(60))
+    with pytest.raises(art.ArtError, match='GNF'):
+        art.check_file(jersey, b'DDS ' + bytes(60))
+
+
+def test_exe_bundle_guard_flags_pictures_and_archives(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'check_bundle', os.path.join(os.path.dirname(__file__), '..', 'packaging', 'check_bundle.py'))
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    (tmp_path / 'img').mkdir()
+    (tmp_path / 'img' / 'logo.png').write_bytes(b'x')
+    (tmp_path / 'app.js').write_bytes(b'x')
+    assert guard.stray([str(tmp_path)]) == []
+    (tmp_path / 'looks32.zip').write_bytes(b'x')
+    (tmp_path / 'img' / 'jersey.GNF').write_bytes(b'x')
+    assert sorted(os.path.basename(p) for p in guard.stray([str(tmp_path)])) == ['jersey.GNF', 'looks32.zip']
+
+
+def test_alternate_rows_relabel_only_while_a_pack_names_them():
+    rows = [{'teamid': 0, 'style': 1, 'variant': 4, 'locstring': 6},
+            {'teamid': 0, 'style': 1, 'variant': 3, 'locstring': 6},
+            {'teamid': 1, 'style': 1, 'variant': 4, 'locstring': 6}]
+    db = {art.STOCK_JERSEYS: _Bios(rows)}
+    pack = art.Pack('alts', {'alternates': [{'teamid': 0, 'style': 1, 'variant': 4, 'locstring': 2}]}, {}, '')
+    assert art.alternate_rows(db, [pack]) == 1
+    assert [r['locstring'] for r in db[art.STOCK_JERSEYS].rows] == [2, 6, 6]
+    assert art.alternate_rows(db, [pack]) == 0
+    assert art.alternate_rows(db, []) == 0   # no pack: the stock labels stay (the database is built without them)
+    assert art.alternate_rows({}, [pack]) == 0
+
+
+def test_check_size_refuses_a_4_gb_archive_and_a_full_drive(tmp_path):
+    big = {str(tmp_path / 'patch_x_9.big'): {'a': b'x' * 10}}
+    art.check_size(big, free=art.SPARE + 10)                       # exactly enough
+    with pytest.raises(art.ArtError, match='not enough free space'):
+        art.check_size(big, free=art.SPARE + 9)
+    huge = {str(tmp_path / 'patch_x_9.big'): {'a': _Sized(art.ARCHIVE_LIMIT)}}
+    with pytest.raises(art.ArtError, match='more than an archive can hold'):
+        art.check_size(huge, free=1 << 50)
+
+
+class _Sized:
+    def __init__(self, n):
+        self.n = n
+
+    def __len__(self):
+        return self.n

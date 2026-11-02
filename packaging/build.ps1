@@ -6,8 +6,9 @@
 #                           the release host (overtime_roster\app\packdownload.py).
 #   OvertimeNHL19-cli.exe   with -Cli: the same program with a console (--browser, --selftest, --update)
 #   packs\<name>            the picture packs the app downloads, next to latest.json: -Packs (looks32.zip, looks.zip,
-#                           photos.zip from packs\, made from the owner's own game files; never in git) and -Kits
-#                           <file> (kits.zip). Each must read; photos.zip (p<artid> of that roster's bios) is checked
+#                           photos.zip, ice_all.zip, alts_intl.zip, alts_nhl.zip from packs\, made from the owner's own game files;
+#                           never in git), -Kits <file> (kits.zip) and shadps4_nhl19.zip (Boost performance: Kravickas's build as
+#                           its CI made it, docs/notes/shadps4-network.md). Each must read; photos.zip (p<artid> of that roster's bios) is checked
 #                           against -DefaultDb with packaging\check_photos.py, its sha256 goes into the build record.
 #   SHA256SUMS.txt          the exes' and the packs' checksums ("packs/<name>"): the downloads are compared with them
 #   latest.json             the release file the self-update reads, with "packs": {name: {file, sha256, size}}
@@ -24,11 +25,16 @@ param(
     [switch]$NoPacks,       # stage no packs and leave the NHL 27 data pack out (a spike, or before the packs are made)
     [switch]$Cli,           # also build OvertimeNHL19-cli.exe
     [switch]$NoSplash,      # no start-up splash (it needs Tcl/Tk in the exe: about 2 MB more)
-    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip'),   # the picture packs to stage (packdownload.PACKS)
+    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip', 'ice_all.zip', 'alts_intl.zip', 'alts_nhl.zip', 'shadps4_nhl19.zip'),   # the packs to stage (packdownload.PACKS, EMULATOR_PACK)
     [string]$Kits = '',     # the kits pack to stage too (e.g. re\extract\release-fixture\app\packs\kits.zip)
     [string]$DefaultDb = '',    # the verified default roster: a capture folder (or its nhl_game.db); main picks it
     [string]$DefaultDbSha = '', # its sha256, needed when the folder has no db.json (with one, both must agree)
     [string]$Nhl27 = 'packs\nhl27.json.gz',     # the NHL 27 data pack (numbers only) for the Update tab's rebuild
+    [string]$SignThumbprint = '',   # sign the exes with this certificate of the Windows store (RFC 3161 timestamp)
+    [string]$SignPfx = '',          # or with this .pfx (its password in $env:OVERTIME_SIGN_PASSWORD, never on the line)
+    [string]$SignCommand = '',      # or by a signer's own command, {file} stands for each exe (Trusted Signing, SignPath)
+    [string]$TimestampUrl = 'http://timestamp.digicert.com',
+    [switch]$RequireSigned,         # fail instead of building an unsigned exe (the release build)
     [string]$Priority = 'BelowNormal',
     [switch]$CheckOnly      # run the checks (packs, NHL 27 pack, default roster + photos) and stop before building
 )
@@ -104,11 +110,12 @@ if ($Kits) {
 }
 # each pack must read: every file of a picture pack against its checksum; the kits (a delta pack) its manifest, its
 # bases are checked against the player's game when the patch lays it in
-$readPack = 'import sys; from overtime_core import art; from overtime_roster.app import packdownload; ' +
-            'packdownload.check_zip(sys.argv[1]); sys.argv[2] == sys.argv[3] or art.load_pack(sys.argv[1])'
+$readPack = 'import sys; from overtime_core import art; from overtime_roster.app import packdownload as p; ' +
+            'e = sys.argv[2] == p.EMULATOR_PACK; (p.check_emulator if e else p.check_zip)(sys.argv[1]); ' +
+            'e or sys.argv[2] == sys.argv[3] or art.load_pack(sys.argv[1])'
 foreach ($pack in $staged.Keys) {
     & $py -c $readPack $staged[$pack] $pack 'kits.zip'
-    if ($LASTEXITCODE -ne 0) { throw "$($staged[$pack]) does not read as an art pack." }
+    if ($LASTEXITCODE -ne 0) { throw "$($staged[$pack]) does not read as a pack." }
 }
 
 # the verified default roster (the bytes the in-game tests ran) and its build-time record; never a variant
@@ -138,6 +145,9 @@ $defaults = Join-Path $root 'build\defaults'
 New-Item -ItemType Directory -Force $defaults | Out-Null
 Copy-Item -Force $dbFile (Join-Path $defaults 'nhl_game.db')
 $record | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $defaults 'default.json')
+# the pictures stay on the server: nothing the exe bundles may hold a game picture or archive
+& $py packaging\check_bundle.py $web $assets $textpack $defaults
+if ($LASTEXITCODE -ne 0) { throw "A picture or archive would go into the exe: the NHL 27 pictures are downloaded packs." }
 if ($CheckOnly) {
     $inside = if ($shipped) { $shipped -join ', ' } else { 'no packs' }
     "checks passed: default roster $($dbSha.Substring(0, 8)) from $DefaultDb; inside: $inside"
@@ -172,6 +182,39 @@ if ($Cli) {
     if ($LASTEXITCODE -ne 0) { throw "building the command-line program failed" }
 } elseif (Test-Path $cliExe) {
     Remove-Item -Force $cliExe          # an older build's: its checksum would be published with the new one
+}
+
+# signing (optional): a signed exe is a known publisher to Windows and lets the updater check that the next exe has the
+# same signer. The checksums below are of the signed files. docs/notes/signing.md has the certificate options.
+$toSign = @(Get-ChildItem "dist\$name*.exe")
+$signing = $SignThumbprint -or $SignPfx -or $SignCommand
+if ($RequireSigned -and -not $signing) { throw "-RequireSigned: give -SignThumbprint, -SignPfx or -SignCommand (docs\notes\signing.md)." }
+if ($signing) {
+    $signtool = $null
+    if (-not $SignCommand) {
+        $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source
+        if (-not $signtool) {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match '\x64\' } | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+        }
+        if (-not $signtool) { throw "signtool.exe not found (Windows SDK)." }
+    }
+    foreach ($exe in $toSign) {
+        if ($SignCommand) {
+            & cmd /c ($SignCommand -replace '\{file\}', ('"' + $exe.FullName + '"'))
+        } elseif ($SignPfx) {
+            & $signtool sign /fd SHA256 /f $SignPfx /p $env:OVERTIME_SIGN_PASSWORD /tr $TimestampUrl /td SHA256 $exe.FullName
+        } else {
+            & $signtool sign /fd SHA256 /sha1 $SignThumbprint /tr $TimestampUrl /td SHA256 $exe.FullName
+        }
+        if ($LASTEXITCODE -ne 0) { throw "signing $($exe.Name) failed" }
+        $sig = Get-AuthenticodeSignature -LiteralPath $exe.FullName
+        if ($sig.Status -ne 'Valid') { throw "$($exe.Name) is signed but Windows does not accept it: $($sig.Status) $($sig.StatusMessage)" }
+        if (-not $sig.TimeStamperCertificate) { throw "$($exe.Name) has no timestamp: it would stop being valid when the certificate expires." }
+        Write-Host ("signed {0}: {1}" -f $exe.Name, $sig.SignerCertificate.Subject)
+    }
+} else {
+    Write-Host "NOT SIGNED: Windows shows an unknown publisher for this exe (docs\notes\signing.md)."
 }
 
 # checksums of the programs (dist\ holds other things too: only ours are listed), and the release file

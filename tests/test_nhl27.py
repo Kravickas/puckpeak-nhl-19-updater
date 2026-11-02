@@ -806,3 +806,95 @@ def test_real_gear_goes_through_the_equipment_checks(game_db):
     assert db[U.EQUIPMENT[True]].get(eq[gl], 'neckprotector') == 1
     assert out['gear'] == 2 and out['gear_values'] >= 3 and out['gear_skipped'] == 1
     assert U._real_gear(db, found)['gear_values'] == 0                             # a second pass changes nothing
+
+
+@pytest.mark.game
+def test_update_rebuilds_hockeyallsvenskan_from_nhl27(game_db):
+    """The league-8 slots take NHL 27's clubs: AIK stays AIK with its NHL 27 players, Bjorkloven's slot becomes
+    Ostersunds IK (the pack's club it has no 2018 twin for); a slot the pack has no club for is left alone."""
+    raw, schema = game_db
+    db = tdb.Database.parse(raw, schema)
+    with open(os.path.join(DATA, 'nhl_rosters_20262027.json'), encoding='utf-8') as f:
+        reals = json.load(f)
+    pack = fake_pack(reals, schema)
+    teams = {r['teamname']: r['index'] for r in db[T.TEAMS].rows() if r['league'] == U.ALLSVENSKAN}
+    aik, bjor, pantern = teams['AIK'], teams['IF Bjorkloven'], teams['IK Pantern']
+    stock_pantern = [e for e in U.State(db).entry.values() if e == (U.ROSTER, pantern)]
+    extra, where = [], []
+
+    def add(first, last, birth, pos, team):
+        extra.append({'first': first, 'last': last, 'birth': birth, 'position': pos, 'team': team})
+        where.append(team)
+    for i in range(23):
+        add('Aik', letters(i), f'2000-{1 + i % 12:02d}-{1 + i:02d}', 'G' if i < 2 else 'CLRDD'[i % 5], 'AIK')
+    for i in range(22):
+        add('Ostersund', letters(i), f'2001-{1 + i % 12:02d}-{1 + i:02d}', 'G' if i < 2 else 'CLRDD'[i % 5],
+            'Ostersunds IK')
+    more = fake_pack(extra, schema)['players']
+    for p, team in zip(more, where):
+        p['league'], p['team'] = 'allsvenskan', team
+    pack['players'] += more
+    rep = U.apply(db, schema, U.plan(db, reals), start_year=2026, active=[], nhl27=pack)
+    n = rep.nhl27
+    assert n['allsv_teams'] == 2 and n['allsv_renamed'] == 1 and n['allsv_created'] > 0
+    assert rep.problems == [] and U.check(db, schema, None, 2026) == [] and U.key_problems(db) == []
+    row = {r['index']: r for r in db[T.TEAMS].rows()}
+    assert (row[bjor]['teamname'], row[bjor]['nickname'], row[bjor]['cityname'], row[bjor]['abbrname']) == (
+        'Ostersunds IK', 'Ostersunds IK', 'Ostersund', 'OST')
+    assert row[aik]['teamname'] == 'AIK' and row[pantern]['teamname'] == 'IK Pantern'   # no pack club: unchanged
+    state = U.State(db)
+    on = collections.defaultdict(list)
+    for pi, (table, team) in state.entry.items():
+        if table == U.ROSTER and team in (aik, bjor, pantern):
+            on[team].append(state.bio(pi))
+    for team in (aik, bjor):
+        pos = collections.Counter(b['position'] == U.GOALIE for b in on[team])
+        assert U.AHL_SIZE[0] <= len(on[team]) <= U.AHL_SIZE[1] and pos[True] >= 2 and pos[False] >= 18, team
+    assert {b['firstname'] for b in on[bjor]} == {'Ostersund'} and {b['firstname'] for b in on[aik]} == {'Aik'}
+    assert len(on[pantern]) == len(stock_pantern)
+
+
+def test_team_key_folds_accents_and_fuzzy_clubs_pair_one_franchise_once():
+    assert U._team_key('Frölunda HC') == U._team_key('Frolunda HC') == 'frolundahc'
+    teams = {1: {'cityname': 'Frölunda', 'nickname': 'Indians'}, 2: {'cityname': 'Hamilton', 'nickname': 'Bulldogs'},
+             3: {'cityname': 'Mississauga', 'nickname': 'Steelheads'}, 4: {'cityname': 'Kootenay', 'nickname': 'Ice'}}
+    names = {U._team_key(n): n for n in ('Frolunda HC', 'Brantford Bulldogs', 'Brampton Steelheads', 'Penticton Vees')}
+    got = U._fuzzy_clubs(teams, {1, 2, 3, 4}, names)
+    assert {s: names[k] for s, k in got.items()} == {1: 'Frolunda HC', 2: 'Brantford Bulldogs',
+                                                    3: 'Brampton Steelheads'}   # Kootenay has no club
+    assert U._fuzzy_clubs(teams, {2}, {U._team_key('Brantford Bulldogs'): 'Brantford Bulldogs',
+                                       U._team_key('Bulldogs Two'): 'Bulldogs Two'}) == {}   # two hits: none
+
+
+@pytest.mark.game
+def test_update_rebuilds_the_other_club_leagues_from_nhl27(game_db):
+    """SHL: the slot of a club NHL 27 spells differently takes its players and name (Frolunda Indians -> Frolunda HC);
+    a slot with no NHL 27 club keeps its 2018 roster; a player the AHL took from the ECHL is not taken back."""
+    raw, schema = game_db
+    db = tdb.Database.parse(raw, schema)
+    with open(os.path.join(DATA, 'nhl_rosters_20262027.json'), encoding='utf-8') as f:
+        reals = json.load(f)
+    pack = fake_pack(reals, schema)
+    teams = {r['teamname']: r['index'] for r in db[T.TEAMS].rows() if r['league'] == 2}
+    froelunda = next(i for name, i in teams.items() if name.startswith('Fr'))
+    mora = teams['Mora IK']
+    stock_mora = len([e for e in U.State(db).entry.values() if e == (U.ROSTER, mora)])
+    extra = [{'first': 'Frolunda', 'last': letters(i), 'birth': f'2000-{1 + i % 12:02d}-{1 + i:02d}',
+              'position': 'G' if i < 2 else 'CLRDD'[i % 5], 'team': 'Frolunda HC'} for i in range(23)]
+    more = fake_pack(extra, schema)['players']
+    for p in more:
+        p['league'], p['team'] = 'shl', 'Frolunda HC'
+    pack['players'] += more
+    rep = U.apply(db, schema, U.plan(db, reals), start_year=2026, active=[], nhl27=pack)
+    n = rep.nhl27
+    assert n['shl_teams'] == 1 and n['shl_renamed'] == 1 and n['shl_created'] > 0
+    assert rep.problems == [] and U.check(db, schema, None, 2026) == [] and U.key_problems(db) == []
+    row = {r['index']: r for r in db[T.TEAMS].rows()}
+    assert row[froelunda]['teamname'] == row[froelunda]['nickname'] == 'Frolunda HC' and row[mora]['teamname'] == 'Mora IK'
+    state = U.State(db)
+    on = collections.defaultdict(list)
+    for pi, (table, team) in state.entry.items():
+        if table == U.ROSTER and team in (froelunda, mora):
+            on[team].append(state.bio(pi))
+    assert {b['firstname'] for b in on[froelunda]} == {'Frolunda'} and len(on[froelunda]) == 23
+    assert len(on[mora]) == stock_mora

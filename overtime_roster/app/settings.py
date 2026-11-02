@@ -16,8 +16,10 @@ def load():
 
 
 def save(values):
+    """False when the file could not be written."""
     try:
         with open(paths.app_dir(FILE), 'w', encoding='utf-8') as f:
             json.dump(values, f, indent=1)
+        return True
     except OSError:
-        pass
+        return False

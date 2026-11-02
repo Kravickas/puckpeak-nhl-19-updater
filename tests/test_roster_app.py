@@ -3,11 +3,13 @@ user's own game files through the game_dir fixture; nothing is written outside t
 import os
 import shutil
 import struct
+import threading
+import types
 
 import pytest
 
 from overtime_core import lz4f, savefile, sfo, tdb
-from overtime_roster.app import install, labels, savegame, sources
+from overtime_roster.app import install, labels, rosters_ctl, savegame, sources
 from overtime_roster.app.session import EditError, RosterSession
 
 SAVE_DIR = os.environ.get('OVERTIME_SAVE_DIR', os.path.expandvars(
@@ -65,12 +67,87 @@ def test_container_roundtrip_and_layout():
     assert struct.unpack('<d', by['__SaveloadVer'].payload[:8])[0] == 46.0  # 45.0 lists as corrupt (run 2026-10-16c)
     assert struct.unpack('<Q', by['RosterCustom0'].stamp)[0] == 1792077081000000000
     unpacked = savefile.unpack(by['RosterCustom0'].payload)
-    assert unpacked[len(blob):] == struct.pack('<IIIIH', 0, 0, len(blob), 0, 1)
+    assert unpacked[len(blob):] == struct.pack('<IIIIH', 0x58b72ed9, 0, len(blob), 0, 1)
 
 
 def test_trailer_keeps_template_word():
-    t = savegame.trailer_for(10, struct.pack('<IIIIH', 0x58b72ed9, 0, 99, 0, 1))
-    assert struct.unpack('<IIIIH', t) == (0x58b72ed9, 0, 10, 0, 1)
+    t = savegame.trailer_for(10, struct.pack('<IIIIH', 0x12345678, 0, 99, 0, 1))
+    assert struct.unpack('<IIIIH', t) == (0x12345678, 0, 10, 0, 1)
+
+
+def test_trailer_never_takes_a_zero_word():
+    want = struct.pack('<IIIIH', 0x58b72ed9, 0, 10, 0, 1)
+    assert savegame.trailer_for(10) == want
+    assert savegame.trailer_for(10, struct.pack('<IIIIH', 0, 0, 99, 0, 1)) == want
+
+
+def _zero_word_save(saves, name='RosterCustom0'):
+    """A roster folder as 0.20.0 wrote it on a PC with no Roster save: trailer word 0."""
+    blob = _fake_db_bytes()
+    unpacked = blob + struct.pack('<IIIIH', 0, 0, len(blob), 0, 1)
+    meta = {'FileDisplayName': 'Mine', 'CRCValue': 'x'}
+    stamp = bytes(8)
+    index, data = savefile.build([
+        savefile.SaveEntry('__SaveLoadFileInfo', stamp, savegame.FILE_INFO),
+        savefile.SaveEntry('__SaveloadVer', stamp, savegame.CUSTOM_VER_PAYLOAD),
+        savefile.SaveEntry('__SaveLoadMetaData', stamp, savegame.meta_json(meta)),
+        savefile.SaveEntry(name, stamp, savefile.pack(unpacked))])
+    return blob, savegame.write_new_folder(str(saves), name, index, data, savegame.default_sfo(name))
+
+
+def test_check_container_refuses_a_zero_word(tmp_path):
+    blob, folder = _zero_word_save(tmp_path)
+    with open(os.path.join(folder, 'INDEX'), 'rb') as f, open(os.path.join(folder, 'DATA'), 'rb') as g:
+        index, data = f.read(), g.read()
+    with pytest.raises(savegame.SaveError):
+        savegame.check_container('RosterCustom0', index, data, blob)
+
+
+def test_repair_trailer_changes_only_the_word(tmp_path):
+    blob, folder = _zero_word_save(tmp_path)
+    _zero_word_save(tmp_path, 'RosterCustom1')
+    index, data = savegame.build_container('RosterCustom2', blob, {'FileDisplayName': 'ok'})
+    savegame.write_new_folder(str(tmp_path), 'RosterCustom2', index, data, savegame.default_sfo('RosterCustom2'))
+    assert savegame.zero_trailers(str(tmp_path)) == ['RosterCustom0', 'RosterCustom1']
+    before = savegame.read(folder)
+    savegame.repair_trailer(folder)
+    after = savegame.read(folder)
+    assert after.db_bytes == blob and after.meta == before.meta
+    assert after.trailer == struct.pack('<IIIIH', 0x58b72ed9, 0, len(blob), 0, 1)
+    assert sorted(os.listdir(folder)) == ['DATA', 'INDEX', 'NAME', 'sce_sys']
+    assert savegame.zero_trailers(str(tmp_path)) == ['RosterCustom1']
+
+
+def test_app_repairs_zero_word_saves_once_with_a_backup(tmp_path, monkeypatch):
+    monkeypatch.setenv('OVERTIME_ROSTER_HOME', str(tmp_path / 'home'))
+    saves = tmp_path / 'saves'
+    saves.mkdir()
+    blob, folder = _zero_word_save(saves)
+    said, kept = [], {}
+    ctl = types.SimpleNamespace(save_dir=str(saves), prefs=kept, lock=threading.RLock(), remember=kept.update,
+                                say=lambda *a: said.append(a[0]), host=types.SimpleNamespace(log=lambda *a: None))
+    part = rosters_ctl.RostersCtl.__new__(rosters_ctl.RostersCtl)
+    part.ctl, part.refresh_sources = ctl, lambda quiet=False: None
+
+    def run():
+        part.repair_saves()
+        for t in threading.enumerate():
+            if t.name == 'save-repair':
+                t.join()
+    monkeypatch.setattr(rosters_ctl.overlay, 'emulator_running', lambda: True)
+    run()                                       # never under a running game: left for the next start
+    assert savegame.read(folder).trailer[:4] == bytes(4) and 'trailers_checked' not in kept
+    assert not os.path.exists(tmp_path / 'home' / 'backups')
+    monkeypatch.setattr(rosters_ctl.overlay, 'emulator_running', lambda: False)
+    run()
+    assert savegame.read(folder).trailer[:4] == bytes.fromhex('d92eb758') and savegame.read(folder).db_bytes == blob
+    backup = os.listdir(tmp_path / 'home' / 'backups')
+    assert len(backup) == 1 and said and kept['trailers_checked'] == str(saves)
+    kept_copy = savegame.read(str(tmp_path / 'home' / 'backups' / backup[0] / 'RosterCustom0'))
+    assert kept_copy.trailer[:4] == bytes(4)    # the backup holds the save as it was
+    first = (saves / 'RosterCustom0' / 'DATA').read_bytes()
+    run()                                       # checked already: nothing is read or written again
+    assert (saves / 'RosterCustom0' / 'DATA').read_bytes() == first and os.listdir(tmp_path / 'home' / 'backups') == backup
 
 
 def test_write_new_folder_never_overwrites(tmp_path):
@@ -233,6 +310,7 @@ def test_pipeline_installs_new_save(session, game, tmp_path):
                       step=lambda k, s, t='': steps.append((k, s)), log=lambda *a: None)
     assert out.ok, out.lines
     assert ('install', 'ok') in steps and os.path.basename(out.folder) == 'RosterCustom0'
+    assert savegame.read(out.folder).trailer[:4] == bytes.fromhex('d92eb758')   # no Roster save here to copy it from
     rs = savegame.read(out.folder)
     db = tdb.Database.parse(rs.db_bytes, game.schema())
     assert len(db.tables) == 54 and rs.meta['FileDisplayName'] == 'My roster' and len(rs.meta['CRCValue']) == 54
@@ -246,6 +324,49 @@ def test_pipeline_installs_new_save(session, game, tmp_path):
                        log=lambda *a: None, now=__import__('datetime').datetime(2030, 1, 1))
     assert out2.ok and os.path.basename(out2.folder) == 'RosterCustom1'
     assert (saves / 'RosterCustom0' / 'DATA').read_bytes() == first
+
+
+@pytest.mark.parametrize('layout', ['no folder', 'empty folder', 'only a roster slot'])
+def test_first_save_builds_what_it_needs(session, game, tmp_path, layout):
+    """A player who never ran the game has no Profile0 (or no save folder): param.sfo and trailer are built."""
+    saves = tmp_path / 'CUSA11126'
+    if layout != 'no folder':
+        saves.mkdir()
+    if layout == 'only a roster slot':      # a slot with no param.sfo: nothing to copy either
+        (saves / 'RosterCustom0' / 'sce_sys').mkdir(parents=True)
+    out = install.run(session, game, install.TARGET_SAVE, 'First', str(saves), str(tmp_path / 'home' / 'exports'),
+                      log=lambda *a: None)
+    assert out.ok, out.lines
+    want = 'RosterCustom1' if layout == 'only a roster slot' else 'RosterCustom0'
+    assert os.path.basename(out.folder) == want
+    rs = savegame.read(out.folder)
+    assert rs.trailer[:4] == bytes.fromhex('d92eb758') and rs.meta['FileDisplayName'] == 'First'
+    values = sfo.values((saves / want / 'sce_sys' / 'param.sfo').read_bytes())
+    assert values['SAVEDATA_DIRECTORY'] == want and values['TITLE_ID'] == savegame.TITLE_ID
+
+
+def test_save_refused_while_shadps4_runs(session, game, tmp_path, monkeypatch):
+    saves = tmp_path / 'saves'
+    _template_save(str(saves))
+    monkeypatch.setattr(install.overlay, 'emulator_running', lambda: True)
+    out = install.run(session, game, install.TARGET_SAVE, 'Held', str(saves), str(tmp_path / 'home' / 'exports'),
+                      log=lambda *a: None)
+    assert not out.ok and 'shadPS4 is running' in out.lines[0] and 'Nothing was written' in out.lines[0]
+    assert sorted(os.listdir(saves)) == ['Profile0'] and not (tmp_path / 'home').exists()
+    # an export touches no save: it goes on while the game runs
+    assert install.run(session, game, install.TARGET_EXPORT, 'Export', '', str(tmp_path / 'x'), log=lambda *a: None).ok
+
+
+def test_save_button_asks_to_close_shadps4_first(tmp_path, monkeypatch):
+    from overtime_roster.app import save_ctl
+    asked = []
+    ctl = types.SimpleNamespace(session=object(), target=install.TARGET_SAVE, busy=None,
+                                shell=types.SimpleNamespace(ask=lambda *a: asked.append(a[0])))
+    part = save_ctl.SaveCtl.__new__(save_ctl.SaveCtl)
+    part.ctl = ctl
+    monkeypatch.setattr(save_ctl.overlay, 'emulator_running', lambda: True)
+    part.save_start()
+    assert asked == ['Close shadPS4 first'] and ctl.busy is None
 
 
 def test_pipeline_says_saved_when_the_list_of_changes_fails(session, game, tmp_path, monkeypatch):

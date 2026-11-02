@@ -18,7 +18,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
-from overtime_core import rostercrc, rosterupdate, tdb
+from overtime_core import overlay, rostercrc, rosterupdate, tdb
 
 from . import howto, jobs, report, savegame
 
@@ -37,6 +37,10 @@ class Outcome:
     report: str = ''
     crc: str = ''
     after: list = field(default_factory=list)  # what failed after a good save (the roster IS saved): red lines
+
+
+RUNNING = ('shadPS4 is running, and the game holds its saves while it runs. Close it, then save again. '
+           'Nothing was written.')
 
 
 class Failed(Exception):
@@ -80,7 +84,7 @@ def roster_crc(session, game):
 
 
 def run(session, game, target, name, save_dir, out_root, step=lambda key, state, text='': None, log=print,
-        now=None, overwrite=None, folder_slot=None):
+        now=None, overwrite=None, folder_slot=None, running=None):
     """Run the pipeline. `step(key, state, text)` reports progress ('run', 'ok', 'fail', 'skip'). `overwrite`: a
     custom roster slot (savegame.slot_names) to replace instead of a new folder (after the backup). `folder_slot`: the slot
     a folder for another PC is made for (None: the next free one beside this PC's saves). The slot is baked into the
@@ -109,11 +113,10 @@ def run(session, game, target, name, save_dir, out_root, step=lambda key, state,
             sfo_raw = sfo_raw or savegame.default_sfo(folder_name)
             trailer = trailer or savegame.DEFAULT_TRAILER
         elif target == TARGET_SAVE:
-            if not have_dir:
-                raise Failed(f'The save folder does not exist: {save_dir}')
-            sfo_raw, icon, trailer, _ = savegame.template_files(save_dir)
-            if sfo_raw is None:
-                raise Failed('No save of NHL 19 to copy param.sfo from. Start the game once and save.')
+            if not save_dir:
+                raise Failed('Overtime does not know where shadPS4 keeps its saves. Pick the game in Setup first.')
+            if (running or overlay.emulator_running)():
+                raise Failed(RUNNING)
             if overwrite:
                 if overwrite not in savegame.used_slots(save_dir):
                     raise Failed(f'{overwrite} is not a custom roster in the save folder; nothing was written.')
@@ -123,6 +126,12 @@ def run(session, game, target, name, save_dir, out_root, step=lambda key, state,
                     folder_name = savegame.next_free_name(save_dir)
                 except savegame.SaveError as err:
                     raise Failed(str(err)) from None
+            # a first save (no save folder yet, or no save with a param.sfo to copy, as for a player who never ran the
+            # game) builds what it needs: param.sfo and the trailer are nothing per user (docs/notes/export-folder.md)
+            sfo_raw, icon, trailer, _ = savegame.template_files(save_dir)
+            title = os.path.basename(os.path.normpath(save_dir))    # the game's save folder is named by its title id
+            sfo_raw = sfo_raw or savegame.default_sfo(folder_name, title=title if title.startswith('CUSA') else None)
+            trailer = trailer or savegame.DEFAULT_TRAILER
         log(f'Roster: {session.source_name}; {len(session.change_lines())} edit(s).')
         step('gather', 'ok', folder_name if is_save else 'export')
 
@@ -196,6 +205,7 @@ def run(session, game, target, name, save_dir, out_root, step=lambda key, state,
         elif target == TARGET_SAVE:
             current[0] = 'backup'
             step('backup', 'run')
+            os.makedirs(save_dir, exist_ok=True)    # a first save: the game has not made its save folder yet
             dest = os.path.join(out_root, '..', 'backups', stamp)
             try:
                 copied = savegame.backup(save_dir, os.path.normpath(dest))

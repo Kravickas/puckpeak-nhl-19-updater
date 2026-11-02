@@ -33,13 +33,16 @@ def _is_game(folder):
 
 def roots(game_dir):
     """(base folder, update folder or None) for the game folder set: the base or its `-UPDATE` / `-patch` sibling.
-    An update folder with no base beside it is a whole game on its own."""
+    An update folder with no base beside it is a whole game on its own. With both siblings beside the base, the
+    update is the one shadPS4 mounts (`-UPDATE`), whichever folder was picked."""
     folder = os.path.normpath(os.path.abspath(game_dir))
     name = os.path.basename(folder)
     for suffix in UPDATE_SUFFIXES:
         if name.lower().endswith(suffix.lower()) and len(name) > len(suffix):
             base = os.path.join(os.path.dirname(folder), name[:-len(suffix)])
-            return (base, folder) if _is_game(base) else (folder, None)
+            if not _is_game(base):
+                return folder, None
+            return base, next((base + s for s in UPDATE_SUFFIXES if _is_game(base + s)), folder)
     for suffix in UPDATE_SUFFIXES:
         if _is_game(folder + suffix):
             return folder, folder + suffix

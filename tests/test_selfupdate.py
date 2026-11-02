@@ -86,18 +86,18 @@ def test_beta_versions_sort_before_their_release():
     assert r is None and offered is None
 
 
-def test_v0_20_0_is_offered_to_every_beta_and_0_10_0():
+def test_v0_30_0_is_offered_to_every_beta_and_0_10_0():
     from overtime_roster import VERSION
     v = selfupdate.parse_version(VERSION)
-    assert str(v) == '0.20.0'
+    assert str(v) == '0.30.0'
     assert v > selfupdate.parse_version('0.1.0-beta4') and v > selfupdate.parse_version('0.1.0')
-    assert v > selfupdate.parse_version('0.1.0-beta3') and v > selfupdate.parse_version('0.10.0') and v < selfupdate.parse_version('0.20.1')
+    assert v > selfupdate.parse_version('0.1.0-beta3') and v > selfupdate.parse_version('0.20.0') and v < selfupdate.parse_version('0.30.1')
     url = 'https://ot.puckpeak.com/app/latest.json'
     pages = {url: json.dumps({'version': VERSION, 'exe': 'OvertimeNHL19.exe'}),
              'https://ot.puckpeak.com/app/SHA256SUMS.txt': f"{'ab' * 32}  OvertimeNHL19.exe"}
     r = selfupdate.latest('0.1.0-beta4', url, pages.__getitem__, selfupdate.EXE_ASSET)
-    assert r is not None and r.text == '0.20.0'
-    assert selfupdate.latest('0.10.0', url, pages.__getitem__, selfupdate.EXE_ASSET).text == '0.20.0'
+    assert r is not None and r.text == '0.30.0'
+    assert selfupdate.latest('0.20.0', url, pages.__getitem__, selfupdate.EXE_ASSET).text == '0.30.0'
     assert selfupdate.latest(VERSION, url, pages.__getitem__, selfupdate.EXE_ASSET) is None
 
 
@@ -665,3 +665,55 @@ def test_download_kits_refuses_a_bad_sha256(monkeypatch, tmp_path, home):
 def test_default_db_switch_needs_its_files(home):
     assert app_main.entry(['--default-db', 'x.db']) == 1
     assert 'needs --rosters' in (home / 'logs' / 'default-db.txt').read_text()
+
+
+def test_start_offer_is_the_apps_own_question_with_progress(release_site, exe, monkeypatch):
+    url, _site = release_site
+    _frozen(monkeypatch, url, exe)
+    ctl = Unsaved(0)
+    offered = []
+    ctl.changed = lambda *a: None
+    ctl.setup = type('Setup', (), {'skipped': '', 'newer': None,
+                                   '_ask_newer': lambda self, release: offered.append(release.text)})()
+    monkeypatch.setattr(webview2, 'message', lambda *a, **k: pytest.fail('a Windows box over the app'))
+    assert app_main.update_check(Host(), lambda: pytest.fail('quit'), ctl=ctl, first=True) == 'asked'
+    assert len(offered) == 1
+    assert open(exe, 'rb').read() == OLD                                # nothing swapped until Update now
+    selfupdate.mark_checked(now=0)
+    ctl.setup.skipped = offered[0]
+    assert app_main.update_check(Host(), lambda: pytest.fail('quit'), ctl=ctl, first=True) == 'declined'
+    assert len(offered) == 1                                            # a skipped version is not offered again
+
+
+def test_signed_exe_only_takes_an_update_of_the_same_publisher(release_site, exe, monkeypatch):
+    url, _site = release_site
+    _frozen(monkeypatch, url, exe)
+    monkeypatch.setattr(selfupdate, 'restart', lambda path, args=(): None)
+    release = selfupdate.latest()
+    table = {exe: 'CN=Puck Peak'}
+    monkeypatch.setattr(selfupdate, 'signer', lambda path: table.get(path) or table.get('new'))
+    table['new'] = 'CN=Somebody Else'
+    with pytest.raises(ValueError, match='same publisher'):
+        selfupdate.install(release)
+    assert open(exe, 'rb').read() == OLD and not os.path.exists(exe + '.new')
+    table['new'] = 'CN=Puck Peak'
+    selfupdate.install(release)
+    assert open(exe, 'rb').read() == NEW
+
+
+def test_unsigned_exe_has_nothing_to_compare(tmp_path):
+    exe = tmp_path / 'a.exe'
+    exe.write_bytes(b'x')
+    selfupdate.check_signature(str(exe), str(exe), who=lambda path: None)           # unsigned: the sha256 is the check
+    with pytest.raises(ValueError):
+        selfupdate.check_signature('new', 'old', who=lambda path: 'CN=A' if path == 'old' else None)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Authenticode is Windows')
+def test_signer_reads_windows_signatures(tmp_path):
+    system = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'WindowsPowerShell', 'v1.0',
+                          'powershell.exe')
+    assert 'Microsoft' in (selfupdate.signer(system) or '')
+    plain = tmp_path / 'plain.exe'
+    plain.write_bytes(b'MZ' + bytes(100))
+    assert selfupdate.signer(str(plain)) is None and selfupdate.signer(str(tmp_path / 'none.exe')) is None

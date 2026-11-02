@@ -159,6 +159,8 @@ class RosterCtl(Part):
         myedits.forget(data, s, clock, gone)
         # only the edits not kept yet: one kept before keeps its value (an update since may have refused it)
         myedits.record(data, s, clock, [it for it in live if id(it['ch']) not in kept_before])
+        for team, slots, letters in self.ctl.parts['lines'].kept_of(ids):
+            myedits.record_lines(data, s, clock, team, slots, letters)
         return data, live
 
     def kept_saved(self, data, live):
@@ -172,7 +174,8 @@ class RosterCtl(Part):
     def kept_remove(self, key):
         """My edits' Remove: that player's kept edit goes (the roster keeps what it has). Returns his name or ''.
         Under the lock."""
-        e = self.kept()['players'].get(key)
+        e = (self.kept()['lines'].get(key[len(myedits.LINES):]) if key.startswith(myedits.LINES)
+             else self.kept()['players'].get(key))
         if e is None:
             return ''
         data = copy.deepcopy(self.kept())

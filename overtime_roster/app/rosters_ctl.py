@@ -7,12 +7,14 @@ hears of it (Rail.roster_changed). The one opened last is remembered and opened 
 (Controller(reopen=True)). The two starts: the game roster (the game's own database) and the Overtime default (the
 verified default the exe carries, or the one rebuilt after an Update: defaultdb.pick).
 """
+import datetime
 import os
 import re
+import threading
 
 from overtime_core import overlay, rosterupdate, sfo, tdb
 
-from . import defaultdb, install, jobs, paths, sources, trash
+from . import defaultdb, gamesetup, install, jobs, paths, savegame, sources, trash
 from .registry import Part
 from .session import RosterSession
 from .shell import friendly_date
@@ -45,6 +47,7 @@ class RostersCtl(Part):
         c = self.ctl
         with c.lock:
             c.game_dir = (path or '').strip().strip('"')
+            gamesetup.use_game(c.game_dir)      # its title id names the save folder and the custom config
             c.game = sources.GameData(c.game_dir)
             c.editors._default = None
             c.remember(game_dir=c.game_dir)
@@ -56,6 +59,47 @@ class RostersCtl(Part):
             c.save_dir = (path or '').strip().strip('"')
             c.remember(save_dir=c.save_dir)
         self.refresh_sources()
+        self.repair_saves()
+
+    def repair_saves(self):
+        """Once per saves folder (each read unpacks a roster): put right the rosters saved with trailer word 0, which
+        the game crashes on (savegame.zero_trailers). A backup first; only that word changes. Not while shadPS4 runs."""
+        c = self.ctl
+        save_dir = c.save_dir
+        if not os.path.isdir(save_dir or '') or c.prefs.get('trailers_checked') == save_dir:
+            return
+
+        def work():
+            try:
+                if savegame.zero_trailers(save_dir):
+                    if overlay.emulator_running():   # the next start tries again
+                        c.host.log('Rosters the game cannot load are put right at the next start: shadPS4 is running.')
+                        return
+                    self._repair(save_dir)
+            except (OSError, ValueError) as err:
+                c.host.log(f'Rosters the game cannot load were not put right: {err}')
+                return
+            with c.lock:
+                c.remember(trailers_checked=save_dir)
+        threading.Thread(target=work, daemon=True, name='save-repair').start()
+
+    def _repair(self, save_dir):
+        c = self.ctl
+        with c.lock:    # nobody saves meanwhile
+            found = savegame.zero_trailers(save_dir)
+            if not found:
+                return
+            backups = paths.app_dir('backups')
+            dest = os.path.join(backups, datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
+            savegame.backup(save_dir, dest)
+            c.host.log(f'Backed up the saves to {dest}')
+            savegame.prune_backups(backups)
+            trailer = savegame.template_files(save_dir)[2]
+            for name in found:
+                savegame.repair_trailer(os.path.join(save_dir, name), trailer)
+                c.host.log(f'{name}: put right, the game crashed loading it.')
+        c.say(f'{len(found)} roster(s) the game could not load were put right. A backup was made first.', 'good')
+        self.refresh_sources(quiet=True)
 
     def refresh_sources(self, quiet=False):
         c = self.ctl

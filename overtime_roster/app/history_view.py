@@ -38,6 +38,8 @@ def _status(r, names, you):
         if who == you:
             return 'caution', 'Result entered: confirm yours'
         return 'info', f'Waiting for {names[who]}'
+    if r.get('left'):
+        return 'good', f"{names[r['left']]} left: counted without a report"
     return STATUS[r['status']]
 
 
@@ -157,6 +159,45 @@ def detail_view(d, you, now):
             'recent': recent}
 
 
+def toa_text(seconds):
+    """Time on attack as 'm:ss'."""
+    s = max(0, int(seconds or 0))
+    return f'{s // 60}:{s % 60:02d}'
+
+
+def _shown(key, value):
+    if value is None:
+        return '-'
+    return toa_text(value) if key == 'toa' else str(value)
+
+
+RATES = (('shooting', 'Shooting'), ('saving', 'Saves'), ('faceoffs', 'Faceoffs won'), ('passing', 'Passes completed'),
+         ('power_play', 'Power play'))
+
+
+def games_view(d, now):
+    """My games card from the server's `games` (my detail): the record, the numbers over every game that has them, and each
+    game with its score and box score. None while I have no game."""
+    if not d or not d['recent']:
+        return None
+    st = d.get('stats')
+    overall = None
+    if st:
+        t = st['totals']
+        overall = {'games': st['games'],
+                   'avg': [{'key': k, 'label': label, 'value': _shown(k, st['avg'].get(k)),
+                            'total': _shown(k, t.get(k))} for k, label in H.BOX if k in st['avg']],
+                   'rates': [{'label': label, 'value': f"{st['rates'][k]:g}%"} for k, label in RATES
+                             if st['rates'].get(k) is not None]}
+    games = [{'id': m['id'], 'ago': ago(now - m['started']), 'status': m['status'], 'result': m['result'],
+              'opponent': m['opponent']['name'], 'team': m['team'], 'opp_team': m['opp_team'], 'for': m['for'],
+              'against': m['against'], 'rules': m.get('rules') or '',
+              'box': [{'label': r['label'], 'me': _shown(r['key'], r['me']), 'them': _shown(r['key'], r['them'])}
+                      for r in m.get('box') or []]} for m in d['recent']]
+    return {'w': d['w'], 'l': d['l'], 'played': d['played'], 'gf': d['gf'], 'ga': d['ga'], 'overall': overall,
+            'games': games, 'with_stats': sum(1 for g in games if g['box'])}
+
+
 def review_view(rv):
     """The opened review (the server's, already worded), None when none is open."""
     if not isinstance(rv, dict):
@@ -168,7 +209,7 @@ def review_view(rv):
 def build(raw, now, supported=True, error='', busy=False, entering=None, form_error='', seen=None, review=None):
     """The slice's `history`: {supported, loaded, error, busy, matches, players, detail, form, rating, banner, review}."""
     out = {'supported': supported, 'loaded': raw is not None, 'error': error, 'busy': busy,
-           'matches': [], 'players': [], 'detail': None, 'form': None, 'rating': None, 'banner': None,
+           'matches': [], 'players': [], 'detail': None, 'games': None, 'form': None, 'rating': None, 'banner': None,
            'review': review_view(review), 'ladder': ladder(None)}
     if raw is None:
         return out
@@ -176,6 +217,7 @@ def build(raw, now, supported=True, error='', busy=False, entering=None, form_er
     out['matches'] = [match_row(m, you, now) for m in raw.get('matches') or []]
     out['players'] = [player_row(r, you) for r in raw.get('players') or []]
     out['detail'] = detail_view(raw.get('detail'), you, now)
+    out['games'] = games_view(raw.get('games'), now)
     out['rating'] = rating_view(raw.get('rating'))
     out['ladder'] = ladder(out['rating'])
     out['banner'] = banner_for(out['matches'], seen)

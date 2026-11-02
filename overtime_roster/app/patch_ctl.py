@@ -12,10 +12,10 @@ import os
 import threading
 import time
 
-from overtime_core import nhlcom, overlay, rosterupdate, xmlpatch
+from overtime_core import gamefiles, nhlcom, overlay, rosterupdate, xmlpatch
 
 from .. import VERSION
-from . import gamesetup, jobs, launch, packdownload, patch, paths, update
+from . import gamesetup, jobs, launch, packdownload, patch, paths, selfupdate, update
 from .packdownload import PackError
 from .registry import Part
 from .shell import friendly_date
@@ -68,6 +68,11 @@ NO_PACK = ("Until you get the Photos, logos pack, Utah plays in the Coyotes' loo
            "and kit.")
 # the packs each pack switch reads (patch.ART_PACKS names); the art switch needs one of its two
 PACK_FILES = {'art': (patch.LOOKS32_PACK, 'looks.zip'), 'photos': (patch.PHOTOS_PACK,), 'kits': (patch.KITS_PACK,)}
+# the packs with a switch of their own: {switch key: pack}
+EXTRA_KEYS = {patch.extra_key(name): name for name in patch.EXTRA_PACKS}
+EXTRA_TITLES = {'ice_all': ('Centre ice for every league', 'The centre ice of every club NHL 27 has.'),
+                'alts_intl': ('National team jerseys', "NHL 27's main and alternate jerseys."),
+                'alts_nhl': ('NHL alternate jerseys', "NHL 27's alternate jerseys of the NHL teams.")}
 COMING = {'title': '32 teams in every mode',
           'sub': 'Classic Franchise and NHL Season with both Seattle and Utah. Today a 32 Team Expansion Draft Franchise '
                  'has both. Still being built.'}
@@ -77,7 +82,7 @@ ABOUT = (
     ('In the game', ["Utah plays in Arizona's place and Seattle is the 32nd team.",
                      'The 2026-27 rosters, salary cap and NHL 27 team art.',
                      "NHL 19 goes online on the Overtime server instead of EA's."]),
-    ('On your PC', ['The game folder is only read. shadPS4 serves the patch from a folder beside it (CUSA11126-mods).',
+    ('On your PC', ['The game folder is only read. shadPS4 serves the patch from a folder beside it (named like the game folder, plus -mods).',
                     'Unpatch takes every patch file away. Deleting that folder by hand does the same.']),
     ('Your rosters', ['Your roster saves stay as they are.',
                       'The default roster switch only changes the roster new modes start from.']),
@@ -103,11 +108,16 @@ def served(st):
     packs = [str(p.get('name', '') if isinstance(p, dict) else p).lower() for p in (ly.get('art') or {}).get('packs') or []]
     return {'names': 'names' in ly, 'roster': 'database' in ly, 'league': 'league' in ly, 'text': 'text' in ly,
             'menus': 'menus' in ly, 'chel': bool(((ly.get('menus') or {}).get('options') or {}).get('chel')),
-            'art': 'art' in ly, 'photos': any('photos' in p for p in packs), 'kits': any('kits' in p for p in packs)}
+            'art': 'art' in ly, 'photos': any('photos' in p for p in packs), 'kits': any('kits' in p for p in packs),
+            **{key: key.replace('_', '-') in packs for key in EXTRA_KEYS}}
 
 
 def why(want, key, found):
     """Why a switch cannot be on now, or None. `found`: the art packs here (packs_here)."""
+    if key in EXTRA_KEYS:
+        if not want.get('art'):
+            return 'Needs "NHL 27 team art".'
+        return None if EXTRA_KEYS[key] in found else 'Not downloaded yet.'
     if key == 'chel' and not want.get('menus'):
         return 'Needs "Hub without the closed modes".'
     if key in PACK_KEYS and not any(name in found for name in PACK_FILES[key]):
@@ -122,7 +132,7 @@ def why(want, key, found):
 def switches(want, found):
     """{key: bool}: the switches that are on and can be (why). A switch that is off is off (v0.10.0: the pack
     switches too, until the Photos, logos pack is here)."""
-    return {k: bool(want.get(k)) and not why(want, k, found) for k in KEYS}
+    return {k: bool(want.get(k)) and not why(want, k, found) for k in (*KEYS, *EXTRA_KEYS)}
 
 
 def cache_dir():
@@ -156,10 +166,27 @@ def _part(ctl):
 
 
 # --- the jobs: Patch, Unpatch, Check again, the clean-game check and copy ---------------------------------------------
+def adopt_patch(setup):
+    """The patch file in shadPS4 is the one this Overtime writes but another record holds it (a lab run or a second
+    copy of the app patched with its own app folder; 2026-10-29 17:59): take it over, and note this version made it,
+    instead of "Patched, with 1 problem" and "patched by an older Overtime" until Patch is pressed again."""
+    ctl = setup.ctl
+    try:
+        xml = setup._xml()
+        if gamesetup.adopt((xml, xmlpatch.bap32_off(xml), xmlpatch.expansion32_off(xml))):
+            by = selfupdate.parse_version(ctl.prefs.get('patched_by'))
+            if by is None or by < selfupdate.parse_version(VERSION):
+                ctl.remember(patched_by=VERSION)
+            ctl.host.log('The patch file in shadPS4 is this version\'s own: its record was brought up to date.')
+    except EXPECTED:
+        pass
+
+
 def look(setup):
     """What is in the game now (in the job's thread: overlay.status hashes the patch files): the overlay, whether
     shadPS4 runs, the eboot patch and whether its 32-team switch is on, and the game folder's size (once a folder)."""
     ctl = setup.ctl
+    adopt_patch(setup)
     game_dir = ctl.game_dir
     game = getattr(ctl, 'game', None)
     ok = bool(game_dir) and (game.ok if game is not None else gamesetup.read_game(game_dir)['ok'])
@@ -345,6 +372,10 @@ def one_click(setup, then=None):
             raise Refused(f"NHL 19 cannot be patched: {game['problem']}.")
         if overlay.emulator_running():
             raise Refused('shadPS4 is running. Close NHL 19, then press Patch again.')
+        gamesetup.use_game(game_dir)
+        if game['title_id'] != gamesetup.TITLE_ID:     # another disc: the same game is assumed; its hash is for support
+            ctl.host.log(f"NHL 19 {game['title_id']}: eboot.bin sha256 "
+                         f"{gamesetup._file_sha(gamefiles.locate(game_dir, 'eboot.bin'))}")
         xml = setup._xml()
         if gamesetup.load_clean() is None:
             step('noting the clean game first...', 0.02)
@@ -384,6 +415,9 @@ def one_click(setup, then=None):
                      f"{'32 teams' if out['teams32'] else '31 teams (the roster served has no active Seattle)'}")
         ctl.remember(patched_by=VERSION)  # Update warns when an older Overtime patched the game (update_ctl)
         text = patched_text(out['teams32'], on['roster'])
+        if gamesetup.active_title() != gamesetup.TITLE_ID:
+            text += (f' {gamesetup.active_title()} is patched like CUSA11126 (the same game is assumed). If it will not '
+                     'start, press Unpatch and send the error log.')
         if out['teams32'] and then is None:
             offer_update(ctl)
         return text, 'good'
@@ -574,12 +608,16 @@ def chips(st, teams32):
         add('chel', 'World of Chel kept')
     if now['art']:
         packs = [p for p in (ly.get('art') or {}).get('packs') or []
-                 if not any(w in str(p.get('name', '') if isinstance(p, dict) else p).lower() for w in ('kits', 'photos'))]
+                 if not any(w in str(p.get('name', '') if isinstance(p, dict) else p).lower()
+                            for w in ('kits', 'photos', 'alts-', 'ice-all'))]
         add('art', f"{len(packs)} art pack{'s' if len(packs) != 1 else ''}" if packs else 'NHL 27 team art')
     if now['photos']:
         add('photos', 'NHL.com player photos')
     if now['kits']:
         add('kits', 'NHL 27 kits')
+    extra = sum(now[key] for key in EXTRA_KEYS)
+    if extra:
+        add('extras', f"{extra} jersey and ice pack{'s' if extra != 1 else ''}")
     return out
 
 
@@ -823,7 +861,7 @@ class PatchCtl(Part):
                 'checked': c.patch_status is not None or self.eboot is not None,
                 'running': bool(c.patch_running), 'error': self.error, 'patched': patched, 'online': online,
                 'problems': problems_of(st, eboot) if patched else [], 
-                'changed': patched and any(picked[k] != now[k] for k in KEYS), 'served': now, 'picked': picked,
+                'changed': patched and any(picked[k] != now[k] for k in picked), 'served': now, 'picked': picked,
                 'want': want, 'kits': patch.KITS_PACK in found, 'teams32': self.teams32 if online else None,
                 'applied_at': friendly_date(when) if patched else '', 'st': st,
             }
@@ -858,6 +896,7 @@ class PatchCtl(Part):
                 'changed': f['changed'], 'checked': f['checked'],
                 'state': state_line(f),
                 'layers': rows, 'coming': dict(COMING), 'kits': {'installed': f['kits']}, 'pack': setup.pack_card(emulator),
+                'extras': setup.extra_card(emulator, want, picked, now, patched),
                 'buttons': {'patch': {'text': 'Patch again' if patched else 'Patch', 'enabled': free},
                             'unpatch': {'enabled': free and patched},
                             'play': {'enabled': free and bool(emulator)},

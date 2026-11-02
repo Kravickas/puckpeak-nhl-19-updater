@@ -9,14 +9,15 @@ server, Seattle and Utah, the real 2026-27 calendars and a full roster editor. A
 - Windows 10 or 11, and a PC that runs NHL 19 in shadPS4 (about 10 GB of free memory while playing).
 - Your own NHL 19 dump: **CUSA11126, update 1.60**. The app refuses other versions.
   The update can be merged into the game folder or sit beside it (`CUSA11126-patch` or `CUSA11126-UPDATE`).
-- **shadPS4 NHL19-Build**: https://github.com/Kravickas/shadPS4/tree/NHL19-Build
+- **shadPS4**: any build. The usual way is [QtLauncher](https://github.com/shadps4-emu/shadps4-qtlauncher/releases) with a version
+  downloaded in it.
 - For online play: a **ShadNet** account, signed in inside shadPS4.
 
 ## Set up (once)
 
 1. Download `OvertimeNHL19.exe` from the [release page](../../releases/latest) and start it. Windows SmartScreen warns
    because it is not signed: choose **More info**, then **Run anyway**.
-2. **Setup**: the app finds shadPS4 and NHL 19. If it doesn't, pick them by hand.
+2. **Setup**: the app finds shadPS4 and NHL 19. If it doesn't, pick your emulator folder or `shadPS4.exe`.
 3. **Game patch**: press **Patch** and leave the switches as they are. Wait until it says "Patched".
 4. Optional: press **Download** on the "Photos, logos pack" card (about 155 MB, once) for real photos, logos and kits,
    Utah and Seattle included. Then press **Patch** again.

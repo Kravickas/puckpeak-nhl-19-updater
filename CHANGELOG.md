@@ -2,6 +2,58 @@
 
 What changed in each version, for players.
 
+## 0.30.0 (2026-11-01)
+
+Rosters of every club league from NHL 27, centre ice for every league, national team jerseys, and many fixes.
+
+### What is new
+
+- **Every club league from NHL 27.** The Update tab now rebuilds the SHL, Liiga, DEL, Extraliga, NL, ICE Hockey League, the
+  European clubs, OHL, QMJHL, WHL, ECHL and HockeyAllsvenskan from NHL 27, as it did for the AHL. Clubs NHL 27 has under a new
+  name take that name (Frolunda HC). Clubs it does not have keep their 2018 roster.
+- **More jerseys and ice** (new switches on the Game patch tab): centre ice for every league (45 MB), national team jerseys (149 MB)
+  and NHL alternate jerseys (765 MB) from NHL 27. Switch one on and it downloads by itself, switch it off and it stays on your PC.
+  Press Patch to put them in the game. Alternates take the place of a team's throwback jerseys.
+- **Boost performance** (new on Setup): one button puts NHL 19 on Kravickas's NHL 19 build of shadPS4, for better performance and
+  graphics. Thanks to Kravickas for allowing it. Disable puts your own shadPS4 back. Your saves stay the same.
+- **My games** on the Multiplayer tab: your games with score, teams, opponent and box score, and your totals.
+- **Your hand-set lines stay.** Lines you set in the Lines tab survive an update.
+- **The app updates itself:** from this version on, Update now downloads, checks and restarts on its own. 0.20.0 updates to
+  this version the way it always did.
+
+- **A window that never comes up.** "Starting..." shows until the app is ready. If the window stays blank the app reloads it, then
+  opens in your browser, with Try again and a start log to send us. Each start has its own browser folder.
+- **A player who leaves pays for it.** When your game reported the result and the other player never did, it counts after an hour,
+  unless their own report says otherwise. Results typed in the app still need both players.
+- **Update warns you.** The result names a club short of 2 goalies or 18 skaters (the game hangs on it) and free agents who are also on a club.
+
+### Fixed
+
+- **Goalies stay goalies.** A real goalie is never matched to a skater with the same name and birth date.
+- **Any shadPS4 works.** The app no longer asks for the NHL19-Build. Pick your emulator folder or `shadPS4.exe`; with QtLauncher, the
+  version selected in it is found by itself. The app now opens on Setup.
+- **The game closed when you picked a custom roster.** A first save on a PC without an online roster was written wrong. The
+  app repairs such saves by itself when it starts, with a backup first.
+- **Be a Pro with Seattle:** the first games now match Seattle's calendar.
+- **Seattle in other leagues' Season lists** is gone.
+- **A first save with no game save yet** now works, and saving is refused while shadPS4 is running.
+- **Multiplayer tab:** it says why ShadNet does not connect and what to do next.
+- **"Patched, with 1 problem"** no longer shows for a file this version builds itself.
+- **Split installs:** `-UPDATE` and `-patch` are read the way shadPS4 mounts them.
+- **CUSA11116** is recognised as well as CUSA11126.
+
+### Known limits
+
+- Not proven with two PCs yet: that the game sends its own result report, which a leaver's loss needs.
+- Not run in the game yet: the league rebuilds, the national team jerseys, NHL alternates, centre ice for all leagues, kept lines,
+  and a first save with no game save. If the game does not start, switch the packs off and press Patch again.
+- With every pack on, Patch needs about 6 GB of free disk space.
+- Boost performance does not work with a shadPS4 that keeps its saves in a `user` folder next to the exe. The button itself is new
+  and has had little testing: if the game does not start, press Disable.
+- A team with only home and away jerseys has no room for an alternate.
+- The ALTERNATE label shows with the default roster; other rosters show the jersey's old name.
+- This exe is not signed, so Windows may warn about it.
+
 ## 0.20.0 (2026-10-30)
 
 A hotfix for players whose NHL 19 update sits in a folder of its own.

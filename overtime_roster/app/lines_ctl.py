@@ -87,6 +87,12 @@ def _pages():
 PAGE_UNITS, PLACES = _pages()
 
 
+def moved_slots(base, st):
+    """The places whose holder the draft `st` changes from `base`."""
+    was, now = base.holders(), st.holders()
+    return [slot for slot in lines.SLOTS if was.get(slot, []) != now.get(slot, [])]
+
+
 def cap(text):
     return text[:1].upper() + text[1:]
 
@@ -145,6 +151,7 @@ class LinesCtl(Part):
         self.picked = None      # the place picked (Escape, a pick of the page or the team lets go of it)
         self.notes = {}         # rail team -> the note after Apply
         self.applied = Applied(ctl, TAB)
+        self.noted = []         # [(change, team, {slot: new holder}, {player: letter})]: what Save keeps (My edits)
 
     # --- the rail's hooks --------------------------------------------------------------------------------------------
     def follow(self, team):
@@ -154,6 +161,14 @@ class LinesCtl(Part):
     def roster_changed(self):
         self.held, self.notes, self.picked = {}, {}, None
         self.applied.reset()
+        self.noted = []
+
+    def kept_of(self, ids):
+        """[(team, {slot: holder}, {player: letter})] of the applied lines Save writes (changes `ids`), oldest first.
+        Under the lock."""
+        history = self.ctl.session.history
+        self.noted = [n for n in self.noted if any(n[0] is h for h in history)]
+        return [n[1:] for n in self.noted if id(n[0]) in ids]
 
     def dirty(self, team):
         return self.touched(team)
@@ -545,6 +560,10 @@ class LinesCtl(Part):
             ch.tab, ch.team = TAB, team
             ch.details += details
             self.applied.note(ch, values)
+            now = st.holders()
+            self.noted.append((ch, team, {slot: first(now[slot]) for slot in moved_slots(base, st) if now.get(slot)},
+                               {b['playerindex']: v['captain'] for b, v in zip(base.vals, st.vals)
+                                if b['captain'] != v['captain']}))
             self.held.pop(team, None)
             self.picked = None
             self.notes[team] = APPLIED

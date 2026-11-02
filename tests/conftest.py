@@ -18,6 +18,9 @@ def pytest_configure(config):
     RUN_DIR = tempfile.mkdtemp(prefix='overtime-tests-')
     os.environ['OVERTIME_ROSTER_HOME'] = os.path.join(RUN_DIR, 'home')
     os.environ['OVERTIME_SAVE_DIR'] = os.path.join(RUN_DIR, 'savedata')
+    # shadPS4's data folder too: with no portable `user\` beside a fake emulator a test would find the real %APPDATA%
+    # one and patch it (2026-10-29: a patch file the app's record did not know)
+    os.environ['APPDATA'] = os.path.join(RUN_DIR, 'appdata')
 
 
 NHL_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
@@ -67,6 +70,14 @@ def game_db(game_dir):
     raw, _ = gamefiles.default_database(game_dir)
     xml, _ = gamefiles.schema_xml(game_dir)
     return raw, parse_schema(xml)
+
+
+@pytest.fixture(autouse=True)
+def no_running_emulator(monkeypatch):
+    """A game the maintainer has open must not stop a save in a test (saves refuse while shadPS4 runs); a test that
+    wants the refusal patches it back."""
+    from overtime_core import overlay
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
 
 
 @pytest.fixture(autouse=True)

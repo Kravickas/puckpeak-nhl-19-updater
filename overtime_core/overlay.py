@@ -35,6 +35,7 @@ returns the game to stock (and loses such a file).
 Nothing is written while shadPS4 runs (it holds the overlay files open and would mix old and new data).
 """
 import datetime
+import functools
 import hashlib
 import json
 import os
@@ -132,14 +133,31 @@ SELECT_TEAM_ALIGN = (
     b'        end\r\n'
     b'    end\r\n'
     b'end\r\n')
+# The other leagues' Season team list (Liiga, SHL, ...): with the 32-team switch the service appends the expansion
+# team (499) to every league's list, where it shows at 0 OVR though the league never holds it. Without Utah (22,
+# always in the NHL's list) in the list it is dropped before the list is numbered and sent back to the service.
+LIST_PATH = 'nhl/ui/features/season/vvms/selectteam/selectteam.lua'
+LIST_ANCHOR = (b'\tself.mData = output.ResponseAsMapByUniqueId.get_team_selection_data.Output.TeamList\r\n')
+LIST_NEW = LIST_ANCHOR + (
+    b'    -- Overtime 2026 patch: only the NHL has the expansion team (Seattle, 499).\r\n'
+    b'    local nhl = false\r\n'
+    b'    for i = 1, #self.mData do\r\n'
+    b'        if self.mData[i].TeamId == 22 then nhl = true end\r\n'
+    b'    end\r\n'
+    b'    if not nhl then\r\n'
+    b'        for i = #self.mData, 1, -1 do\r\n'
+    b'            if self.mData[i].TeamId == 499 then table.remove(self.mData, i) end\r\n'
+    b'        end\r\n'
+    b'    end\r\n')
 # Seattle in Be a Pro (with xmlpatch bap32, which keeps the expansion team on its stock id 399 in Choose Team only
 # while the 32-team switch is live; without it these edits never run). Picking 399 plays as 499 and the service
 # sets the mode-creation team list the way Season's configuration:default:set builds it (league 0's teams by
 # Exhibition, their misc info, 499 as conference 6, division 9, affiliate 498) before the league add, which the
 # patched builder copies into a 32-team league. default:set itself crashes from Be a Pro (run b4). Run c2, 2026-10-28.
-# The league gives each position its stock division and ignores DivisionId here (run p3), so in Be a Pro the expansion
-# team (slot 31) is listed in the Central and Utah (slot 22) in the Pacific. Each slot still plays its own real
-# 2026-27 calendar: slot 31 has 28 games against the Pacific, slot 22 has 28 against the Central.
+# The league gives each position its stock division and ignores DivisionId here (run p3), and the position is the
+# order of the list: the list puts the expansion team where Utah stood (slot 22, Pacific) and Utah last (slot 31,
+# Central), as Franchise does, so each plays the real 2026-27 calendar of its own place (lab 2026-11-01: slot 22 =
+# Seattle with 28 Pacific games, slot 31 = Utah with 28 Central games).
 BAP_FLOW_PATH = 'nhl/ui/features/beapro/services/creationflow/bapcreationflowservice.lua'
 BAP_TEAM_PATH = 'nhl/ui/features/beapro/vvms/beaprocreationteam/beaprocreationteam.lua'
 BAP_PATHS = (BAP_FLOW_PATH, BAP_TEAM_PATH)
@@ -183,8 +201,20 @@ function BapCreationFlowService:_SetExpansionTeams(done)
                                                   AffiliateTeamId = team.Misc.AffiliateId })
                         end
                     end
-                    table.insert(teams, { TeamId = 499, ConferenceId = 6, DivisionId = 9,
-                                          UserControlled = false, AffiliateTeamId = 498 })
+                    -- the list order is the league's slot order: Seattle takes Utah's slot 22 (Pacific) and Utah
+                    -- goes last, as in Franchise, so each plays the real 2026-27 calendar of its own place
+                    local seattle = { TeamId = 499, ConferenceId = 6, DivisionId = 9,
+                                      UserControlled = false, AffiliateTeamId = 498 }
+                    local utah
+                    for i, team in ipairs(teams) do
+                        if team.TeamId == 22 then utah = i end
+                    end
+                    if utah ~= nil then
+                        table.insert(teams, teams[utah])
+                        teams[utah] = seattle
+                    else
+                        table.insert(teams, seattle)
+                    end
                     self:_DataRequest("nhl-data:mode-creation:teams:info:set:01.00.00", { TeamList = teams },
                         function() done() end)
                 end)
@@ -225,8 +255,8 @@ def state_path(game_dir):
     return os.path.join(overlay_dir(game_dir), STATE_NAME)
 
 
-def emulator_running():
-    """True while a shadPS4 emulator process runs (any build: shadPS4.exe, shadPS419.exe, ...)."""
+def _shadps4_processes():
+    """The lower-case names of the running shadPS4 processes: the emulator's and QtLauncher's."""
     try:
         if sys.platform == 'win32':
             out = subprocess.run(['tasklist', '/FO', 'CSV', '/NH'], capture_output=True, text=True, timeout=30,
@@ -236,8 +266,18 @@ def emulator_running():
             out = subprocess.run(['ps', '-A', '-o', 'comm='], capture_output=True, text=True, timeout=30).stdout
             names = [os.path.basename(line.strip()) for line in out.splitlines()]
     except (OSError, subprocess.SubprocessError):
-        return False
-    return any(n.lower().startswith('shadps4') and 'launcher' not in n.lower() for n in names)  # not the Qt launcher
+        return []
+    return [n.lower() for n in names if n.lower().startswith('shadps4')]
+
+
+def emulator_running():
+    """True while a shadPS4 emulator process runs (any build: shadPS4.exe, shadPS419.exe, ...)."""
+    return any('launcher' not in n for n in _shadps4_processes())    # not the Qt launcher
+
+
+def launcher_running():
+    """True while QtLauncher runs."""
+    return any('launcher' in n for n in _shadps4_processes())
 
 
 def _sha256(path):
@@ -302,6 +342,13 @@ def select_team_2026(raw, path=SELECT_TEAM_PATH):
     if raw.count(SELECT_TEAM_ANCHOR) != 1 or b'function NhlSelectTeam:AddDataToTeams()' not in raw:
         raise PatchError(f'league layer: {path} is not the nhlselectteam.lua this patch knows')
     return raw.replace(SELECT_TEAM_ANCHOR, SELECT_TEAM_ALIGN)
+
+
+def list_2026(raw, path=LIST_PATH):
+    """selectteam.lua without the expansion team in a league that is not the NHL, after checking the stock handler."""
+    if raw.count(LIST_ANCHOR) != 1 or b'function SelectTeam:OnServiceResponse(' not in raw:
+        raise PatchError(f'league layer: {path} is not the selectteam.lua this patch knows')
+    return raw.replace(LIST_ANCHOR, LIST_NEW)
 
 
 def bap_flow_2026(raw, path=BAP_FLOW_PATH):
@@ -390,11 +437,16 @@ def _current_art(game_dir, state):
         target = _target(game_dir, rel)
         if rec.get('new') and os.path.exists(target):
             with eb.EbArchive(target) as arc:
-                for entry in arc.entries:
-                    files[entry] = arc.read(entry)
+                for entry, (_off, size) in arc.entries.items():
+                    files[entry] = art_mod.Stored(size, functools.partial(_read_entry, target, entry))
     if not files:
         return None
     return art_mod.Pack('served', {'packs': state['layers']['art'].get('packs', [])}, files)
+
+
+def _read_entry(archive, entry):
+    with eb.EbArchive(archive) as arc:
+        return arc.read(entry)
 
 
 def _art_record(packs):
@@ -469,7 +521,10 @@ def build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None,
         # the portrait flags follow the art served (art_mod.portrait_flags): the same database serves both ways
         schema = parse_schema(gamefiles.schema_xml(game_dir)[0])
         stock = Database.parse(gamefiles.default_database(game_dir)[0], schema)
-        if art_mod.portrait_flags(db, stock, art_mod.merge(art) if 'art' in layers and art else {}):
+        served = art if 'art' in layers and art else []
+        changed = art_mod.portrait_flags(db, stock, art_mod.merge(served) if served else {})
+        changed += art_mod.alternate_rows(db, served)   # NHL 27 alternates ride on throwback rows (build_alts)
+        if changed:
             database = db.to_bytes()
         roster = roster_file(db, game_dir)
         modes = mode_roster_files(db, game_dir)
@@ -480,7 +535,7 @@ def build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None,
                             'mode_rosters': sorted(os.path.basename(p) for p in modes)}
     if 'league' in layers:
         for path, edit in ([(CAPDEFS_PATH, capdefs_2026), (SELECT_TEAM_PATH, select_team_2026),
-                            (BAP_FLOW_PATH, bap_flow_2026), (BAP_TEAM_PATH, bap_team_2026)]
+                            (LIST_PATH, list_2026), (BAP_FLOW_PATH, bap_flow_2026), (BAP_TEAM_PATH, bap_team_2026)]
                            + [(p, salary_schema) for p in SALARY_SCHEMAS]):
             archive = textpack._winner(game_dir, path)
             with eb.EbArchive(archive) as arc:
@@ -578,7 +633,7 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
                     if arc.read(entry) != data:
                         raise PatchError(f'{rel}: {entry} did not read back')
             if new:
-                written[rel] = {'new': True, 'entries': sorted(entries)}
+                written[rel] = {'new': True, 'entries': sorted(entries), 'size': os.path.getsize(tmp)}
             else:
                 st = os.stat(archive)
                 written[rel] = {'source_size': st.st_size, 'source_mtime': int(st.st_mtime),
@@ -597,6 +652,8 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
             os.replace(tmp, target)
             written[rel]['sha256'] = ours[rel]['sha256'] = _sha256(target)
             save(ours, partial)
+    except art_mod.ArtError as err:     # a pack changed after it was read (art.Stored)
+        raise PatchError(f'art layer: {err}') from err
     finally:
         for tmp, _target_path, _rel_ in tmps:
             if os.path.exists(tmp):
@@ -739,6 +796,13 @@ def undo(game_dir, running=None):
     return done
 
 
+def _untouched(path, rec, stamp):
+    """An art archive as written: its size, and no newer than the state file (`stamp`) written after it. Reading
+    gigabytes at each look at the game is too slow."""
+    st = os.stat(path)
+    return bool(rec.get('new')) and rec.get('size') == st.st_size and st.st_mtime_ns <= stamp
+
+
 def status(game_dir, lang='eng_us'):
     """What the patch serves now: layers, files (present, unchanged), and whether the game changed under it."""
     state = _load_state(game_dir)
@@ -749,11 +813,12 @@ def status(game_dir, lang='eng_us'):
             out.update(applied=True, layers={'text': {'legacy': True}})
         return out
     out.update(applied_at=state.get('applied'), layers=state.get('layers', {}))
+    stamp = os.stat(state_path(game_dir)).st_mtime_ns
     for rel, rec in state.get('files', {}).items():
         path = _target(game_dir, rel)
         source = gamefiles.locate(game_dir, rel)
         present = os.path.exists(path)
-        same = present and _sha256(path) == rec.get('sha256')
+        same = present and (_untouched(path, rec, stamp) or _sha256(path) == rec.get('sha256'))
         out['files'][rel] = {'present': present, 'unchanged': same}
         if not present:
             out['problems'].append(f'{rel}: missing from the overlay (apply again)')

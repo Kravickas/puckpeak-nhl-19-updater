@@ -27,7 +27,7 @@ import time
 from overtime_core import history as H, overlay, rules as RU
 
 from .. import hud
-from . import gamesetup, history_view as HV, jobs, keypress, launch, lobby_client as LC, paths
+from . import gamesetup, history_view as HV, jobs, keypress, launch, lobby_client as LC, patch_ctl, paths
 from .registry import Part
 
 POLL = 3.0              # seconds between `state` asks while in a lobby
@@ -85,7 +85,7 @@ class MultiplayerCtl(Part):
         self.hud = None
         self.chat_mark = {}         # (code, token) -> the newest chat number already shown
         self.url_override = str(prefs.get('url') or '')
-        self.logged = {'npid': '', 'account': None}   # what shadPS4's log said at the last look
+        self.logged = {'npid': '', 'account': None, 'why': ''}   # what shadPS4's log said at the last look
         self.checks = None          # [{key, label, text, tone, go}] of the last look
         self.lobbies = []           # the public list
         self.error = ''             # the last thing that went wrong, in words
@@ -181,9 +181,10 @@ class MultiplayerCtl(Part):
         setup = c.setup
         emu = setup.known_emulator()
         user = gamesetup.emu_user_dir(emu) if emu else ''
-        log = (gamesetup.shadnet_log(user) if user else None) or {}
+        log = gamesetup.shadnet_log(user) if user else None
         users = gamesetup.shadnet_users(user) if user else []
-        logged = {'npid': log.get('npid') or (users[0]['npid'] if users else ''), 'account': log.get('account')}
+        logged = {'npid': (log or {}).get('npid') or (users[0]['npid'] if users else ''),
+                  'account': (log or {}).get('account'), 'why': gamesetup.shadnet_why(log) if user else ''}
         checks = self._checks(emu)
         with self.mlock:
             self.logged, self.checks = logged, checks
@@ -197,6 +198,7 @@ class MultiplayerCtl(Part):
             roster = ('caution', 'not known yet', 'setup')
         else:
             try:
+                patch_ctl.adopt_patch(c.setup)
                 eboot = gamesetup.status(emu)
                 st = overlay.status(game_dir) if game_dir and c.game.ok else None
             except (OSError, ValueError, gamesetup.SetupError, overlay.PatchError) as err:
@@ -893,7 +895,7 @@ class MultiplayerCtl(Part):
             lobby = self._lobby_view()
             return {
                 'you': {'name': self.my_name(), 'name_from': 'typed' if self.name else 'game' if self.logged['npid'] else '',
-                        'ext': ext, 'ext_from': source, 'press': self.press_title,
+                        'ext': ext, 'ext_from': source, 'ext_why': self.logged.get('why', ''), 'press': self.press_title,
                         'hud': {'on': self.show_hud, 'available': self.hud_ok(), 'phrases': list(PHRASES)}},
                 'checks': self._checks_view(),
                 'lobby': lobby,

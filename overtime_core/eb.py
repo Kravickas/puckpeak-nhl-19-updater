@@ -166,7 +166,7 @@ class _Entry:
 
     def chunks(self, bs=1 << 22):
         if self.data is not None:
-            yield self.data
+            yield self.data.read() if hasattr(self.data, 'read') else self.data
             return
         with open(self.src, 'rb') as f:
             f.seek(self.off)
@@ -284,7 +284,7 @@ def _changed(folders, entries, changes):
     at = {e.path: i for i, e in enumerate(entries)}
     for p, data in changes.items():
         p = p.replace('\\', '/').lower()
-        new = _Entry(p, data=bytes(data))
+        new = _Entry(p, data=data if hasattr(data, 'read') else bytes(data))   # art.Stored: read when it is written
         if p in at:
             entries[at[p]] = new
         else:

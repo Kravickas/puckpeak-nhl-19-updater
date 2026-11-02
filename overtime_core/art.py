@@ -29,7 +29,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import zipfile
+from functools import partial
 
 from . import eb, gamefiles
 
@@ -40,6 +42,7 @@ DELTA_MAGIC = b'OTD1'
 BLOCK = 16
 FAMILIES = ('inxp', 'game')
 GNF_MAGIC = b'GNF '
+DDS_MAGIC = b'DDS '   # the kits' name_adidas_* plates carry a .gnf name but hold a DDS
 _PATH = re.compile(r'^nhl/[a-z0-9_./-]+\.gnf$')
 _ARCHIVE = re.compile(r'^(patch_)?([a-z]+)_(\d+)\.big$')
 # NHL 19 draws a player's portrait from p<artid> (the bio's artid, not its game_id: ws8 run pk), when his bio has
@@ -66,24 +69,43 @@ def _sha(data):
 
 
 def check_file(path, data):
-    """Raise ArtError unless `path` is a lower-case game texture path and `data` a GNF file."""
+    """Raise ArtError unless `path` is a lower-case game texture path and `data` a GNF file (a DDS for name_*)."""
     if not _PATH.match(path) or '..' in path.split('/'):
         raise ArtError(f'not a game texture path: {path}')
-    if data[:4] != GNF_MAGIC:
-        raise ArtError(f'{path}: not a GNF texture')
+    magic = DDS_MAGIC if path.rsplit('/', 1)[-1].startswith('name_') else GNF_MAGIC
+    if data[:4] != magic:
+        raise ArtError(f'{path}: not a {"DDS" if magic == DDS_MAGIC else "GNF"} texture')
+
+
+class Stored:
+    """A file of a pack, read only when it is written: with every jersey pack on the art layer is over 10 GB, more than
+    a PC can hold in memory. Stands for its bytes: `len`, `==` and read()."""
+    __slots__ = ('size', 'read')
+    __hash__ = None
+
+    def __init__(self, size, read):
+        self.size, self.read = size, read
+
+    def __len__(self):
+        return self.size
+
+    def __eq__(self, other):
+        return self.read() == (other.read() if isinstance(other, Stored) else other)
 
 
 class Pack:
-    """One art pack: `name`, `info` (pack.json without the file list) and `files` {game path: bytes}."""
+    """One art pack: `name`, `info` (pack.json without the file list) and `files` {game path: bytes or Stored}, with
+    `shas` {game path: sha256} of the files it knows without reading them."""
 
-    def __init__(self, name, info, files, path=None):
-        self.name, self.info, self.files, self.path = name, info, files, path
+    def __init__(self, name, info, files, path=None, shas=None):
+        self.name, self.info, self.files, self.path, self.shas = name, info, files, path, shas or {}
 
     @property
     def sha256(self):
         h = hashlib.sha256()
         for p in sorted(self.files):
-            h.update(p.encode() + b'\0' + _sha(self.files[p]).encode())
+            sha = self.shas.get(p) or _sha(self.files[p])
+            h.update(p.encode() + b'\0' + sha.encode())
         return h.hexdigest()
 
     def record(self):
@@ -145,9 +167,32 @@ def game_reader(game_dir, paths):
     return read
 
 
+def _zip_member(path, name):
+    try:
+        with zipfile.ZipFile(path) as z:
+            return z.read(name)
+    except (zipfile.BadZipFile, KeyError, OSError) as err:
+        raise ArtError(f'{path}: {err}') from err
+
+
+def _read_zipped(path, name, sha):
+    """A pack's file again (load_pack checked it; the pack may have changed since)."""
+    data = _zip_member(path, name)
+    if _sha(data) != sha:
+        raise ArtError(f'{path}: {name} does not match its checksum')
+    return data
+
+
+def _read_delta(path, name, sha, base):
+    data = apply_delta(base(name), _zip_member(path, name + '.delta'))
+    if _sha(data) != sha:
+        raise ArtError(f'{path}: {name} does not match its checksum')
+    return data
+
+
 def load_pack(path, game_dir=None):
-    """Read and check an art pack zip; a delta pack needs `game_dir` (its bases). Raises ArtError when anything is
-    off."""
+    """Read and check an art pack zip, keeping none of it in memory (Stored); a delta pack needs `game_dir` (its bases).
+    Raises ArtError when anything is off."""
     try:
         with zipfile.ZipFile(path) as z:
             try:
@@ -157,7 +202,7 @@ def load_pack(path, game_dir=None):
             if info.get('format') not in (FORMAT, DELTA_FORMAT):
                 raise ArtError(f'{path}: pack format {info.get("format")} (this app reads {FORMAT}, {DELTA_FORMAT})')
             listed = info.get('files') or {}
-            files = {}
+            files, shas = {}, {}
             for p, sha in listed.items():
                 try:
                     data = z.read(p)
@@ -166,7 +211,7 @@ def load_pack(path, game_dir=None):
                 if _sha(data) != sha:
                     raise ArtError(f'{path}: {p} does not match its checksum')
                 check_file(p, data)
-                files[p] = data
+                files[p], shas[p] = Stored(len(data), partial(_read_zipped, path, p, sha)), sha
             deltas = info.get('deltas') or {}
             if deltas and game_dir is None:
                 raise ArtError(f'{path}: a delta pack is read with the game folder')
@@ -185,19 +230,20 @@ def load_pack(path, game_dir=None):
                 if _sha(data) != rec.get('sha256'):
                     raise ArtError(f'{path}: {p} does not match its checksum')
                 check_file(p, data)
-                files[p] = data
+                files[p] = Stored(len(data), partial(_read_delta, path, p, rec['sha256'], read))
+                shas[p] = rec['sha256']
     except (zipfile.BadZipFile, OSError, ValueError) as err:
         raise ArtError(f'{path}: {err}') from err
     if not files:
         raise ArtError(f'{path}: the pack holds no textures')
     meta = {k: v for k, v in info.items() if k not in ('files', 'deltas')}
-    return Pack(info.get('name') or os.path.splitext(os.path.basename(path))[0], meta, files, path)
+    return Pack(info.get('name') or os.path.splitext(os.path.basename(path))[0], meta, files, path, shas)
 
 
-def write_pack(path, name, files, source='', built='', bases=None):
+def write_pack(path, name, files, source='', built='', bases=None, extra=None):
     """Write an art pack zip ({game path: GNF bytes}); the same files make the same zip. Returns its sha256.
     `bases` ({game path: the game's own bytes}) makes it a delta pack: each file with a base of the same length is
-    stored as a delta to it."""
+    stored as a delta to it. `extra` adds keys to pack.json (e.g. `alternates`)."""
     for p, data in files.items():
         check_file(p, data)
     bases = bases or {}
@@ -208,6 +254,7 @@ def write_pack(path, name, files, source='', built='', bases=None):
     if deltas:
         info['deltas'] = {p: {'base': _sha(bases[p]), 'sha256': _sha(files[p]), 'size': len(files[p])}
                           for p in sorted(deltas)}
+    info.update(extra or {})
     stored = dict(whole, **{p + '.delta': d for p, d in deltas.items()})
     tmp = path + '.tmp'
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -271,18 +318,94 @@ def route(files, where, folders):
     return out
 
 
-def edits(game_dir, files):
-    """{absolute path of a new archive (not in the game folder): {path: bytes}} for the overlay, and the record."""
+# bytes of one art archive. The game's own game_90.big is 13.5 GB, but a tester saw crashes "when the big files become too
+# big" (docs/notes/art.md, item 14), so more art goes in more archives instead of a larger one
+ARCHIVE_LIMIT = 4 << 30
+ARCHIVE_ROOM = ARCHIVE_LIMIT - (64 << 20)   # filled up to this: the rest is for its table and the 16-byte alignment
+SPARE = 1 << 30           # free bytes left on the drive after the archives are written
+
+
+def check_size(out, free=None):
+    """ArtError when an art archive of `out` ({archive path: {path: bytes}}) would be 4 GB or more, or when the drive
+    of the first lacks room for all of them plus SPARE. `free`: the free bytes (the drive of the archives by default)."""
+    sizes = {a: sum(len(d) for d in entries.values()) for a, entries in out.items()}
+    for archive, size in sizes.items():
+        if size >= ARCHIVE_LIMIT:
+            raise ArtError(f'{os.path.basename(archive)} would be {size / 2 ** 30:.1f} GB, more than an archive can '
+                           'hold: switch off some of the jersey packs')
+    if sizes:
+        if free is None:
+            where = os.path.dirname(next(iter(sizes)))
+            while where and not os.path.isdir(where) and os.path.dirname(where) != where:
+                where = os.path.dirname(where)
+            free = shutil.disk_usage(where).free
+        need = sum(sizes.values())
+        if free < need + SPARE:
+            raise ArtError(f'not enough free space for the art: {need / 2 ** 30:.1f} GB needed, '
+                           f'{free / 2 ** 30:.1f} GB free')
+
+
+def split(entries):
+    """[{path: bytes}] of `entries` in path order, each with at most ARCHIVE_ROOM bytes."""
+    parts, used = [{}], 0
+    for p in sorted(entries):
+        size = len(entries[p])
+        if used + size > ARCHIVE_ROOM and parts[-1]:
+            parts.append({})
+            used = 0
+        parts[-1][p] = entries[p]
+        used += size
+    return parts
+
+
+def archive_names(first):
+    """The art archives' names from `first` on, in the game's mount order: it sorts by name (strncmp) and the last wins,
+    so _99 is followed by _990, never _100, which would mount before the game's own _97 (docs/notes/eb-archive.md)."""
+    head, n, tail = re.match(r'(.*_)(\d+)(\.big)$', first).groups()
+    n = int(n)
+    while True:
+        yield f'{head}{n}{tail}'
+        n = 990 if n == 99 else n + 1
+
+
+def edits(game_dir, files, free=None):
+    """{absolute path of a new archive (not in the game folder): {path: bytes}} for the overlay, and the record: a family
+    with more art than one archive holds gets several. ArtError when the drive is too full (check_size)."""
     routed = route(files, *game_index(game_dir))
     names = targets(game_dir)
     out, record = {}, {}
     for fam, entries in sorted(routed.items()):
-        archive = gamefiles.locate(game_dir, names[fam])
-        if os.path.exists(archive):
-            raise ArtError(f'{archive} is a game file: the art archive name is taken')
-        out[archive] = entries
-        record[fam] = {'archive': names[fam], 'textures': len(entries)}
+        used = []
+        for part, name in zip(split(entries), archive_names(names[fam])):
+            archive = gamefiles.locate(game_dir, name)
+            if os.path.exists(archive):
+                raise ArtError(f'{archive} is a game file: the art archive name is taken')
+            out[archive] = part
+            used.append(name)
+        record[fam] = {'archive': used[0], 'archives': used, 'textures': len(entries)}
+    check_size(out, free)
     return out, record
+
+
+STOCK_JERSEYS = 'stockteamjerseys'
+
+
+def alternate_rows(db, packs):
+    """Relabel the stockteamjerseys rows the packs' `alternates` name ({teamid, style, variant, locstring}): a throwback
+    row whose textures a pack made into an NHL 27 alternate. With no such pack the rows keep the stock label (the same
+    database serves both ways). Returns how many rows changed."""
+    if STOCK_JERSEYS not in db:
+        return 0
+    t, changed = db[STOCK_JERSEYS], 0
+    want = {(a['teamid'], a['style'], a['variant']): a['locstring'] for p in packs for a in p.info.get('alternates', [])}
+    if not want:
+        return 0
+    for i in range(t.count):
+        loc = want.get((t.get(i, 'teamid'), t.get(i, 'style'), t.get(i, 'variant')))
+        if loc is not None and t.get(i, 'locstring') != loc:
+            t.set(i, 'locstring', loc)
+            changed += 1
+    return changed
 
 
 def portrait_flags(db, stock, files):

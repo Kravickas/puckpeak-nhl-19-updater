@@ -69,6 +69,18 @@ def test_served_reads_the_base_mods_folder(split):
     assert gamefiles.read_latest(str(base), 'nhl/b.db', mods=False) == (b'newest db', 'patch_inxp_56.big')
 
 
+@pytest.mark.parametrize('pick', ['base', 'patch', 'update'])
+def test_both_update_folders_resolve_to_the_one_shadps4_mounts(tmp_path, pick):
+    """-UPDATE and -patch beside the base: shadPS4 mounts -UPDATE, so every pick resolves to it (0.30.0)."""
+    base = _folder(tmp_path, 'CUSA11126', '01.00', {'inxp_00.big': {'nhl/a.xml': b'a'}})
+    patch = _folder(tmp_path, 'CUSA11126-patch', '01.60', {'patch_inxp_56.big': {'nhl/b.db': b'patch'}})
+    update = _folder(tmp_path, 'CUSA11126-UPDATE', '01.60', {'patch_inxp_56.big': {'nhl/b.db': b'update'}})
+    game = str({'base': base, 'patch': patch, 'update': update}[pick])
+    assert gamefiles.roots(game) == (str(base), str(update))
+    assert gamefiles.read_latest(game, 'nhl/b.db') == (b'update', 'patch_inxp_56.big')
+    assert gamesetup.read_game(game)['update'] == str(update)
+
+
 def test_update_suffix_and_lone_folders(tmp_path):
     lone = _folder(tmp_path, 'NHL19-patch', '01.60', {'inxp_00.big': {'nhl/a.xml': b'a'}})
     assert gamefiles.roots(str(lone)) == (str(lone), None)          # no base beside it: a whole game

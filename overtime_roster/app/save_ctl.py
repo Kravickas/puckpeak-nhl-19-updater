@@ -11,7 +11,7 @@ second list, "Kept for every update", put back after each update; its Remove dro
 """
 import os
 
-from overtime_core import sfo
+from overtime_core import overlay, sfo
 
 from . import install, jobs, myedits, paths, savegame
 from .registry import Part
@@ -257,6 +257,10 @@ class SaveCtl(Part):
         """Write the roster (a job). name: the roster's name (None: the one typed); then: runs after a good save;
         reopen: a new save becomes the open roster (Save as new: the Save bar then updates it)."""
         c = self.ctl
+        if c.session and c.target == install.TARGET_SAVE and overlay.emulator_running():
+            c.shell.ask('Close shadPS4 first', ['shadPS4 is running, and the game holds its saves while it runs.',
+                                                'Close it, press Check again, then save.'], [('OK', 'ok', 'plain')])
+            return
         with c.lock:
             if not c.session or c.busy:
                 return

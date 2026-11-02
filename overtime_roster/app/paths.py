@@ -4,17 +4,17 @@ import sys
 import tempfile
 
 GAME_DIR = r'D:\PS4\NHL 19'
-SAVE_SUBDIR = os.path.join('shadPS4', 'home', '1000', 'savedata', 'CUSA11126')
+SAVE_SUBDIR = os.path.join('shadPS4', 'home', '1000', 'savedata')   # + the game's title id (CUSA11126, CUSA11116)
 
 
 def default_game_dir():
     return os.environ.get('OVERTIME_GAME_DIR', GAME_DIR)
 
 
-def default_save_dir():
+def default_save_dir(title='CUSA11126'):
     if 'OVERTIME_SAVE_DIR' in os.environ:
         return os.environ['OVERTIME_SAVE_DIR']
-    return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), SAVE_SUBDIR)
+    return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), SAVE_SUBDIR, title)
 
 
 def temporary(path):

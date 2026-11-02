@@ -31,17 +31,18 @@ SWITCHES = (
      'Legacy.',
      "The announced lines, else the lines of the team's last 5 games on NHL.com, with the C and the As they wore: "
      'even strength, goalies, power play and penalty kill. Overtime, the shootout and the extra attackers are made '
-     'from the 20 who dress. A unit whose player has moved on is made by rating. Lines you set yourself on an NHL '
-     'team are replaced. Off: lines by rating for every team that changed, as before.'),
+     'from the 20 who dress. A unit whose player has moved on is made by rating. Lines you set yourself and saved '
+     'stay when My edits is on (your line always wins). Off: lines by rating for every team that changed, as '
+     'before.'),
     ('nhl27', 'NHL 27 ratings and types', "Every player's ratings, player type and contract from NHL 27.",
      "Players NHL 27 does not have keep EA's ratings. Draft info (year, round, pick) comes with the ratings."),
     ('calendar', 'Calendar', 'The real schedule of the season, for all 32 teams.',
      'The NHL plays 84 games a team since 2025-26. Pick 82 for the length NHL 19 was made for.'),
     ('retire', 'Retirements', 'Free agents no league lists any more retire.',
      'Off: they stay in the free agents, as they are now.'),
-    ('myedits', 'My edits', 'Your saved player edits go back in after the update.',
-     'Every player edit you saved on the Roster tab (card, face & type, equipment) is kept in My edits and put back '
-     'after the update. One the roster refuses (a number another player has now) is skipped and the result says '
+    ('myedits', 'My edits', 'Your saved player edits and lines go back in after the update.',
+     'Every player edit you saved on the Roster tab (card, face & type, equipment) and the lines and letters you set '
+     'on the Lines tab are kept in My edits and put back after the update. One the roster refuses (a number another player has now) is skipped and the result says '
      'why. Off: the update leaves every player as NHL.com has him. My edits on the Save bar lists them.'),
     ('drafts', 'Draft info', 'Year, round and pick of every player. It comes with the NHL 27 ratings.',
      'Draft info cannot be turned on or off on its own yet: it follows the NHL 27 ratings switch.'),
@@ -261,7 +262,7 @@ class UpdateCtl(Part):
                'opts': dict(self.opts), 'when': datetime.datetime.now(), 'gathered': None, 'todo': None, 'rep': None,
                'issues': [], 'problems': [], 'out': None, 'change': None, 'undone': False, 'error': None,
                'retiring': None, 'teams': None, 'reused': False, 'myedits': None,
-               'kept': len(c.parts['roster'].kept()['players']) if self.opts.get('myedits') else 0}
+               'kept': myedits.count(c.parts['roster'].kept()) if self.opts.get('myedits') else 0}
         out.update(kv)
         return out
 
@@ -470,6 +471,7 @@ class UpdateCtl(Part):
             with c.lock:
                 issues = rec['issues'] = session.verify()
                 rec['teams'] = update.team_count(session.db)
+                rec['short'], rec['both'] = update.heads_up(session.db)
                 errors = [self._issue_text(session, i) for i in issues if i.level == 'error']
             rec['problems'] = list(dict.fromkeys(errors + [str(p) for p in rep.problems]))
             n = len(rec['problems'])
@@ -586,6 +588,7 @@ class UpdateCtl(Part):
                 self.at = 3
                 issues = rec['issues'] = session.verify()
                 rec['teams'] = update.team_count(session.db)
+                rec['short'], rec['both'] = update.heads_up(session.db)
                 return todo, rep, issues
 
         def done(result):
@@ -946,6 +949,12 @@ class UpdateCtl(Part):
         if o['rep'] is not None and o['rep'].skipped_lines:
             issues.append(f"{len(o['rep'].skipped_lines)} teams kept their lines: not enough players to build new "
                           'ones.')
+        issues += [f'Heads up: {t}. The game hangs on the first game with this team: it needs 2 goalies and 18 skaters.'
+                   for t in (o.get('short') or [])[:3]]
+        both = o.get('both') or []
+        if both:
+            issues.append(f"{len(both)} free agent{'s are' if len(both) != 1 else ' is'} also on a club: "
+                          + ', '.join(both[:5]) + (' and more.' if len(both) > 5 else '.'))
         skipped = (o.get('myedits') or {}).get('skipped') or []
         issues += [f"My edits skipped: {sk['who']} ({sk['part']}): {sk['why']}" for sk in skipped[:8]]
         if len(skipped) > 8:
@@ -1030,7 +1039,7 @@ class UpdateCtl(Part):
                         'go': {'enabled': False, 'text': 'Go'}, 'check': {'enabled': False}, 'busy': busy}
             save = self.save_view(roster)
             on = dict(self.opts, rosters=True, drafts=self.opts['nhl27'])
-            kept = len(c.parts['roster'].kept()['players'])
+            kept = myedits.count(c.parts['roster'].kept())
             subs = {'myedits': (f"{kept} player{'s' if kept != 1 else ''} kept: their saved edits go back in after "
                                 'the update.') if kept else
                     'None kept yet: player edits you save on the Roster tab go back in after every update.'}

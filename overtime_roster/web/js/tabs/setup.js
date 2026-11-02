@@ -38,18 +38,19 @@ function LinkRow() {
 
 // --- 1 Where is shadPS4? ---------------------------------------------------------------------------------------------------
 const WHERE_INFO = [
-  { head: 'What to pick', items: ['shadPS4.exe of the NHL19-Build. Other builds of shadPS4 cannot play NHL 19 online.',
+  { head: 'What to pick', items: ['The folder of your emulator (with shadPS4QtLauncher.exe or shadPS4.exe in it), or shadPS4.exe itself. Any shadPS4 will do.',
+    'With QtLauncher, the version selected in it is used.',
     'The program finds NHL 19 and your roster saves from there.'] },
-  { head: 'The checks', items: ['shadPS4: the NHL19-Build.', 'NHL 19: the game (CUSA11126) with update 1.60.',
+  { head: 'The checks', items: ['shadPS4: found, and its version.', 'NHL 19: the game (CUSA11126 or CUSA11116) with update 1.60.',
     'ShadNet: you are signed in inside shadPS4.', 'Network: the Overtime server answers.',
     'Hold the mouse on a check to read all of it.'] },
 ];
 
-// Windows' file picker; in a browser (no window to show it in) Python answers {type: true} and the path is typed
-async function pickEmulator(path) {
-  const reply = await call('setup_pick_emulator');
+// Windows' picker; in a browser (no window to show it in) Python answers {type: true} and the path is typed
+async function pickEmulator(path, folder) {
+  const reply = await call('setup_pick_emulator', folder);
   if (!reply || !reply.type) return;
-  const typed = window.prompt('The full path of shadPS4.exe (the NHL19-Build):', path || '');
+  const typed = window.prompt('The full path of your emulator folder or shadPS4.exe:', path || '');
   if (typed && typed.trim()) call('setup_set_emulator', typed.trim());
 }
 
@@ -61,8 +62,9 @@ function WhereCard({ s }) {
     <div class="card-body">
       <div class="row">
         <${PathText} path=${s.emulator.path} unset="Not picked yet"/>
-        <${Button} kind=${s.emulator.path ? 'ghost' : 'primary'} disabled=${busy} onClick=${() => pickEmulator(s.emulator.path)}>
-          ${s.emulator.path ? 'Change...' : 'Pick shadPS4.exe...'}<//>
+        <${Button} kind=${s.emulator.path ? 'ghost' : 'primary'} disabled=${busy} onClick=${() => pickEmulator(s.emulator.path, true)}>
+          ${s.emulator.path ? 'Change folder...' : 'Pick emulator folder...'}<//>
+        <${Button} kind="ghost" disabled=${busy} onClick=${() => pickEmulator(s.emulator.path, false)}>Pick shadPS4.exe...<//>
       </div>
       <div class=${cls('su-checks', s.checking && 'checking')}>
         ${s.checks.map((c) => html`<div key=${c.key} class=${cls('su-check', c.tone || 'idle')} title=${c.text}>
@@ -72,8 +74,30 @@ function WhereCard({ s }) {
       </div>
       <div class=${cls('su-state', st.tone)}>
         <span class="su-st">${st.text}</span>
-        ${st.get && html`<${Button} small onClick=${() => call('setup_emulator_page')}>Get the NHL19-Build<//>`}
+        ${st.get && html`<${Button} small onClick=${() => call('setup_emulator_page')}>Get shadPS4<//>`}
         ${s.emulator.path && html`<${Button} small disabled=${busy} onClick=${() => call('setup_refresh')}>Check again<//>`}
+      </div>
+    </div>
+  <//>`;
+}
+
+// --- Boost performance: Kravickas's NHL 19 build of shadPS4, on or off ---------------------------------------------------
+const BOOST_INFO = [
+  { head: 'What it does', items: ["Plays NHL 19 on Kravickas's NHL 19 build of shadPS4, for better performance and graphics.", 'Saves, patch and ShadNet login stay the same.'] },
+  { head: 'Your own shadPS4', items: ['It stays where it is, untouched.', 'Disable puts it back, in this app and in QtLauncher.'] },
+];
+
+function BoostCard({ s }) {
+  const b = s.boost;
+  return html`<${Card} title="Boost performance" className="su-boost"
+      aside=${html`<${Info} title="Boost performance" sections=${BOOST_INFO}/>`}>
+    <div class="card-body">
+      <div class=${cls('su-state', b.tone)}>
+        <span class="su-st">${b.text}</span>
+        ${b.newer && html`<${Button} small disabled=${!b.can} title="Kravickas build" onClick=${() => call('setup_boost', true)}>Update<//>`}
+        <${Button} small kind=${b.on ? 'ghost' : 'primary'} disabled=${!b.can} title="Kravickas build"
+          onClick=${() => call('setup_boost', !b.on)}>${b.on ? 'Disable' : 'Enable'} Boost performance<//>
+        <${Button} small kind="ghost" onClick=${() => call('setup_boost_source')}>Source code<//>
       </div>
     </div>
   <//>`;
@@ -196,6 +220,7 @@ export default function Setup() {
     <div class="col">
       <${LinkRow}/>
       <${WhereCard} s=${s}/>
+      <${BoostCard} s=${s}/>
       <${ProgramCard} s=${s}/>
     </div>
     <div class="col">

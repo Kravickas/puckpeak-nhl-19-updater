@@ -8,9 +8,13 @@ the page's calls, the contract files' calls and beta1's names are all in it.
 Every method answers quickly (work that takes a while runs as a job) and never raises: an unexpected error comes
 back as {"error": ...} and is logged. A call that returns nothing answers {"ok": true}.
 """
-from ..app import jobs, registry
+import os
 
-EXPOSED = frozenset(registry.calls()) | {'ready'}
+from ..app import jobs, registry
+from . import startlog
+
+OWN = {'ready', 'page_up', 'log_js', 'open_start_log', 'open_in_browser'}      # the window's calls (boot.js), no part's
+EXPOSED = frozenset(registry.calls()) | OWN
 
 
 def _answer(run, args):
@@ -35,9 +39,31 @@ class Api:
     def __init__(self, controller, host):
         self._c = controller
         self._host = host
+        self.way_out = None     # set by the window: (reason) closes it and opens the app in the browser
+
+    def page_up(self):
+        """The page has drawn its first data: the window works."""
+        startlog.page_up.set()
+        return {'ok': True}
+
+    def log_js(self, text):
+        startlog.note(f'page: {text}')
+        return {'ok': True}
+
+    def open_start_log(self):
+        if os.path.exists(startlog.path()):
+            self._host.open_path(startlog.path())
+        return {'ok': True}
+
+    def open_in_browser(self):
+        if self.way_out:
+            self.way_out('the player asked for it')
+        return {'ok': True}
 
     def ready(self):
         """The page has loaded: start the pushes and send everything once."""
+        startlog.ready_called.set()
+
         def first():
             self._host.start_pushing()
             return self._host.first()
@@ -45,6 +71,6 @@ class Api:
 
 
 # one method per call (pywebview lists the class's methods for the window's js_api)
-for _name in sorted(EXPOSED - {'ready'}):
+for _name in sorted(EXPOSED - OWN):
     setattr(Api, _name, _method(_name))
 del _name

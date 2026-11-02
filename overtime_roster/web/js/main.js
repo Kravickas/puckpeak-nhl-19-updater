@@ -88,7 +88,7 @@ function App() {
   const state = useRef({});
 
   useEffect(() => { loading.then(setMods); }, []);
-  // no tab asked for: Update when shadPS4 and a roster are known, else Setup (Python's app.start)
+  // no tab asked for: Setup (Python's app.start)
   useEffect(() => { if (!tab && app && app.start) pickTab(app.start); }, [app && app.start]);
   useEffect(() => { if (tab) call('tab', tab); }, [tab]);
 
@@ -118,7 +118,7 @@ function App() {
       if (mod && mod.onKey && mod.onKey(e)) { e.preventDefault(); return; }
       const step = (d) => pickTab(IDS[(IDS.indexOf(now) + d + IDS.length) % IDS.length]);
       if (e.ctrlKey && (e.key === 'PageUp' || e.key === 'PageDown')) { e.preventDefault(); step(e.key === 'PageUp' ? -1 : 1); return; }
-      if (e.ctrlKey && !e.altKey && /^[1-9]$/.test(e.key)) { e.preventDefault(); pickTab(IDS[Number(e.key) - 1]); return; }
+      if (e.ctrlKey && !e.altKey && /^[0-9]$/.test(e.key)) { e.preventDefault(); pickTab(IDS[(Number(e.key) + 9) % 10]); return; }
       if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
         if (TEAM.has(now) && now !== 'calendar' && (state.current.canSave || cardDraft.current)) saveRoster();
@@ -179,4 +179,5 @@ function App() {
 }
 
 window.ReactDOM.createRoot(document.getElementById('root')).render(html`<${App}/>`);
-connect();
+connect().then(() => setTimeout(() => window.__otOk && window.__otOk(), 0),
+  (err) => window.__otFail && window.__otFail(`The app did not answer: ${err && err.message || err}`));

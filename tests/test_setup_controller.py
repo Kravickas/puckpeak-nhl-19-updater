@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from overtime_core import overlay
+from overtime_core import art, overlay
 from overtime_roster.app import gamesetup, jobs, launch, patch, setup_controller as SC
 
 from test_gamesetup import world  # noqa: F401  (fixture)
@@ -78,7 +78,7 @@ def sc(world, monkeypatch):  # noqa: F811
     monkeypatch.setattr(overlay, 'apply', apply)
     monkeypatch.setattr(overlay, 'undo', lambda game_dir: calls['undo'].append(game_dir) or [])
     monkeypatch.setattr(overlay, 'status', lambda game_dir: {'applied': bool(calls['apply']), 'layers': {}, 'problems': []})
-    monkeypatch.setattr(patch, 'art_packs', lambda cache_dir=None, game_dir=None, kits=True, photos=True: (list(getattr(patch, '_test_packs', [])), []))
+    monkeypatch.setattr(patch, 'art_packs', lambda cache_dir=None, game_dir=None, kits=True, photos=True, extras=None: (list(getattr(patch, '_test_packs', [])), []))
     from overtime_roster.app import patch_ctl
     monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: list(getattr(
         patch, '_test_found', patch.ART_PACKS if getattr(patch, '_test_packs', None) else [])))
@@ -361,6 +361,126 @@ def test_downloads_list_every_pack_and_fetch_them(sc, monkeypatch, tmp_path):
     assert sc._kits(_downloads(sc))['state'] == 'ready'                    # beta1's kits row follows kits.zip
 
 
+def test_get_shadps4_opens_the_official_launcher(sc, monkeypatch):
+    opened = []
+    monkeypatch.setattr(SC.webbrowser, 'open', opened.append)
+    sc.setup_emulator_page()
+    assert opened == ['https://github.com/shadps4-emu/shadps4-qtlauncher/releases'] and 'QtLauncher' in sc.ctl.said[-1][0]
+
+
+def test_any_build_of_shadps4_is_good(sc):
+    tile = lambda key, value, tone, text: (value, tone, text)
+    main = {'version': '0.21.1 WIP', 'rev': '8a66adab', 'branch': 'main', 'remote': ''}
+    assert sc._emulator_tile({'build': main}, tile)[:2] == ('0.21.1 WIP', 'good')
+    assert sc._emulator_tile({'build': None}, tile)[:2] == ('Found', 'good')
+
+
+def _extras(sc):
+    from overtime_roster.app import patch_ctl
+    with sc.ctl.lock:
+        want = dict(sc.ctl.patch_want)
+    found = patch_ctl.packs_here(SC.patch_cache())
+    card = sc.extra_card(sc.known_emulator(), want, patch_ctl.switches(want, found), {}, False)
+    return {r['key']: r for r in card['rows']}
+
+
+def test_a_pack_switch_downloads_the_pack_and_off_keeps_it(sc, monkeypatch, tmp_path):
+    from overtime_roster.app import patch_ctl
+    have, got = _packs_world(sc, monkeypatch, tmp_path)
+    monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
+    sc.packs = SC.pack_status(SC.patch_cache())
+    sc.ctl.patch_want.update(art=False)
+    assert _extras(sc)['ice_all']['disabled']                               # no shadPS4 yet, no team art
+    sc.setup_set_emulator(str(sc.world['emu']))
+    sc.pack_switch('ice_all', True)
+    assert got == [] and not sc.ctl.patch_want.get('ice_all') and sc.ctl.said[-1][1] == 'caution'
+    sc.ctl.patch_want.update(art=True)
+    assert list(_extras(sc)) == list(patch_ctl.EXTRA_KEYS) and 'nothing is downloaded' in _extras(sc)['alts_intl']['text']
+    sc.pack_switch('alts_intl', True)
+    assert got == ['alts_intl.zip'] and sc.ctl.busy is None and sc.dl is None and sc.ctl.patch_want['alts_intl']
+    assert sc.ctl.said[-1][1] == 'good' and 'Press Patch' in sc.ctl.said[-1][0]
+    assert _extras(sc)['alts_intl']['on'] and _extras(sc)['alts_intl']['text'] == 'Downloaded (5 MB).'
+    assert patch_ctl.switches(sc.ctl.patch_want, sorted(have))['alts_intl']
+    sc.pack_switch('alts_intl', False)
+    assert 'alts_intl.zip' in have and not sc.ctl.patch_want['alts_intl']   # kept on this PC
+    assert 'Kept on this PC' in _extras(sc)['alts_intl']['text']
+    picked, now = {'alts_intl': False}, {'alts_intl': True}
+    row = sc.extra_card(sc.known_emulator(), dict(sc.ctl.patch_want), picked, now, True)['rows'][1]
+    assert row['key'] == 'alts_intl' and row['tag']['text'] == 'Patch to take away' and 'Kept on this PC' in row['text']
+    sc.pack_switch('alts_intl', True)
+    assert got == ['alts_intl.zip'] and sc.ctl.patch_want['alts_intl']      # here already: no second download
+    assert sc.pack_switch('nope', True) == {'error': 'Overtime Roster does not know this pack.'}
+
+
+def test_packs_switched_on_during_a_download_wait_their_turn_and_a_failure_goes_off(sc, monkeypatch, tmp_path):
+    from overtime_roster.app import packdownload, patch_ctl
+    have, got = _packs_world(sc, monkeypatch, tmp_path)
+    monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
+    sc.setup_set_emulator(str(sc.world['emu']))
+    sc.ctl.patch_want.update(art=True, ice_all=True, alts_intl=True)        # both on before the first job starts
+    sc.packs = SC.pack_status(SC.patch_cache())
+    sc._extras_next()
+    assert got == ['ice_all.zip', 'alts_intl.zip'] and sc.ctl.busy is None
+    have.difference_update(patch.EXTRA_PACKS)
+    sc.ctl.patch_want.update(ice_all=False, alts_intl=False)
+    sc.packs = SC.pack_status(SC.patch_cache())
+
+    def broken(names, cache_dir, **kw):
+        return [(names[0], False, 'The disk said no.')]
+    monkeypatch.setattr(packdownload, 'download', broken)
+    sc.pack_switch('alts_intl', True)
+    assert not sc.ctl.patch_want['alts_intl'] and sc.ctl.said[-1] == ('National team jerseys from NHL 27: The disk said no.', 'bad')
+
+    def crashed(names, cache_dir, **kw):
+        raise OSError('disk full')
+    monkeypatch.setattr(packdownload, 'download', crashed)
+    sc.pack_switch('ice_all', True)
+    assert not sc.ctl.patch_want['ice_all'] and sc.ctl.busy is None         # one try, not a loop
+
+
+def test_a_pack_switched_off_while_it_downloads_stops(sc, monkeypatch, tmp_path):
+    from overtime_roster.app import packdownload, patch_ctl
+    have, got = _packs_world(sc, monkeypatch, tmp_path)
+    monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
+    sc.setup_set_emulator(str(sc.world['emu']))
+    sc.ctl.patch_want.update(art=True)
+    sc.packs = SC.pack_status(SC.patch_cache())
+
+    def download(names, cache_dir, progress=None, game_dir=None, cancelled=None, **kw):
+        progress(names[0], 1, 2)
+        row = _extras(sc)['ice_all']
+        assert row['progress'] == 0.5 and row['text'] == 'Downloading... 50 % of 5 MB' and not row['disabled']
+        assert _extras(sc)['alts_intl']['disabled'] is False                # another can be switched on meanwhile
+        sc.pack_switch('ice_all', False)
+        assert cancelled()
+        return [(names[0], False, packdownload.STOPPED)]
+    monkeypatch.setattr(packdownload, 'download', download)
+    sc.pack_switch('ice_all', True)
+    assert not sc.ctl.patch_want['ice_all'] and sc.ctl.busy is None and sc.dl is None
+    assert 'ice_all.zip' not in have
+
+
+def test_the_pack_card_is_not_the_jersey_packs_download(sc, monkeypatch, tmp_path):
+    have, _got = _packs_world(sc, monkeypatch, tmp_path)
+    sc.setup_set_emulator(str(sc.world['emu']))
+    sc.packs = SC.pack_status(SC.patch_cache())
+    sc.dl = {'names': ['alts_intl.zip'], 'name': 'alts_intl.zip', 'part': 0.1, 'share': 0.1}
+    sc.ctl.busy = 'Downloading'
+    assert sc.pack_card(sc.known_emulator())['state'] != 'downloading'
+    sc.ctl.busy, sc.dl = None, None
+
+
+def test_only_the_packs_switched_on_are_served(monkeypatch, tmp_path):
+    monkeypatch.setenv('OVERTIME_ART_PACKS', str(tmp_path))
+    for i, name in enumerate(['looks32.zip', *patch.EXTRA_PACKS]):
+        art.write_pack(str(tmp_path / name), name[:-4], {f'nhl/ui/kettle_assets/teamlogos/large/t{i}.gnf': b'GNF ' + bytes(60)})
+    layers = []
+    packs = patch.art_layer({'art': True, 'kits': False, 'photos': False, 'alts_intl': True, 'ice_all': True}, layers)
+    assert [p.name for p in packs] == ['looks32', 'ice_all', 'alts_intl'] and layers == ['art']
+    assert not set(patch.ALT_PACKS) - set(patch.EXTRA_PACKS) & set(patch.ART_PACKS)   # the packs left out of 0.30.0 stay out
+    assert [p.name for p in patch.art_layer({'art': True, 'kits': False, 'photos': False}, [])] == ['looks32']
+
+
 def test_downloads_delete_asks_first(sc, monkeypatch, tmp_path):
     have, _got = _packs_world(sc, monkeypatch, tmp_path)
     sc.packs = SC.pack_status(SC.patch_cache())
@@ -524,14 +644,14 @@ def test_pack_card_photos_wait_for_the_roster_switch(sc, monkeypatch, tmp_path):
 def test_pack_card_delete_asks_then_switches_off(sc, monkeypatch, tmp_path):
     from overtime_roster.app import patch_ctl
     have, _got = _packs_world(sc, monkeypatch, tmp_path)
-    have.update(patch.ART_PACKS)
+    have.update(n for n in patch.ART_PACKS if n not in patch.EXTRA_PACKS)   # the switched packs are not the card's
     monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
     sc.ctl.patch_want.update(art=True, photos=True, kits=True, roster=True)
     sc.packs = SC.pack_status(SC.patch_cache())
     sc.packs_drop()
     (title, lines, buttons, answers), = sc.ctl.shell.asked
     assert title == f'Delete the {SC.PACK_TITLE}?' and buttons == ['delete', 'keep'] and '20 MB' in lines[0]
-    assert have == set(patch.ART_PACKS)                                  # nothing gone before the answer
+    assert have == set(patch.ART_PACKS) - set(patch.EXTRA_PACKS)         # nothing gone before the answer
     answers['delete']()
     assert not have and not any(sc.ctl.patch_want[k] for k in patch_ctl.PACK_KEYS)
     assert sc.ctl.said[-1] == (f'The {SC.PACK_TITLE} is deleted. Patch the game again to take it out.', 'good')

@@ -70,10 +70,35 @@ function PackCard({ s }) {
   <//>`;
 }
 
+// the packs with a switch of their own (Legacy's): on downloads the pack, off keeps it on this PC; Patch puts it in or out
+function ExtraRow({ r }) {
+  return html`<div class=${cls('gp-layer gp-extra', r.on && 'on', r.disabled && 'off')} data-key=${r.key}>
+    <div class="gp-layer-main">
+      <div class="gp-layer-title"><span>${r.title}</span>${r.tag && html`<${Tag} tone=${r.tag.tone}>${r.tag.text}<//>`}</div>
+      <div class=${cls('gp-layer-sub', r.tone)}>${r.text}</div>
+      ${r.progress !== null && html`<${ProgressBar} value=${r.progress} active/>`}
+    </div>
+    ${r.can_update && html`<${Button} small onClick=${() => call('setup_pack_download', r.name)}>Update<//>`}
+    ${r.can_remove && html`<${Button} small className="gp-extra-drop" onClick=${() => call('setup_pack_remove', r.name)}>Delete...<//>`}
+    <${Info} title=${r.title} text=${r.sub}/>
+    <${Switch} on=${r.on} disabled=${r.disabled} label=${r.title} onChange=${(on) => call('setup_pack_switch', r.key, on)}/>
+  </div>`;
+}
+
+function ExtraCard({ s }) {
+  const x = s.extras;
+  return html`<${Card} n="3" title=${x.title} className="gp-extras">
+    <div class="card-body gp-layers">
+      <div class="small-note gp-extras-sub">${x.sub}</div>
+      ${x.rows.map((r) => html`<${ExtraRow} key=${r.key} r=${r}/>`)}
+    </div>
+  <//>`;
+}
+
 function NowCard({ s }) {
   const g = s.game;
   const [to, setTo] = useState('');
-  return html`<${Card} n="3" title="In the game now" className="gp-now"
+  return html`<${Card} n="4" title="In the game now" className="gp-now"
       aside=${g.problems.length ? html`<${Tag} tone="bad">${g.problems.length} ${g.problems.length === 1 ? 'problem' : 'problems'}<//>` : null}>
     <div class="card-body gp-now-body">
       ${s.patched ? html`<dl class="gp-facts">
@@ -108,7 +133,7 @@ function NowCard({ s }) {
   <//>`;
 }
 
-function AboutCard({ s, n = 4 }) {
+function AboutCard({ s, n = 5 }) {
   return html`<${Card} n=${n} title="What the game patch does" grow className="gp-about">
     <div class="card-body scroll gp-about-body">
       ${s.about.map((part) => html`<section key=${part.head} class="gp-part">
@@ -143,7 +168,7 @@ export default function Patch({ go }) {
   }
   return html`<div class="columns gp">
     <div class="col"><${PatchCard} s=${s} go=${go}/></div>
-    <div class="col"><${PackCard} s=${s}/><${NowCard} s=${s}/><${AboutCard} s=${s}/></div>
+    <div class="col"><${PackCard} s=${s}/><${ExtraCard} s=${s}/><${NowCard} s=${s}/><${AboutCard} s=${s}/></div>
   </div>`;
 }
 

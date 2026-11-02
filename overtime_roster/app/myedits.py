@@ -7,6 +7,10 @@ changed: `card` {key: value} in the card's units (roster_card.values; ratings as
 {'style': type, 'parts': {part: value}}, `gear` {choice: value}. A renamed player is still found (every mix of his old
 and new name and birth date), and the update's plan matches him to NHL.com under his old name (`aliases`).
 
+A team's hand-set lines are kept too (`lines`, key "league:abbr"): the places the Lines tab applied and Save wrote
+(slot -> the player's id as above) and the letters (player -> 0, C 1, A 2). They go back after the update's lines,
+real or by rating: the player's line always wins. A player who has left the team is skipped with his reason.
+
 It is put back through the Roster tab's own checks and writers (roster_card.check / write, faces, equipment), one
 change per part: a part the roster refuses changes nothing and is skipped with its reason (a card value that is
 refused, such as a number another player has now, is skipped alone; the rest of the card goes in).
@@ -14,15 +18,17 @@ refused, such as a number another player has now, is skipped alone; the rest of 
 import json
 import os
 
-from overtime_core import equipment as EQ, faces as F, rosterupdate as U
+from overtime_core import equipment as EQ, faces as F, lines as LN, rosterupdate as U
+from overtime_core.roster import ALTERNATE, CAPTAIN
 
 from . import labels as L, paths, roster_card as RC
-from .session import EditError
+from .session import TEAMS, EditError
 
 VERSION = 1
 FILE = 'edits.json'
 PARTS = ('card', 'face', 'gear')
-PART_WORDS = {'card': 'card', 'face': 'face & type', 'gear': 'equipment'}
+PART_WORDS = {'card': 'card', 'face': 'face & type', 'gear': 'equipment', 'lines': 'lines'}
+LINES = 'lines|'     # the prefix of a team's kept lines among the rows of My edits
 NAME_KEYS = ('first', 'last', 'born')
 
 
@@ -32,7 +38,7 @@ def where():
 
 
 def empty():
-    return {'version': VERSION, 'players': {}}
+    return {'version': VERSION, 'players': {}, 'lines': {}}
 
 
 def load(path=None):
@@ -46,7 +52,15 @@ def load(path=None):
         return empty()
     data['players'] = {k: e for k, e in data['players'].items()
                        if isinstance(e, dict) and isinstance(e.get('id'), dict)}
+    kept = data.get('lines')
+    data['lines'] = {k: e for k, e in (kept.items() if isinstance(kept, dict) else ())
+                     if isinstance(e, dict) and isinstance(e.get('slots'), dict) and isinstance(e.get('letters'), list)}
     return data
+
+
+def count(data):
+    """How many things edits.json keeps: players and teams' lines."""
+    return len(data['players']) + len(data.get('lines') or {})
 
 
 def save(data, path=None):
@@ -169,6 +183,30 @@ def record(data, s, clock, items):
     return len(touched)
 
 
+def team_key(s, team):
+    """(key of a team's kept lines, its league, its abbreviation): the abbreviation is only known inside a league."""
+    t = s.rows[TEAMS][s.team_row[team]]
+    abbr = s.team_abbr(team)
+    return f"{t['league']}:{abbr}", t['league'], abbr
+
+
+def record_lines(data, s, clock, team, slots, letters):
+    """Keep the lines a team's Lines tab applied: `slots` {slot: playerindex of its new holder}, `letters`
+    {playerindex: 0, C or A}. A later one over an earlier one, place by place and player by player."""
+    key, league, abbr = team_key(s, team)
+    e = data.setdefault('lines', {}).setdefault(key, {'abbr': abbr, 'league': league, 'slots': {}, 'letters': []})
+    e['label'] = s.team_name(team)
+    for slot, pi in slots.items():
+        if pi is not None and s.bio(pi)[1] is not None:
+            e['slots'][slot] = identity(s, clock, pi)
+    for pi, value in letters.items():
+        if s.bio(pi)[1] is None:
+            continue
+        ident = identity(s, clock, pi)
+        k = person_key(ident['first'], ident['last'], ident['born'])
+        e['letters'] = [x for x in e['letters'] if person_key(**x['id']) != k] + [{'id': ident, 'value': value}]
+
+
 def _keep(e, s, clock, pi, b, what, keys):
     if what == 'card':
         now = RC.values(s, clock, pi)
@@ -230,6 +268,8 @@ def forget(data, s, clock, items):
 
 
 def remove(data, key):
+    if key.startswith(LINES):
+        return (data.get('lines') or {}).pop(key[len(LINES):], None) is not None
     return data['players'].pop(key, None) is not None
 
 
@@ -253,6 +293,18 @@ def words(e):
     return out
 
 
+def line_words(e):
+    """['3 places', '1 letter'] of one team's kept lines."""
+    out = []
+    n = len(e['slots'])
+    if n:
+        out.append(f"{n} place{'s' if n != 1 else ''}")
+    n = len(e['letters'])
+    if n:
+        out.append(f"{n} letter{'s' if n != 1 else ''}")
+    return out
+
+
 def rows(data):
     """The list of kept edits, by last name: [{key, label, team, words}]."""
     def last(k):
@@ -260,7 +312,10 @@ def rows(data):
         return RC.plain((e.get('card') or {}).get('last', e['id']['last']))
     out = [{'key': k, 'label': e.get('label') or f"{e['id']['first']} {e['id']['last']}", 'team': e.get('team', ''),
             'words': words(e)} for k, e in data['players'].items()]
-    return sorted(out, key=lambda r: (last(r['key']), RC.plain(r['label']), r['key']))
+    out = sorted(out, key=lambda r: (last(r['key']), RC.plain(r['label']), r['key']))
+    teams = [{'key': LINES + k, 'label': f"{e.get('label') or e['abbr']} lines", 'team': e['abbr'],
+              'words': line_words(e)} for k, e in (data.get('lines') or {}).items()]
+    return out + sorted(teams, key=lambda r: RC.plain(r['label']))
 
 
 # --- putting them back ---------------------------------------------------------------------------------------------
@@ -285,7 +340,76 @@ def replay(s, clock, data, model_of=lambda table: None, fold=lambda ch: None):
                 went, refused = False, [str(err)]
             out['applied'] += went
             out['skipped'] += [{'who': who, 'part': PART_WORDS[part], 'why': why} for why in refused]
+    back = replay_lines(s, clock, data, fold)
+    out['applied'] += back['applied']
+    out['skipped'] += back['skipped']
     return out
+
+
+def replay_lines(s, clock, data, fold=lambda ch: None):
+    """Put every team's kept lines back over what the update dealt (the player's line wins). One change a team that
+    differs. Returns {'applied': teams changed, 'skipped': [{'who', 'part', 'why'}]}."""
+    out = {'applied': 0, 'skipped': []}
+    kept = data.get('lines') or {}
+    if not kept:
+        return out
+    found = index(s, clock)
+    teams = {(t['league'], s.team_abbr(t['index'])): t['index'] for t in s.rows[TEAMS] if t['index'] in s.team_entries}
+    for e in sorted(kept.values(), key=lambda e: RC.plain(e.get('label') or e['abbr'])):
+        who = e.get('label') or e['abbr']
+        team = teams.get((e['league'], e['abbr']))
+        if team is None:
+            out['skipped'].append({'who': who, 'part': 'lines', 'why': 'The team is not in this roster.'})
+            continue
+        try:
+            ch, refused = _put_lines(s, found, team, e, who)
+        except EditError as err:
+            ch, refused = None, [str(err)]
+        if ch is not None and ch.snaps:
+            fold(ch)
+            out['applied'] += 1
+        out['skipped'] += [{'who': who, 'part': 'lines', 'why': why} for why in refused]
+    return out
+
+
+def _put_lines(s, found, team, e, who):
+    """One team's kept lines over the open roster: (the change, [why] of each place or letter refused)."""
+    refused = []
+    mine = set(s.players_of(team))
+
+    def here(ident):
+        pi = locate({'id': ident}, found)
+        if pi is None or pi not in mine:
+            refused.append(' '.join(f"{ident['first']} {ident['last']} is not on {who} now.".split()))
+            return None
+        return pi
+
+    def work(setter):
+        for slot in LN.SLOTS:        # even strength first: a scratched player dresses before special teams
+            ident = e['slots'].get(slot)
+            pi = here(ident) if ident else None
+            if pi is None:
+                continue
+            try:
+                LN.place(s.db, team, slot, pi, setter)
+            except (LN.NotDressed, ValueError) as err:
+                refused.append(str(err))
+        for item in e['letters']:
+            pi = here(item['id'])
+            value = item['value']
+            if pi is None or value not in (0, CAPTAIN, ALTERNATE):
+                continue
+            if value == CAPTAIN:
+                for q in mine:
+                    i = s.entry_row.get(q)
+                    if q != pi and i is not None and s.rows[LN.ROSTER][i]['captain'] == CAPTAIN:
+                        setter(LN.ROSTER, i, 'captain', 0)
+            setter(LN.ROSTER, s.entry_row[pi], 'captain', value)
+    ch, _ = s.edit(f'My edits: {who} lines', work)
+    if ch.snaps:
+        ch.tab, ch.team = 'Lines', team
+        ch.details.append((f'My edits: {who}', '', 'lines'))
+    return ch, refused
 
 
 def _put(s, clock, pi, part, value, model_of, fold):

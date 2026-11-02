@@ -32,14 +32,17 @@ import urllib.request
 from overtime_core import art
 
 from . import defaultdb, paths, selfupdate, sources
-from .patch import ART_ENV, KITS_PACK, PHOTOS_PACK
+from .patch import ART_ENV, EXTRA_PACKS, KITS_PACK, PHOTOS_PACK
 
 # name -> what a player reads, and whether the patch needs it for the art (core; until v0.10.0 the one click fetched those)
+EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
+EMULATOR_EXE = 'shadPS4.exe'
 PACKS = {
     'looks32.zip': {'title': 'NHL 27 looks for all 32 teams', 'core': True},
     'looks.zip': {'title': 'Utah and Seattle looks', 'core': True},
     PHOTOS_PACK: {'title': 'Player photos from NHL.com', 'core': True},
     KITS_PACK: {'title': 'NHL 27 3D kits for 30 teams', 'core': False},
+    **{name: {'title': title, 'core': False} for name, title in EXTRA_PACKS.items()},
 }
 CORE = tuple(name for name, pack in PACKS.items() if pack['core'])
 STATES = ('here', 'missing', 'newer', 'offline', 'wrong_roster', 'not_served')
@@ -107,16 +110,17 @@ def _read(url, fetch_text):
         return None
     listed = data.get('packs') if isinstance(data.get('packs'), dict) else {}
     sums = None
-    if any(isinstance(listed.get(name), dict) for name in PACKS):
+    if any(isinstance(listed.get(name), dict) for name in (*PACKS, EMULATOR_PACK)):
         try:
             sums = fetch_text(urllib.parse.urljoin(url, data.get('sums') or selfupdate.SUMS_ASSET))
         except Exception:
             sums = None
-    return {name: _release(name, listed[name], url, sums) for name in PACKS if isinstance(listed.get(name), dict)}
+    return {name: _release(name, listed[name], url, sums) for name in (*PACKS, EMULATOR_PACK)
+            if isinstance(listed.get(name), dict)}
 
 
 def published(url=None, fetch_text=None, max_age=REMEMBER):
-    """{pack name: selfupdate.Release} of the packs latest.json names (PACKS' names only), or None when the release
+    """{pack name: selfupdate.Release} of the packs latest.json names (PACKS' and EMULATOR_PACK only), or None when the release
     cannot be read (offline). The release host is read again after `max_age` seconds (after a failed read: FORGET);
     with `fetch_text` (tests: a local fixture) it is always read."""
     url = url or selfupdate.release_url()
@@ -454,7 +458,7 @@ def _fetch(release, part, report=None, cancelled=None):
         if sha.hexdigest() != release.digest or (release.size and got != release.size):
             raise PackError(WRONG_FILE)
         try:
-            check_zip(part)
+            (check_emulator if release.asset == EMULATOR_PACK else check_zip)(part)
         except art.ArtError as err:
             raise PackError(f'The pack does not read: {err}') from err
     except OSError as err:              # the cache folder: full, read only
@@ -514,7 +518,7 @@ def download(names, cache_dir, progress=None, release=None, game_dir=None, cance
     table = _table(release, None, max_age=0)
     out = []
     for name in names:
-        if name not in PACKS:
+        if name not in PACKS and name != EMULATOR_PACK:
             out.append((name, False, 'Overtime Roster does not know this pack.'))
             continue
         if table is None:
@@ -596,6 +600,32 @@ def check_zip(path):
     if not isinstance(info, dict) or info.get('format') not in (art.FORMAT, art.DELTA_FORMAT) \
             or not (info.get('files') or info.get('deltas')):
         raise art.ArtError('not an art pack')
+
+
+def emulator_entry(z):
+    """The one shadPS4.exe in the ZipFile z. ArtError otherwise."""
+    exes = [n for n in z.namelist() if n.rsplit('/', 1)[-1].lower() == EMULATOR_EXE.lower()]
+    if len(exes) != 1:
+        raise art.ArtError(f'not one {EMULATOR_EXE} in it')
+    return exes[0]
+
+
+def check_emulator(path):
+    """The emulator pack holds one shadPS4.exe and that reads as a Windows program. ArtError otherwise."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z, z.open(emulator_entry(z)) as exe:
+            if exe.read(2) != b'MZ':
+                raise art.ArtError(f'{EMULATOR_EXE} is not a Windows program')
+    except (zipfile.BadZipFile, OSError) as err:
+        raise art.ArtError(str(err)) from err
+
+
+def located(name, cache_dir):
+    """(path, sha256) of the pack `name` where it was found, or None."""
+    with _Record(cache_dir) as rec:
+        found = _found(cache_dir, name, rec, None)
+    return (found[0], found[1]['sha256']) if found else None
 
 
 # --- beta1's kits-only names (Setup's kits row, window.main --download-kits) ----------------------------------------

@@ -21,6 +21,7 @@ All-Star teams (31-34) keep their rows (they point at players through their own 
 """
 import bisect
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from . import calendar, careerstats, equipment as EQ, leaguecal, lines, nhl27 as N, ratings as R, reallines, teams as T
@@ -210,6 +211,33 @@ def with_nhl27_clubs(real, pack):
     return list(real) + extra, extra
 
 
+def short_teams(db):
+    """The NHL clubs with fewer than 2 goalies or 18 skaters, as sentences: the game hangs the first game played with one
+    (Legacy round 17: its line picker waits forever for a player of a kind)."""
+    state, count = State(db), {}
+    for pi, (table, team) in state.entry.items():
+        if table == ROSTER and team in NHL:
+            b = state.bio(pi)
+            if b is not None:
+                row = count.setdefault(team, [0, 0])
+                row[b['position'] != GOALIE] += 1
+    teams = {r['index']: r['teamname'] for r in db[T.TEAMS].rows()}
+    return [f"{teams.get(team, team)} has {g} goalie{'s' if g != 1 else ''} and {s} skaters"
+            for team, (g, s) in sorted(count.items()) if g < 2 or s < 18]
+
+
+def free_and_on_a_club(db):
+    """The names on the free agent list who also play for an NHL club under another of their records. The game shows
+    them in both places, and an update leaves them out of its pool of free agents."""
+    state, out = State(db), []
+    for pi in sorted(state.free):
+        b = state.bio(pi)
+        if b is not None and any(state.entry.get(o, (None, None))[0] == ROSTER and state.entry[o][1] in NHL
+                                 for o in state.pis_of.get(b['game_id'], [])):
+            out.append(f"{b['firstname']} {b['lastname']}")
+    return out
+
+
 def plan(db, real, season=DEFAULT_SEASON, nhl27=None, aliases=None):
     """What `apply` would do with the real rosters `real` (gather_rosters), with NHL 27's injured club players
     (with_nhl27_clubs; `nhl27`: the pack). Birth dates match as they are or on the game's clock (teams.year_shift:
@@ -236,7 +264,9 @@ def plan(db, real, season=DEFAULT_SEASON, nhl27=None, aliases=None):
     placed = set()
     for p, m in zip(real, Matcher(people, shifts=range(T.year_shift(season) + 1)).match_all(reals)):
         to = target_of(p['team'])
-        if m.game is None:
+        # same name and date, other kind of player: two people, and a goalie's ratings on a skater spoil both
+        if m.game is None or (p.get('position') and (p['position'] == 'G')
+                              != (bios.get(state.bio_row[m.game.key], 'position') == GOALIE)):
             out.new.append((p, to))
             out.placed.append((p, None, to, 'none'))
             continue
@@ -626,6 +656,24 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
         changed |= {(ROSTER, team) for team in ahl_teams}
         for team in sorted(ahl_teams):  # a junior or ECHL club that lost players to the AHL dresses its 20 again
             signed += _sign_free_agents(db, ROSTER, team)
+    allsv = {}
+    if nhl27 and nhl27.get('players'):  # HockeyAllsvenskan: NHL 27's clubs and players in the slots, renamed
+        allsv, allsv_teams = rebuild_league(db, nhl27, shift, ALLSVENSKAN, 'allsvenskan',
+                                            {k: v[0] for k, v in ALLSVENSKAN_MOVED.items()}, 'allsv')
+        allsv['allsv_renamed'] = len(rename_allsvenskan(db, allsv_teams))
+        changed |= {(ROSTER, team) for team in allsv_teams}
+        for team in sorted(allsv_teams):
+            signed += _sign_free_agents(db, ROSTER, team)
+    others = {}
+    if nhl27 and nhl27.get('players'):  # every other club league, the clubs NHL 27 and NHL 19 share (LEAGUE_PLAN)
+        frozen = {AHL_LEAGUE, ALLSVENSKAN}
+        for league, (tag, size) in LEAGUE_PLAN.items():
+            got, teams_of = rebuild_league(db, nhl27, shift, league, tag, {}, tag, size, True, frozen, False)
+            frozen.add(league)
+            others.update(got)
+            changed |= {(ROSTER, team) for team in teams_of}
+            for team in sorted(teams_of):
+                signed += _sign_free_agents(db, ROSTER, team)
     done_lines, skipped = [], []
     for table, team in sorted(changed):
         try:
@@ -655,6 +703,8 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
         on_clock = placed_ids | {c['game_id'] for c in created} | (clocked if nhl27.get('players') else set())
         counts.update(_contracts(db, nhl27, start_year or DEFAULT_SEASON, shift, on_clock))
     counts.update(ahl)
+    counts.update(allsv)
+    counts.update(others)
     mirror_seattle(db)
     expansion_active(db)
     if careerstats.SEASON in db:  # a roster save holds no stock career tables (only the default database does)
@@ -871,7 +921,39 @@ AHL_MOVED = {'Binghamton Devils': 'Abbotsford Canucks', 'Bridgeport Sound Tigers
 
 
 def _team_key(name):
-    return re.sub('[^a-z]', '', (name or '').lower())
+    return re.sub('[^a-z]', '', unicodedata.normalize('NFKD', name or '').encode('ascii', 'ignore').decode().lower())
+
+
+def _fuzzy_clubs(teams, free, names):
+    """{slot: NHL 27 club key} for the slots (`teams` {index: row}) in `free` (slot indices no club matched by name)
+    taking the club left in `names` {key: name} that has their city in its name, else their nickname (its last word),
+    when exactly one has: the same franchise under a new name or town (Frolunda Indians / Frolunda HC, Mississauga
+    Steelheads / Brampton Steelheads). Two slots never take one club."""
+    out, left = {}, set(names)
+    for how in ('cityname', 'nickname'):
+        for s in sorted(free):
+            if s in out:
+                continue
+            word = _team_key(teams[s][how].split()[-1] if how == 'nickname' and teams[s][how].split()
+                             else teams[s][how])
+            if len(word) < 4:
+                continue
+            hit = [k for k in sorted(left) if word in k]
+            if len(hit) == 1:
+                out[s] = hit[0]
+                left.discard(hit[0])
+    return out
+
+
+def _rename_club(teams, slot, name):
+    """Name slot `slot` (a teams row index) after NHL 27's club `name`: teamname and nickname; the city too when the
+    name ends with the nickname's last word (Brampton Steelheads: Brampton), else it stays the slot's."""
+    row = next(i for i in range(teams.count) if teams.get(i, 'index') == slot)
+    words, last = name.split(), (teams.get(row, 'nickname') or '').split()
+    city = ' '.join(words[:-1]) if len(words) > 1 and last and _team_key(words[-1]) == _team_key(last[-1]) else None
+    for field, value in (('teamname', name), ('nickname', name), ('cityname', city)):
+        if value:
+            teams.set(row, field, _fit(teams, field, value))
 
 
 def _group(pos):
@@ -887,8 +969,14 @@ def _real_of(p):
             'weight': p['weight'] / 2.20462 if p.get('weight') else None}
 
 
-def rebuild_ahl(db, pack, shift):
-    """The AHL clubs' rosters from NHL 27's (`pack`, nhl27.py): each slot (exhibitionteams league AHL_LEAGUE) gets
+def rebuild_league(db, pack, shift, league=AHL_LEAGUE, tag='ahl', moved=None, prefix='ahl', size=AHL_SIZE,
+                   fuzzy=False, frozen=(), free_agents=True):
+    """The clubs' rosters of one league from NHL 27's (`pack`, nhl27.py; the AHL by default, HockeyAllsvenskan in
+    ALLSVENSKAN: `league` is exhibitionteams.league, `tag` the pack's league key, `moved` {2018 name: NHL 27 name},
+    `prefix` the counts' names, `size` the (least, most) players a club has; `fuzzy`: a slot no club matches by name
+    takes the club of its town or nickname (_fuzzy_clubs) and is renamed after it; `frozen`: the leagues whose
+    rosters are final (their players stay); `free_agents` False: a short club is not filled from the unsigned
+    players). The AHL: each slot gets
     its NHL 27 club's players (by name, or AHL_MOVED), less those on an NHL club or Seattle; an existing bio moves
     off his other club or the free agent list, anyone else is created (_Maker). A club left short of AHL_SIZE or of
     AHL_GOALIES goalies is filled from NHL 27's ECHL players of its NHL organisation, then NHL 27's unsigned players
@@ -897,22 +985,30 @@ def rebuild_ahl(db, pack, shift):
     the released NHL players: with their 2018 deals cleared (_contracts) they were the Franchise's free agents
     (Perron, Gagne, Masin signed on July 1, ws5 run4). Contracts and NHL organisations follow in _contracts, ratings
     and pro history in apply. Returns ({counts}, {teams whose rows changed})."""
-    teams = {r['index']: r for r in db[T.TEAMS].rows() if r['league'] == AHL_LEAGUE}
-    moved = {_team_key(k): _team_key(v) for k, v in AHL_MOVED.items()}
+    teams = {r['index']: r for r in db[T.TEAMS].rows() if r['league'] == league}
+    frozen_slots = {r['index'] for r in db[T.TEAMS].rows() if r['league'] in frozen}
+    moved = {_team_key(k): _team_key(v) for k, v in (AHL_MOVED if moved is None else moved).items()}
     by_club, echl, unsigned = {}, {}, []
     pkey = lambda p: (p['first'], p['last'], tuple(p['birth']))  # noqa: E731
     org = {pkey(c): c['org'] for c in pack.get('contracts') or []}
     for p in pack.get('players') or []:
         if not p.get('birth') or p.get('pos') not in POSITION_27:
             continue
-        if p.get('league') == 'ahl' and p.get('team'):
+        if p.get('league') == tag and p.get('team'):
             by_club.setdefault(_team_key(p['team']), []).append(p)
-        elif p.get('league') == 'echl' and pkey(p) in org:
+        elif tag == 'ahl' and p.get('league') == 'echl' and pkey(p) in org:
             echl.setdefault(org[pkey(p)], []).append(p)
-        elif p.get('league') is None:
+        elif p.get('league') is None and free_agents:
             unsigned.append(p)
     source = {s: moved.get(_team_key(r['teamname']), _team_key(r['teamname'])) for s, r in teams.items()}
     source = {s: k for s, k in source.items() if k in by_club}
+    renamed = {}
+    if fuzzy:
+        names = {_team_key(p['team']): p['team'] for ps in by_club.values() for p in ps}
+        found = _fuzzy_clubs(teams, set(teams) - set(source),
+                             {k: v for k, v in names.items() if k not in set(source.values())})
+        source.update(found)
+        renamed = {s: names[k] for s, k in found.items() if _team_key(teams[s]['teamname']) != k}
     if not source:
         return {}, set()
     rows = [p for k in source.values() for p in by_club[k]] + [p for ps in echl.values() for p in ps] + unsigned
@@ -928,7 +1024,7 @@ def rebuild_ahl(db, pack, shift):
     taken = set()  # on an NHL club, or a custom team (Seattle and its AHL club): placed by NHL.com, or not ours
     for gid, pis in state.pis_of.items():
         if any(state.entry.get(pi, ('', -1))[0] == CUSTOM_ROSTER or state.entry.get(pi, ('', -1))[0] == ROSTER
-               and state.entry[pi][1] in NHL for pi in pis):
+               and (state.entry[pi][1] in NHL or state.entry[pi][1] in frozen_slots) for pi in pis):
             taken.add(gid)
     used = set()
 
@@ -952,7 +1048,7 @@ def rebuild_ahl(db, pack, shift):
     # the slots' own players, read before any player is made (exhibitionplayers is sorted until then: State.bio)
     on_slot = {s: [(pi, b) for pi, e in state.entry.items() if e == (ROSTER, s) for b in [state.bio(pi)] if b]
                for s in teams}
-    counts = {'ahl_teams': len(plan), 'ahl_filled': 0, 'ahl_trimmed': 0, 'ahl_kept_2018': 0}
+    counts = {f'{prefix}_teams': len(plan), f'{prefix}_filled': 0, f'{prefix}_trimmed': 0, f'{prefix}_kept_2018': 0}
     for s, club in sorted(plan.items()):
         affiliate = None
         orgs = [org[pkey(it['p'])] for it in club if pkey(it['p']) in org]
@@ -973,23 +1069,23 @@ def rebuild_ahl(db, pack, shift):
                      and b['position'] <= GOALIE and (want is None or _group(b['position']) == want)]
             if stale:
                 b = max(stale, key=lambda b: (_ai_value(db, b, 'c_overall', 0), -b['game_id']))
-                counts['ahl_kept_2018'] += 1
+                counts[f'{prefix}_kept_2018'] += 1
                 return take({'p': None, 'gid': b['game_id'], 'pos': _group(b['position']), 'ovr': 0, 'deal': False})
             return None
         while sum(it['pos'] == 'G' for it in club) < AHL_GOALIES and (it := fill('G')):
             club.append(it)
-            counts['ahl_filled'] += 1
-        while len(club) < AHL_SIZE[0] or sum(it['pos'] != 'G' for it in club) < AHL_SKATERS:
+            counts[f'{prefix}_filled'] += 1
+        while len(club) < size[0] or sum(it['pos'] != 'G' for it in club) < AHL_SKATERS:
             have = {g: sum(it['pos'] == g for it in club) for g in 'FD'}
             want = next((g for g in 'FD' if have[g] < AHL_SHAPE[g]), None)
-            if want is None and len(club) >= AHL_SIZE[0]:  # enough players, too few skaters
+            if want is None and len(club) >= size[0]:  # enough players, too few skaters
                 want = 'F'
             it = fill(want) or fill(None)
             if not it:
                 break
             club.append(it)
-            counts['ahl_filled'] += 1
-        while len(club) > AHL_SIZE[1]:
+            counts[f'{prefix}_filled'] += 1
+        while len(club) > size[1]:
             goalies = sum(it['pos'] == 'G' for it in club)
             skaters = len(club) - goalies
             out = min((it for it in club if it['pos'] == 'G' and goalies > AHL_GOALIES + 1
@@ -997,7 +1093,7 @@ def rebuild_ahl(db, pack, shift):
                       key=lambda it: (it['deal'], it['ovr'], it['p']['last'] if it['p'] else ''))
             club.remove(out)
             used.discard(out['gid'] if out['gid'] is not None else ('new', pkey(out['p'])))
-            counts['ahl_trimmed'] += 1
+            counts[f'{prefix}_trimmed'] += 1
     # write: rows off their old clubs and the free agent list, new rows on the slots
     maker = _Maker(db)
     remove, adds, free_out, changed = set(), [], set(), set(plan)
@@ -1069,12 +1165,60 @@ def rebuild_ahl(db, pack, shift):
         _rebuild_free(db, remove=free_out, add=free_in)
     if created:
         sort_players(db)
-    counts.update(ahl_players=sum(len(c) for c in plan.values()), ahl_created=created, ahl_moved=moved_n,
-                  ahl_cleared=cleared, ahl_to_free_agents=len(free_in))
+    for s, name in sorted(renamed.items()):
+        _rename_club(db[T.TEAMS], s, name)
+    counts.update({f'{prefix}_renamed': len(renamed), f'{prefix}_players': sum(len(c) for c in plan.values()), f'{prefix}_created': created,
+                   f'{prefix}_moved': moved_n, f'{prefix}_cleared': cleared, f'{prefix}_to_free_agents': len(free_in)})
     return counts, changed
 
 
+def rebuild_ahl(db, pack, shift):
+    """The AHL clubs' rosters from NHL 27's (rebuild_league's defaults)."""
+    return rebuild_league(db, pack, shift)
+
+
+ALLSVENSKAN = 8   # exhibitionteams.league of HockeyAllsvenskan (swedish2ndschedule, 14 clubs, 52 games)
+# NHL 19's 2018 Allsvenskan slots NHL 27 has other clubs for (promoted, relegated or folded since): the slot becomes
+# that club (name, abbreviation); its logo and jerseys come with the art pack by the new name. The 8 clubs NHL 27
+# still has (AIK, Almtuna, BIK Karlskoga, Leksands, MODO, IK Oskarshamn, Sodertalje, Vik Vasteras) keep their slot.
+# {2018 name: (NHL 27 name, city, abbreviation)}
+ALLSVENSKAN_MOVED = {
+    'IF Bjorkloven': ('Ostersunds IK', 'Ostersund', 'OST'),
+    'Karlskrona Hockey': ('Kalmar HC', 'Kalmar', 'KAL'),
+    'IK Pantern': ('Nybro Vikings IF', 'Nybro', 'NYB'),
+    'Tingsryds AIF': ('Vimmerby Hockey', 'Vimmerby', 'VIM'),
+    'Vasterviks IK': ('Visby/Roma HK', 'Visby', 'VIS'),
+    'HC Vita Hasten': ('Mora IK', 'Mora', 'MORA'),
+}
+
+
+def rename_allsvenskan(db, only=None):
+    """Name the slots NHL 27 has other clubs for (ALLSVENSKAN_MOVED) after them: teamname, nickname, city and
+    abbreviation (`only`: just those slots, the ones that got NHL 27's players). A slot already renamed is left
+    alone. Returns the slots renamed."""
+    teams = db[T.TEAMS]
+    moved = {_team_key(k): v for k, v in ALLSVENSKAN_MOVED.items()}
+    out = []
+    for i in range(teams.count):
+        if teams.get(i, 'league') != ALLSVENSKAN or only is not None and teams.get(i, 'index') not in only:
+            continue
+        new = moved.get(_team_key(teams.get(i, 'teamname')))
+        if new is None:
+            continue
+        name, city, abbr = new
+        for field, value in (('teamname', name), ('nickname', name), ('cityname', city), ('abbrname', abbr)):
+            teams.set(i, field, _fit(teams, field, value))
+        out.append(teams.get(i, 'index'))
+    return out
+
+
 POSITION_27 = ('C', 'LW', 'RW', 'D', 'G')
+# The club leagues rebuilt from NHL 27 after the AHL and HockeyAllsvenskan: exhibitionteams.league -> (the pack's league
+# key, (least, most) players a club has; NHL 19's own clubs go to 38). A slot NHL 27 has no club for keeps its 2018
+# roster (its players NHL 27 still lists get its ratings); a club NHL 27 has that NHL 19 has no slot for is not added.
+LEAGUE_PLAN = {2: ('shl', (20, 38)), 3: ('liiga', (20, 38)), 4: ('del', (20, 38)), 5: ('extraliga', (20, 38)),
+               6: ('nl', (20, 38)), 7: ('icehl', (20, 38)), 9: ('europe', (20, 38)), 11: ('ohl', (20, 38)),
+               12: ('qmjhl', (20, 38)), 13: ('whl', (20, 38)), 15: ('echl', (20, 38))}
 
 
 FA_RETIRE_AGE = 35  # Legacy builder.FA_RETIRE_AGE

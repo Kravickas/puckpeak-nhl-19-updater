@@ -9,8 +9,8 @@ draft builds the team; that career takes its free agents from this database, so 
 agent list too (rosterupdate.expansion_free_agents; other modes do not list a rostered player).
 
 The art layer serves the art packs found (ART_PACKS: NHL 27's team art; built on the owner's PC by tools/build_looks.py,
-never committed): switch ART_SWITCH. The exe carries the all-team logos / menus / centre ice and Utah's and Seattle's
-whole look; the all-team 3D kits are a delta pack downloaded on request (KITS_PACK, switch `kits`; overtime_roster.
+never committed): switch ART_SWITCH. The packs (all-team logos / menus / centre ice, Utah's and Seattle's whole look, the 3D kits) are downloads
+from the release host, never inside the exe; the 3D kits are a delta pack (KITS_PACK, switch `kits`; overtime_roster.
 app.packdownload). NHL.com portraits (PHOTOS_PACK, built by tools/build_photopack.py) are keyed by the served bios'
 art ids, and the overlay's database step sets each bio's portrait flag from the art served (art.portrait_flags).
 """
@@ -88,10 +88,23 @@ def layers_for(game_dir, want=None, database=False, no_database=False, art=False
 # The art layer's switch (Patch tab) and its packs, in the order they are laid over each other (a later one wins).
 ART_SWITCH = {'art': 'NHL 27 team art: logos, menu jerseys and centre ice of all teams, Utah\'s and Seattle\'s kits and '
                      'Utah\'s arena', 'kits': 'NHL 27 3D kits of all teams (a download)'}
-LOOKS32_PACK = 'looks32.zip'   # all teams: logos, menu jerseys, centre ice (in the exe)
+LOOKS32_PACK = 'looks32.zip'   # all teams: logos, menu jerseys, centre ice (a core download)
 KITS_PACK = 'kits.zip'         # all teams' 3D kits, a delta pack on the game's own files (downloaded)
 PHOTOS_PACK = 'photos.zip'     # NHL.com portraits, p<artid> of the default database's bios
-ART_PACKS = (LOOKS32_PACK, KITS_PACK, PHOTOS_PACK, 'looks.zip')   # looks.zip (Utah, Seattle: kits, arena) last: wins
+ICE_PACK = 'ice_all.zip'       # centre ice of every team NHL 27 has one for (build_looks --teams every), over looks32's
+# NHL 27 main and alternate kits of the other leagues' clubs and the NHL's alternates (tools/build_alts.py), one downloadable
+# pack per league family; they win over the game's own kit files
+ALT_PACKS = {'alts_nhl.zip': 'NHL alternate jerseys from NHL 27', 'alts_ahl.zip': 'AHL and ECHL jerseys from NHL 27',
+             'alts_chl.zip': 'OHL, QMJHL and WHL jerseys from NHL 27',
+             'alts_euro.zip': 'European league jerseys from NHL 27',
+             'alts_intl.zip': 'National team jerseys from NHL 27'}
+INTL_PACK = 'alts_intl.zip'
+NHL_ALTS_PACK = 'alts_nhl.zip'
+# the packs with a switch of their own (Game patch, More jerseys and ice): each downloads when it is switched on. The
+# other jersey packs are built, but left out of 0.30.0: too much data to serve for now (PLAN.md)
+EXTRA_PACKS = {ICE_PACK: 'Centre ice for every league from NHL 27', INTL_PACK: ALT_PACKS[INTL_PACK],
+               NHL_ALTS_PACK: ALT_PACKS[NHL_ALTS_PACK]}
+ART_PACKS = (LOOKS32_PACK, ICE_PACK, KITS_PACK, NHL_ALTS_PACK, INTL_PACK, PHOTOS_PACK, 'looks.zip')   # looks.zip (Utah, Seattle: kits, arena) last: wins
 ART_ENV = 'OVERTIME_ART_PACKS'  # a folder with the packs, or `off`
 
 
@@ -114,9 +127,15 @@ def art_found(cache_dir=None):
     return [name for name in ART_PACKS if any(os.path.isfile(os.path.join(f, name)) for f in art_places(cache_dir))]
 
 
-def art_packs(cache_dir=None, game_dir=None, kits=True, photos=True):
+def extra_key(name):
+    """The switch of an EXTRA_PACKS pack: its name without .zip."""
+    return name[:-4]
+
+
+def art_packs(cache_dir=None, game_dir=None, kits=True, photos=True, extras=None):
     """[art.Pack] of every art pack found (ART_PACKS order; the kits pack only with `kits`, and read against
-    `game_dir`, its deltas' bases; the photos pack only with `photos`); a pack that does not load is skipped with its error in the second list. A
+    `game_dir`, its deltas' bases; the photos pack only with `photos`; of EXTRA_PACKS only `extras`, all when None); a
+    pack that does not load is skipped with its error in the second list. A
     photos.zip outside the cache that is made for another default roster (packdownload's `wrong_roster`) is skipped
     the same way and the next folder's is used: its portraits would land on other players (the cache's own is
     checked when it is downloaded)."""
@@ -124,6 +143,8 @@ def art_packs(cache_dir=None, game_dir=None, kits=True, photos=True):
     packs, problems = [], []
     for name in ART_PACKS:
         if (name == KITS_PACK and not kits) or (name == PHOTOS_PACK and not photos):
+            continue
+        if name in EXTRA_PACKS and extras is not None and name not in extras:
             continue
         for folder in art_places(cache_dir):
             path = os.path.join(folder, name)
@@ -148,7 +169,8 @@ def art_layer(want, layers, cache_dir=None, log=None, game_dir=None):
         if 'art' in layers:
             layers.remove('art')
         return None
-    packs, problems = art_packs(cache_dir, game_dir, kits=want.get('kits', True), photos=want.get('photos', True))
+    packs, problems = art_packs(cache_dir, game_dir, kits=want.get('kits', True), photos=want.get('photos', True),
+                                extras=[name for name in EXTRA_PACKS if want.get(extra_key(name))])
     for problem in problems:
         if log:
             log(f'art pack skipped: {problem}')

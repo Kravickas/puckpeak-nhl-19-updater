@@ -58,9 +58,10 @@ def split_unpacked(unpacked):
 
 
 def trailer_for(db_size, template=None):
-    """The 18-byte trailer: the template's first word (unknown meaning) with our database size."""
+    """The 18-byte trailer: the template's first word (unknown meaning; 0 or no template: TRAILER_WORD, as the game
+    crashes loading a save with 0) with our database size."""
     word = TRAILER.unpack(template)[0] if template and len(template) == TRAILER.size else 0
-    return TRAILER.pack(word, 0, db_size, 0, 1)
+    return TRAILER.pack(word or TRAILER_WORD, 0, db_size, 0, 1)
 
 
 def meta_json(meta):
@@ -148,7 +149,7 @@ def check_container(name, index, data, db_bytes):
     got, trailer = split_unpacked(savefile.unpack(by[name].payload))
     if got != db_bytes:
         raise SaveError('the container does not give back the same database bytes')
-    if len(trailer) != TRAILER.size or TRAILER.unpack(trailer)[2] != len(db_bytes):
+    if len(trailer) != TRAILER.size or TRAILER.unpack(trailer)[2] != len(db_bytes) or not TRAILER.unpack(trailer)[0]:
         raise SaveError('bad roster trailer')
     json.loads(by['__SaveLoadMetaData'].payload.decode('utf-8'))
     return entries
@@ -204,11 +205,13 @@ def template_files(save_dir, prefer=('RosterOnline0', 'Profile0')):
 
 
 TITLE_ID = 'CUSA11126'
-TRAILER_WORD = 0x58b72ed9  # the trailer's first u32 in every Roster* save checked (24 of 24; docs/notes/export-folder.md)
+# the trailer's first u32 in every Roster* save the game wrote (24 of 24; docs/notes/export-folder.md). 0 crashes the game
+# when the roster is picked (0xc0000005 at 0x809a9261; docs/notes/roster-load-crash.md)
+TRAILER_WORD = 0x58b72ed9
 DEFAULT_TRAILER = TRAILER.pack(TRAILER_WORD, 0, 0, 0, 1)
 
 
-def default_sfo(name, subtitle='Overtime roster', maintitle='Custom Roster'):
+def default_sfo(name, subtitle='Overtime roster', maintitle='Custom Roster', title=None):
     """A param.sfo for the save folder `name`, built without a template: the layout and values of the ones the game
     writes for a custom roster (none of it is per user)."""
     return sfo.build([
@@ -218,7 +221,7 @@ def default_sfo(name, subtitle='Overtime roster', maintitle='Custom Roster'):
         sfo.Entry('DETAIL', sfo.FMT_UTF8, f'{subtitle} (Overtime Roster)', 1024),
         sfo.Entry('SAVEDATA_DIRECTORY', sfo.FMT_UTF8, name, 32),
         sfo.Entry('SAVEDATA_LIST_PARAM', sfo.FMT_U32, 0, 4),
-        sfo.Entry('TITLE_ID', sfo.FMT_UTF8, TITLE_ID, 12),
+        sfo.Entry('TITLE_ID', sfo.FMT_UTF8, title or TITLE_ID, 12),
         sfo.Entry('SAVEDATA_BLOCKS', sfo.FMT_BYTES, bytes([0xe0]) + bytes(7), 8)])
 
 
@@ -284,6 +287,37 @@ def prune_backups(backups_dir, keep=BACKUPS_KEPT):
     for n in gone:
         shutil.rmtree(os.path.join(backups_dir, n), ignore_errors=True)
     return gone
+
+
+def zero_trailers(save_dir):
+    """The custom rosters in `save_dir` with trailer word 0: Overtime wrote those before 0.20.1 when no good save was
+    there to copy the word from (a player offline has no RosterOnline0), and the game crashes loading them."""
+    found = []
+    for n in used_slots(save_dir):
+        try:
+            trailer = read(os.path.join(save_dir, n)).trailer
+        except (OSError, ValueError):
+            continue        # not a roster this can read: left as it is
+        if len(trailer) == TRAILER.size and not TRAILER.unpack(trailer)[0]:
+            found.append(n)
+    return found
+
+
+def repair_trailer(folder, template=None):
+    """Give a roster save with trailer word 0 the word of `template` (see trailer_for), in place: the same database,
+    metadata, slot and param.sfo. Both files are written beside the old ones first. Back the save folder up before."""
+    rs = read(folder)
+    ver = next((e.payload for e in rs.entries if e.name == '__SaveloadVer'), CUSTOM_VER_PAYLOAD)
+    index, data = build_container(rs.name, rs.db_bytes, rs.meta, template, ver)
+    check_container(rs.name, index, data, rs.db_bytes)
+    files = (('INDEX', index), ('DATA', data))
+    for rel, payload in files:
+        with open(os.path.join(folder, rel + '.new'), 'wb') as f:
+            f.write(payload)
+    for rel, _ in files:
+        os.replace(os.path.join(folder, rel + '.new'), os.path.join(folder, rel))
+    if read(folder).db_bytes != rs.db_bytes:
+        raise SaveError(f'{rs.name} does not read back the same after the repair')
 
 
 def backup(save_dir, dest):

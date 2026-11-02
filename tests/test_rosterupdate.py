@@ -97,6 +97,51 @@ def updated(game_db):
 
 
 @pytest.mark.game
+@pytest.mark.game
+def test_a_goalie_is_never_given_to_a_skater(game_db):
+    raw, schema = game_db
+    db = tdb.Database.parse(raw, schema)
+    state, bios = U.State(db), db[U.BIOS]
+    gid = next(g for g, i in state.bio_row.items() if bios.get(i, 'position') == 0 and state.main_pi(g) is not None)
+    b = bios.row(state.bio_row[gid])
+    who = {'first': b['firstname'], 'last': b['lastname'], 'birth': U._birth(b), 'id': 1, 'team': 'TOR'}
+    assert [m for _p, m, _t, _l in U.plan(db, [dict(who, position='C')]).placed] != [None]
+    assert [m for _p, m, _t, _l in U.plan(db, [dict(who, position='G')]).placed] == [None]
+
+
+@pytest.mark.game
+def test_the_default_roster_has_no_short_team_and_a_cut_one_is_named(game_db):
+    raw, schema = game_db
+    db = tdb.Database.parse(raw, schema)
+    assert U.short_teams(db) == []
+    state = U.State(db)
+    goalies = [pi for pi, e in state.entry.items() if e == (U.ROSTER, 5) and state.bio(pi)['position'] == U.GOALIE]
+    t = db[U.ROSTER]
+    rows = [i for i in range(t.count) if t.get(i, 'playerindex') in goalies]
+    for i in rows[1:]:
+        t.set(i, 'team', 400)
+    name = next(r['teamname'] for r in db[T.TEAMS].rows() if r['index'] == 5)
+    assert U.short_teams(db) == [f'{name} has 1 goalie and {sum(1 for e in state.entry.values() if e == (U.ROSTER, 5)) - len(goalies)} skaters']
+
+
+def test_a_free_agent_on_a_club_is_named(updated):
+    _raw, _schema, db, _todo, _report = updated
+    print('both after an update:', U.free_and_on_a_club(db))
+    assert U.short_teams(db) == []
+    state = U.State(db)
+    pi = next(p for p in sorted(state.free) if state.bio(p) is not None and not U.free_and_on_a_club(db).count(
+        f"{state.bio(p)['firstname']} {state.bio(p)['lastname']}"))
+    b = state.bio(pi)
+    club = next(i for i in range(db[U.ROSTER].count) if db[U.ROSTER].get(i, 'team') == 5)
+    other = [o for o in state.pis_of[b['game_id']]]
+    before = db[U.ROSTER].get(club, 'playerindex')
+    db[U.ROSTER].set(club, 'playerindex', other[0])
+    try:
+        assert f"{b['firstname']} {b['lastname']}" in U.free_and_on_a_club(db)
+    finally:
+        db[U.ROSTER].set(club, 'playerindex', before)
+
+
 def test_update_places_every_real_player(updated):
     raw, schema, db, todo, report = updated
     s = todo.summary()

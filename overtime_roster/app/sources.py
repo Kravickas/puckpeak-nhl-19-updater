@@ -130,7 +130,7 @@ def _list(folder):
 
 NHL27_ENV = 'OVERTIME_NHL27_PACK'
 PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BUILD_PACKS = os.path.join(PACKAGE, 'packs')  # the exe's packs (packaging/build.ps1 bakes packs\ in there)
+BUILD_PACKS = os.path.join(PACKAGE, 'packs')  # the exe's data pack only (nhl27.json.gz, numbers and names); picture packs are downloaded
 REPO_PACKS = os.path.join(os.path.dirname(PACKAGE), 'packs')
 
 

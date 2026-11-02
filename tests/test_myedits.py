@@ -255,3 +255,47 @@ def test_a_contract_from_front_office_comes_back_in_years_left(app, monkeypatch)
     c.parts['rail'].pick_team(next(t for t in s.team_entries if pi in s.players_of(t)))   # his club now
     row = next(r for g in c.parts['office'].view()['groups'] for r in g['rows'] if r['key'] == b['game_id'])
     assert (row['cap_text'], row['years'], row['type']) == ('$7.25M', 3, 'Two-way')
+
+
+@pytest.mark.game
+def test_hand_set_lines_come_back_over_the_dealt_ones(app):
+    """My line always wins: a team's places and letters the player set and saved are put back after the update deals
+    its lines again (by rating, or the real ones), a player who left is skipped with his reason."""
+    from overtime_core import lines as LN
+    c = app
+    s = c.session
+    c.pick_team(TEAM)
+    start = s.slot_holders(TEAM)
+    a, b = start['l1lw'][0], start['l2lw'][0]
+    assert c.calls['set_slot']('l1lw', b) == {'ok': True}
+    assert c.calls['set_captain'](b, 1) == {'ok': True}
+    assert c.calls['lines_apply']() == {'ok': True}
+    mine = s.slot_holders(TEAM)
+    assert mine['l1lw'] == [b] and mine['l2lw'] == [a]
+    c.calls['save_name']('Mine')
+    assert c.calls['save'](None) is None and c.parts['save'].unsaved() == 0
+    kept = myedits.load()
+    assert list(kept['lines']) == ['0:EDM'] and kept['players'] == {}
+    e = kept['lines']['0:EDM']
+    assert set(e['slots']) == {'l1lw', 'l2lw'} and e['slots']['l1lw']['last'] == s.bio(b)[1]['lastname']
+    assert myedits.count(kept) == 1
+    bar = c.host.snap('save')
+    assert bar['kept_count'] == 1 and bar['kept'][0]['key'] == 'lines|0:EDM' and bar['kept'][0]['words'][0] == '2 places'
+
+    # the update deals the team again (by rating): the stock lines come back, then mine go over them
+    s.edit('deal again', lambda setter: LN.build(s.db, TEAM, setter))
+    s.edit('letters off', lambda setter: [setter('exhibitionrostertable', i, 'captain', 0)
+                                          for i in s.team_entries[TEAM]])
+    assert s.slot_holders(TEAM)['l1lw'] != [b]
+    clock = c.parts['roster'].clock(s)
+    out = myedits.replay_lines(s, clock, kept)
+    assert out == {'applied': 1, 'skipped': []}, out
+    now = s.slot_holders(TEAM)
+    assert now['l1lw'] == [b] and now['l2lw'] == [a]
+    assert s.rows['exhibitionrostertable'][s.entry_row[b]]['captain'] == 1
+    assert [i.text for i in s.verify() if i.level == 'error'] == []
+
+    # a player who left the team is skipped with his reason; the rest still goes in
+    s.edit('he left', lambda setter: setter('exhibitionrostertable', s.entry_row[b], 'team', 12))
+    out = myedits.replay_lines(s, clock, kept)
+    assert out['skipped'] and all('is not on' in x['why'] for x in out['skipped']), out

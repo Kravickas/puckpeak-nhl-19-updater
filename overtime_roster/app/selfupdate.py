@@ -311,6 +311,35 @@ def download(release, target, progress=None):
         raise
 
 
+def signer(path):
+    """The publisher (certificate subject) of a validly signed Windows program, or None when it is unsigned, the
+    signature is not valid, or this is not Windows. Authenticode as Windows judges it (Get-AuthenticodeSignature)."""
+    if os.name != 'nt' or not os.path.isfile(path):
+        return None
+    script = ("$s = Get-AuthenticodeSignature -LiteralPath $env:OVERTIME_SIGNED_PATH; "
+              "if ($s.Status -eq 'Valid') { [Console]::Out.Write($s.SignerCertificate.Subject) }")
+    try:
+        out = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
+                             env={**os.environ, 'OVERTIME_SIGNED_PATH': path}, capture_output=True, text=True, timeout=60, check=False,
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+def check_signature(new_path, exe, who=None):
+    """A signed running exe only takes an update with a valid signature of the same publisher: a changed file on the
+    release host (or a swapped download) cannot pass as ours. An unsigned running exe (a source run, a release made
+    before signing) has nothing to compare: its sha256 from latest.json is the check. Raises ValueError."""
+    who = who or signer
+    mine = who(exe)
+    if mine is None:
+        return
+    theirs = who(new_path)
+    if theirs != mine:
+        raise ValueError('The downloaded program is not signed by the same publisher as this one, so it was not used.')
+
+
 def swap(new_path, exe):
     """Put the downloaded exe in place of the running one (Windows lets a running exe be renamed)."""
     old = exe + '.old'
@@ -327,7 +356,9 @@ def swap(new_path, exe):
 
 
 def clean_environment():
-    """The environment for the new exe: a fresh PyInstaller start, without this one's unpacked folder on PATH."""
+    """The environment for a program started from the exe (a new exe, shadPS4): a fresh PyInstaller start, without this
+    one's unpacked folder on PATH, or the program loads our copies of its DLLs and stops ("vcruntime140.dll incorrectly
+    installed" in Legacy)."""
     env = dict(os.environ)
     env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
     base = getattr(sys, '_MEIPASS', None)
@@ -372,6 +403,14 @@ def install(release, exe=None, progress=None, start=True, emulator=None):
         raise Refused(f'This release is {release.asset}, not {os.path.basename(exe)}.')
     new = exe + '.new'
     download(release, new, progress)
+    try:
+        check_signature(new, exe)
+    except BaseException:
+        try:
+            os.remove(new)
+        except OSError:
+            pass
+        raise
     if emulator():
         try:
             os.remove(new)

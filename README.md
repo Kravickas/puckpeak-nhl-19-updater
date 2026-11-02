@@ -56,8 +56,9 @@ Step-by-step, with what you need first: [QUICKSTART.md](QUICKSTART.md).
 
 - Your own NHL 19 dump: **CUSA11126, update 1.60**. The app refuses other versions.
   The update can be merged into the game folder or sit beside it (`CUSA11126-patch` or `CUSA11126-UPDATE`).
-- **shadPS4, NHL19-Build** ([Kravickas/shadPS4, branch NHL19-Build](https://github.com/Kravickas/shadPS4/tree/NHL19-Build)).
-  The app finds it but never downloads it.
+- **shadPS4**, any build ([QtLauncher](https://github.com/shadps4-emu/shadps4-qtlauncher/releases) is the usual way to get it).
+  The app finds it. **Boost performance** on Setup can also put NHL 19 on Kravickas's NHL 19 build
+  ([source](https://github.com/Kravickas/shadPS4/tree/a36a7671d3ecd71fde3b9f82016254dec99d2d84), GPL-2.0).
 - For online play: a **ShadNet** account, signed in inside shadPS4.
 
 ## How it works

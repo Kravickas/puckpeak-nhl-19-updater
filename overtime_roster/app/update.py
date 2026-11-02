@@ -283,6 +283,14 @@ def run(session, game, gathered, todo, per32=None, names=None, log=lambda msg: N
     return rep
 
 
+def heads_up(db):
+    """(short teams, free agents also on a club) for the result; a heads-up never stops an update."""
+    try:
+        return U.short_teams(db), U.free_and_on_a_club(db)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return [], []
+
+
 def team_count(db):
     """How many NHL teams the roster opens with in NHL 19: 32 with Seattle ready (rosterupdate.seattle_ready), else
     31."""
