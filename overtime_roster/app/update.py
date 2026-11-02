@@ -15,7 +15,7 @@ import re
 import urllib.request
 from dataclasses import dataclass, field
 
-from overtime_core import calendar, leaguecal, nhlcom, ratings as R, reallines as RL, rosterupdate as U, teams as T
+from overtime_core import calendar, clubdata, leaguecal, nhlcom, ratings as R, reallines as RL, rosterupdate as U, teams as T
 
 from . import sources
 
@@ -41,12 +41,14 @@ class Gathered:
     active: list = None  # rosterupdate.still_playing(pack): old free agents it doesn't list retire; None keeps them
     nhl27: dict = None  # the owner's local NHL 27 pack (nhl27.py): ratings, player types, contracts; None: none
     lines: dict = None  # the data pack's real lines and captains for this season (reallines.part); None: none
-    leagues: dict = None  # the AHL and Liiga calendars ({'ahl': games, 'liiga': games}, leaguecal); None: none
+    leagues: dict = None  # the other leagues' calendars ({'ahl': games, 'shl': games, ...}, leaguecal); None: none
+    national: dict = None  # the data pack's IIHF squads ({'CAN': [player, ...]}, rosterupdate.rebuild_national)
+    clubs: dict = None  # the data pack's club rosters on NHL 27's rows (clubdata.merged); None: NHL 27's own
 
 
 def gather_leagues(season, offline=False, fetch=None, log=lambda msg: None):
-    """({'ahl': games, 'liiga': games}, where): live (HockeyTech, liiga.fi; `fetch(url) -> bytes`), else the copy the
-    app ships; ({}, '') without either."""
+    """({'ahl': games, 'echl': games, 'liiga': games}, where): live (HockeyTech, liiga.fi; `fetch(url) -> bytes`), else
+    the copy the app ships; ({}, '') without either."""
     live = {} if offline or fetch is None else leaguecal.fetch_season(season, fetch=fetch, log=log)
     copy = leaguecal.load_snapshot(LEAGUES_COPY, season)
     out = dict(copy, **live)
@@ -57,7 +59,8 @@ def gather_leagues(season, offline=False, fetch=None, log=lambda msg: None):
 
 
 def leagues_text(leagues, where):
-    names = {'ahl': 'AHL', 'liiga': 'Liiga'}
+    names = {'ahl': 'AHL', 'echl': 'ECHL', 'liiga': 'Liiga', 'shl': 'SHL', 'del': 'DEL', 'extraliga': 'Extraliga',
+             'nl': 'National League', 'ohl': 'OHL', 'qmjhl': 'QMJHL', 'whl': 'WHL'}
     return ', '.join(f'{names[k]} {len(v):,}' for k, v in sorted(leagues.items())) + f' ({where})'
 
 
@@ -106,11 +109,12 @@ def gather(client, season, pack_dir, fetch=None, offline=False, step=lambda key,
         step('pack', 'ok', f'{n} EA ratings, data pack {when}'.strip() + (f'; {_nhl27_text(nhl27)}' if nhl27 else ''))
     except R.PackError as err:
         if nhl27:
-            step('pack', 'ok', f'{_nhl27_text(nhl27)} ({err})')
+            step('pack', 'ok', f'{_nhl27_text(nhl27)} ({err}): no national teams, clubs from NHL 27')
         else:
             step('pack', 'skip', f'{err}: ratings stay as they are')
     out = Gathered(season, [], [], R.ea_rows(pack), (pack or {}).get('drafts') or [],
-                   active=U.still_playing(pack) if pack else None, nhl27=nhl27, lines=RL.part(pack, season))
+                   active=U.still_playing(pack) if pack else None, nhl27=nhl27, lines=RL.part(pack, season),
+                   national=(pack or {}).get('iihf') or None, clubs=clubdata.merged(pack, nhl27))
     out.sources['pack'] = (pack or {}).get('generated', '')[:10]
     if nhl27:
         out.sources['nhl27'] = where
@@ -149,6 +153,7 @@ def gather(client, season, pack_dir, fetch=None, offline=False, step=lambda key,
         raise UpdateError(f'No {season}-{(season + 1) % 100:02d} calendar: NHL.com could not be reached and the '
                           'data pack has none.')
     out.leagues, where = gather_leagues(season, offline or fetch is None, fetch=fetch, log=log)
+    out.leagues = dict(out.leagues, **leaguecal.pack_games(pack, season))
     more = f'; {leagues_text(out.leagues, where)}' if out.leagues else ''
     if out.leagues:
         out.sources['leagues'] = where
@@ -178,7 +183,8 @@ def gather_files(season, pack_dir, rosters_path, schedule_path, log=lambda msg: 
         found['leagues'] = LEAGUES_COPY
     return Gathered(season, real, games, R.ea_rows(pack), pack.get('drafts') or [], found,
                     active=U.still_playing(pack) if pack else None, nhl27=nhl27, lines=RL.part(pack, season),
-                    leagues=leagues or None)
+                    leagues=dict(leagues, **leaguecal.pack_games(pack, season)) or None,
+                    national=(pack or {}).get('iihf') or None, clubs=clubdata.merged(pack, nhl27))
 
 
 def plan(db, gathered, aliases=None):
@@ -240,7 +246,8 @@ def apply_options(db, gathered, nhl27=True, retire=True, lines=True):
     pack = gathered.nhl27 if nhl27 else None
     return {'rating_rows': gathered.ratings if nhl27 else None, 'drafts': gathered.drafts if nhl27 else None,
             'nhl27': pack, 'active': gathered.active, 'retire': retire,
-            'real_lines': getattr(gathered, 'lines', None) if lines else None}
+            'real_lines': getattr(gathered, 'lines', None) if lines else None,
+            'national': getattr(gathered, 'national', None), 'clubs': getattr(gathered, 'clubs', None) if nhl27 else None}
 
 
 def retirees(db, gathered, nhl27=True):

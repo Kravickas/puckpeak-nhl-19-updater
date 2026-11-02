@@ -2,6 +2,20 @@
 
 What changed in each version, for players.
 
+## 0.40.0 (2026-11-02)
+
+Update now takes the whole game: every league, player, calendar and national team.
+
+### What is new
+
+- **Real rosters for the big leagues.** SHL, Liiga, DEL, Extraliga, NL, OHL, QMJHL and WHL come from the leagues' own data, the same
+  source as NHL Legacy. The AHL, ECHL, ICE Hockey League and HockeyAllsvenskan come from NHL 27. New players get ratings too.
+- **New clubs.** A club that left a league makes room for one that has no place in the game: Wenatchee Wild, Newfoundland Regiment and
+  others take the slot, with the old slot's logo and arena.
+- **Real calendars.** 2026-27 schedules for the SHL, DEL, Extraliga, NL, OHL, QMJHL, WHL and ECHL, next to the NHL, AHL and Liiga.
+  Clubs that have no slot in NHL 19 lose their games, and each league is evened out, so some play fewer games than in real life.
+- **National teams.** 20 squads from the IIHF. Russia has played no IIHF event since 2022, so its team is the best Russians at clubs.
+
 ## 0.30.0 (2026-11-01)
 
 Rosters of every club league from NHL 27, centre ice for every league, national team jerseys, and many fixes.

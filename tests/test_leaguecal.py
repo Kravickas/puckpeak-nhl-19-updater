@@ -119,4 +119,4 @@ def test_gather_leagues_live_first_then_the_app_copy(copy):
         raise OSError('liiga.fi down')
     got, where = update.gather_leagues(2026, fetch=ahl_only)
     assert got['ahl'] == [('2026-10-02', 'CLE', 'GR')] and got['liiga'] == copy['liiga'] and where == 'live + app copy'
-    assert update.leagues_text(got, where) == 'AHL 1, Liiga 544 (live + app copy)'
+    assert update.leagues_text(got, where) == 'AHL 1, ECHL 1,080, Liiga 544 (live + app copy)'

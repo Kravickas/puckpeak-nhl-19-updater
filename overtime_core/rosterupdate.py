@@ -20,11 +20,13 @@ exhibitionplayers records (mirror_seattle).
 All-Star teams (31-34) keep their rows (they point at players through their own exhibitionplayers records).
 """
 import bisect
+import collections
 import re
 import unicodedata
 from dataclasses import dataclass, field
 
 from . import calendar, careerstats, equipment as EQ, leaguecal, lines, nhl27 as N, ratings as R, reallines, teams as T
+from .roster import ALTERNATE, CAPTAIN
 from .matching import Matcher, Person
 
 ROSTER, CUSTOM_ROSTER = 'exhibitionrostertable', 'customrostertable'
@@ -554,15 +556,16 @@ class Report:
 
 
 def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, drafts=None, per32=None, active=None,
-          nhl27=None, log=lambda m: None, retire=True, real_lines=None, leagues=None):
+          nhl27=None, log=lambda m: None, retire=True, real_lines=None, leagues=None, national=None, clubs=None):
     """Do the plan `todo`, then set up Utah and Seattle, retire old free agents nobody lists (`active`:
     still_playing(pack); None keeps them all, and so does `retire` False), rebuild the lines of every team that changed, give everyone NHL 27's
     ratings, player type and biases (`nhl27`: the local NHL 27 pack, nhl27.py) and EA's ratings (`rating_rows`) to
     the players NHL 27 does not have, lay the real lines and captains on the NHL teams (`real_lines`: the data pack's
     `lines` part, reallines.part; None keeps the lines dealt), set the contracts (_contracts; only with `nhl27`), give every NHL goalie a
     career row (careerstats; NHL 27's seasons when the pack has them: Play Now crashes without one), write the
-    calendar (`games`) and the AHL and Liiga calendars (`leagues`, leaguecal; one that can't be made is left as it
-    is and logged). Writes straight into `db` (the app keeps a copy of the tables to undo: TABLES + the team, strategy
+    calendar (`games`) and the other leagues' calendars (`leagues`, leaguecal; one that can't be made is left as it
+    is and logged), the national teams (`national`: the data pack's IIHF squads, rebuild_national). `clubs`: the club
+    leagues' rosters to use (clubdata.merged), else NHL 27's. Writes straight into `db` (the app keeps a copy of the tables to undo: TABLES + the team, strategy
     and schedule tables)."""
     if CUSTOM_ROSTER not in db or T.CUSTOM not in db:
         raise UpdateError('the roster has no custom team tables (an online roster): graft_custom() first')
@@ -651,8 +654,12 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
     retired = [r for r in retiring if r[0] not in {pi for pi, _n, _t in signed}]
     _retire(db, retired)
     ahl = {}
+    keeping = _listed_ids(db, (nhl27 or {}).get('players'), (clubs or {}).get('players'), active,
+                          [p for squad in (national or {}).values() for p in squad], shift)
     if nhl27 and nhl27.get('players'):
-        ahl, ahl_teams = rebuild_ahl(db, nhl27, shift)
+        ahl = {'unused_dropped_first': drop_unused(db, keeping)}
+        got, ahl_teams = rebuild_ahl(db, nhl27, shift)
+        ahl.update(got)
         changed |= {(ROSTER, team) for team in ahl_teams}
         for team in sorted(ahl_teams):  # a junior or ECHL club that lost players to the AHL dresses its 20 again
             signed += _sign_free_agents(db, ROSTER, team)
@@ -668,12 +675,19 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
     if nhl27 and nhl27.get('players'):  # every other club league, the clubs NHL 27 and NHL 19 share (LEAGUE_PLAN)
         frozen = {AHL_LEAGUE, ALLSVENSKAN}
         for league, (tag, size) in LEAGUE_PLAN.items():
-            got, teams_of = rebuild_league(db, nhl27, shift, league, tag, {}, tag, size, True, frozen, False)
+            got, teams_of = rebuild_league(db, clubs or nhl27, shift, league, tag, {}, tag, size, True, frozen, False,
+                                           tag != 'europe')
             frozen.add(league)
             others.update(got)
             changed |= {(ROSTER, team) for team in teams_of}
             for team in sorted(teams_of):
                 signed += _sign_free_agents(db, ROSTER, team)
+    squads = {}
+    if national:
+        squads = {'unused_dropped': drop_unused(db, keeping)}
+        got, national_teams = rebuild_national(db, national, shift, log)
+        squads.update(got)
+        changed |= {(ROSTER, team) for team in national_teams}
     done_lines, skipped = [], []
     for table, team in sorted(changed):
         try:
@@ -698,6 +712,9 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
         ids = {bios.get(i, 'game_id') for i in range(bios.count)} - rated if rated else None
         found = R.match(db, rating_rows, game_ids=ids, shift=shift)
         n_ratings += R.apply(db, R.plan(db, found, models))
+    if national:
+        squads['national_russia'] = team_russia(db)     # by the update's ratings
+        squads['national_captains'] = give_captains(db)
     real = reallines.apply(db, real_lines, nhl_pis, target_of, log=log) if real_lines else None
     if nhl27 is not None:
         on_clock = placed_ids | {c['game_id'] for c in created} | (clocked if nhl27.get('players') else set())
@@ -705,6 +722,7 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
     counts.update(ahl)
     counts.update(allsv)
     counts.update(others)
+    counts.update(squads)
     mirror_seattle(db)
     expansion_active(db)
     if careerstats.SEASON in db:  # a roster save holds no stock career tables (only the default database does)
@@ -715,6 +733,9 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
         cal = calendar.apply(db, schema, games, per32=per32)
     for key, part in sorted((leagues or {}).items()):
         try:
+            if key in leaguecal.LEAGUE_TABLES:
+                cal.update(leaguecal.apply_other(db, key, part, _calendar_places(db, key, part, log)))
+                continue
             cal.update(leaguecal.apply(db, schema, {key: part}))
         except calendar.CalendarError as err:
             log(f'{key} calendar kept as it was: {err}')
@@ -945,13 +966,53 @@ def _fuzzy_clubs(teams, free, names):
     return out
 
 
-def _rename_club(teams, slot, name):
-    """Name slot `slot` (a teams row index) after NHL 27's club `name`: teamname and nickname; the city too when the
-    name ends with the nickname's last word (Brampton Steelheads: Brampton), else it stays the slot's."""
+def _calendar_places(db, key, games, log=lambda m: None):
+    """{club name of `games`: place in the league's table} on this roster. A club takes the slot of its name, else of
+    its town or nickname (_fuzzy_clubs); a slot left over plays the real calendar of a club left over. Clubs without
+    a slot are logged, and their games are left out (leaguecal.other_rows)."""
+    league = leaguecal.LEAGUE_TABLES[key][0]
+    rows = sorted((r for r in db[T.TEAMS].rows() if r['league'] == league), key=lambda r: r['index'])
+    place = {r['index']: i for i, r in enumerate(rows)}
+    teams = {r['index']: r for r in rows}
+    names = {_team_key(c): c for _d, h, a in games for c in (h, a)}
+    slot_of = {}
+    for s, r in teams.items():
+        for name in (r['teamname'], r['nickname']):
+            if _team_key(name) in names and _team_key(name) not in slot_of.values():
+                slot_of[s] = _team_key(name)
+                break
+    left = {k: v for k, v in names.items() if k not in set(slot_of.values())}
+    found = _fuzzy_clubs(teams, set(teams) - set(slot_of), left)
+    slot_of.update(found)
+    played = collections.Counter(_team_key(c) for _d, h, a in games for c in (h, a))
+    left = sorted((k for k in left if k not in set(found.values())), key=lambda k: (-played[k], k))
+    for s in sorted(set(teams) - set(slot_of)):
+        if left:
+            slot_of[s] = left.pop(0)
+    if left:
+        log(f"{key} calendar: no place for {', '.join(names[k] for k in left)}")
+    return {names[k]: place[s] for s, k in slot_of.items()}
+
+
+# NHL 27's clubs that can take over a slot: the pack gives a club no town, and a name does not say which word is one.
+CLUB_TOWNS = {'Savannah Ghost Pirates': ('Savannah', 'SAV'), 'Bloomington Bison': ('Bloomington', 'BLM'),
+              'Greensboro Gargoyles': ('Greensboro', 'GSO'), 'Tahoe Knight Monsters': ('Tahoe', 'TAH'),
+              'Olimpija Ljubljana': ('Ljubljana', 'LJU'), 'HYDRO Fehervar AV 19': ('Fehervar', 'AVS'),
+              'EC iDM Warmepumpen VSV': ('Villach', 'VSV'), 'HC Falkensteiner Pustertal Wolf': ('Pustertal', 'PUS'),
+              'Hockey Club Milano': ('Milano', 'MIL')}
+
+
+def _rename_club(teams, slot, name, whole=False, towns=None):
+    """Name slot `slot` (a teams row index) after the club `name`: teamname and nickname. The city is the club's town
+    (`towns` {name: (town, abbreviation)}, then CLUB_TOWNS); without one, the first of a two-word name ending with the
+    nickname's last word (Brampton Steelheads: Brampton), else the slot's stays. `whole`: another club, not the slot's
+    under a new name: its abbreviation too, when known."""
     row = next(i for i in range(teams.count) if teams.get(i, 'index') == slot)
     words, last = name.split(), (teams.get(row, 'nickname') or '').split()
-    city = ' '.join(words[:-1]) if len(words) > 1 and last and _team_key(words[-1]) == _team_key(last[-1]) else None
-    for field, value in (('teamname', name), ('nickname', name), ('cityname', city)):
+    city = words[0] if len(words) == 2 and last and _team_key(words[-1]) == _team_key(last[-1]) else None
+    town, abbr = (towns or {}).get(name) or CLUB_TOWNS.get(name) or (city, None)
+    city, abbr = town, abbr if whole else None
+    for field, value in (('teamname', name), ('nickname', name), ('cityname', city), ('abbrname', abbr)):
         if value:
             teams.set(row, field, _fit(teams, field, value))
 
@@ -970,13 +1031,14 @@ def _real_of(p):
 
 
 def rebuild_league(db, pack, shift, league=AHL_LEAGUE, tag='ahl', moved=None, prefix='ahl', size=AHL_SIZE,
-                   fuzzy=False, frozen=(), free_agents=True):
+                   fuzzy=False, frozen=(), free_agents=True, take_over=False):
     """The clubs' rosters of one league from NHL 27's (`pack`, nhl27.py; the AHL by default, HockeyAllsvenskan in
     ALLSVENSKAN: `league` is exhibitionteams.league, `tag` the pack's league key, `moved` {2018 name: NHL 27 name},
     `prefix` the counts' names, `size` the (least, most) players a club has; `fuzzy`: a slot no club matches by name
     takes the club of its town or nickname (_fuzzy_clubs) and is renamed after it; `frozen`: the leagues whose
     rosters are final (their players stay); `free_agents` False: a short club is not filled from the unsigned
-    players). The AHL: each slot gets
+    players; `take_over`: a slot still without a club becomes a club still without a slot, the biggest first, its
+    name, city and abbreviation (_rename_club)). The AHL: each slot gets
     its NHL 27 club's players (by name, or AHL_MOVED), less those on an NHL club or Seattle; an existing bio moves
     off his other club or the free agent list, anyone else is created (_Maker). A club left short of AHL_SIZE or of
     AHL_GOALIES goalies is filled from NHL 27's ECHL players of its NHL organisation, then NHL 27's unsigned players
@@ -1009,6 +1071,13 @@ def rebuild_league(db, pack, shift, league=AHL_LEAGUE, tag='ahl', moved=None, pr
                              {k: v for k, v in names.items() if k not in set(source.values())})
         source.update(found)
         renamed = {s: names[k] for s, k in found.items() if _team_key(teams[s]['teamname']) != k}
+    whole = set()
+    if take_over:
+        spare = sorted((k for k in by_club if k not in set(source.values()) and len(by_club[k]) >= size[0]),
+                       key=lambda k: (-len(by_club[k]), k))
+        for s, k in zip(sorted(set(teams) - set(source)), spare):
+            source[s], renamed[s] = k, by_club[k][0]['team']
+            whole.add(s)
     if not source:
         return {}, set()
     rows = [p for k in source.values() for p in by_club[k]] + [p for ps in echl.values() for p in ps] + unsigned
@@ -1166,7 +1235,7 @@ def rebuild_league(db, pack, shift, league=AHL_LEAGUE, tag='ahl', moved=None, pr
     if created:
         sort_players(db)
     for s, name in sorted(renamed.items()):
-        _rename_club(db[T.TEAMS], s, name)
+        _rename_club(db[T.TEAMS], s, name, s in whole, pack.get('towns'))
     counts.update({f'{prefix}_renamed': len(renamed), f'{prefix}_players': sum(len(c) for c in plan.values()), f'{prefix}_created': created,
                    f'{prefix}_moved': moved_n, f'{prefix}_cleared': cleared, f'{prefix}_to_free_agents': len(free_in)})
     return counts, changed
@@ -1214,8 +1283,9 @@ def rename_allsvenskan(db, only=None):
 
 POSITION_27 = ('C', 'LW', 'RW', 'D', 'G')
 # The club leagues rebuilt from NHL 27 after the AHL and HockeyAllsvenskan: exhibitionteams.league -> (the pack's league
-# key, (least, most) players a club has; NHL 19's own clubs go to 38). A slot NHL 27 has no club for keeps its 2018
-# roster (its players NHL 27 still lists get its ratings); a club NHL 27 has that NHL 19 has no slot for is not added.
+# key, (least, most) players a club has; NHL 19's own clubs go to 38). A slot the source has no club for becomes one
+# the league has no slot for (take_over; not the Europe teams, a few clubs only); else it keeps its 2018 roster (its
+# players NHL 27 still lists get its ratings). Clubs over the league's slots are not added.
 LEAGUE_PLAN = {2: ('shl', (20, 38)), 3: ('liiga', (20, 38)), 4: ('del', (20, 38)), 5: ('extraliga', (20, 38)),
                6: ('nl', (20, 38)), 7: ('icehl', (20, 38)), 9: ('europe', (20, 38)), 11: ('ohl', (20, 38)),
                12: ('qmjhl', (20, 38)), 13: ('whl', (20, 38)), 15: ('echl', (20, 38))}
@@ -1413,6 +1483,179 @@ def mirror_seattle(db):
     players.sort_by('index')
     _rebuild_roster(roster, set(old), adds)
     return len(adds)
+
+
+NATIONAL = 10   # exhibitionteams.league of the national teams
+# the data pack's IIHF code -> NHL 19's national team (its spelling). Russia has no IIHF squad: team_russia
+NATIONAL_TEAMS = {'AUT': 'Austria', 'BLR': 'Belarus', 'CAN': 'Canada', 'CZE': 'Czech Republic', 'DNK': 'Denmark',
+                  'FIN': 'Finland', 'FRA': 'France', 'DEU': 'Germany', 'GBR': 'Great Britain', 'ITA': 'Italy',
+                  'JPN': 'Japan', 'KAZ': 'Kazakstan', 'LVA': 'Latvia', 'NOR': 'Norway', 'POL': 'Poland',
+                  'SVK': 'Slovakia', 'SWE': 'Sweden', 'CHE': 'Switzerland', 'UKR': 'Ukraine', 'USA': 'USA'}
+RUSSIA, RUSSIA_SHAPE = 'Russia', {'F': 14, 'D': 8, 'G': 3}
+
+
+def _national_slots(db):
+    """{national team's name key: team index}."""
+    return {_team_key(r['nickname']): r['index'] for r in db[T.TEAMS].rows() if r['league'] == NATIONAL}
+
+
+def _set_squad(db, maker, state, slot, picks, made=None):
+    """National team `slot` is `picks` [(game_id, number or None)]. A player keeps the record he has on the team, or
+    the one just made for him (`made` {game_id: record}), else he gets a new one: a national team's records are its
+    own, as the All-Stars'. An old record goes unless it is the bio's last one. Returns the players."""
+    roster, players, bios = db[ROSTER], db[PLAYERS], db[BIOS]
+    old = [roster.get(i, 'playerindex') for i in range(roster.count) if roster.get(i, 'team') == slot]
+    gid_of = _record_ids(db)
+    own = {gid_of[pi]: pi for pi in old if pi in gid_of} | (made or {})
+    numbers, adds = set(), []
+    for gid, number in picks:
+        brow = state.bio_row[gid]
+        n = number if number and 1 <= number <= 99 and number not in numbers else bios.get(brow, 'jersey')
+        if not 1 <= n <= 99 or n in numbers:
+            n = next(k for k in range(2, 99) if k not in numbers)
+        numbers.add(n)
+        pi = own.get(gid)
+        if pi is None:
+            pi = maker._take('next_index', maker.used_index)
+            players.append({'table': 0, 'index': pi, 'playerid': gid})
+            state.pis_of.setdefault(gid, []).append(pi)
+        style = _ai_value(db, bios.row(brow), 'playerstyle', 0)
+        adds.append((slot, {'team': slot, 'playerindex': pi, 'jersey': n, 'playerstyle': style}))
+    keep = {values['playerindex'] for _t, values in adds}
+    drop = set()
+    for pi in old:
+        pis = state.pis_of.get(gid_of.get(pi), [])
+        if pi not in keep and len(pis) > 1:
+            drop.add(pi)
+            pis.remove(pi)
+    _rebuild_roster(roster, set(old), adds)
+    for i in reversed(range(players.count)):
+        if players.get(i, 'index') in drop and players.get(i, 'table') == 0:
+            players.delete(i)
+    return len(adds)
+
+
+def _listed_ids(db, nhl27_rows, club_rows, active, squad_rows, shift):
+    """The bios any list names (name + birth date): drop_unused leaves them, they may be placed yet."""
+    rows = [dict(p) for p in (*(nhl27_rows or ()), *(club_rows or ()), *(squad_rows or ())) if p.get('birth')]
+    rows += [p for p in active or () if isinstance(p, dict) and p.get('birth') and isinstance(p['birth'], (list, tuple))
+             and 'last' in p and 'pos' in p]
+    bios = db[BIOS]
+    return {bios.get(brow, 'game_id') for _r, brow, _l in R.match(db, rows, shift=shift)}
+
+
+def drop_unused(db, keeping=()):
+    """Take out the players nothing uses, for room: the player tables are full long before a whole game of new players
+    is in (exhibitionskaterai holds 11,078). A bio goes when he is no custom or special player, on no roster and no
+    free agent list, no list names him (`keeping`), and no other table holds his id (career stats, awards, visors,
+    resort extras: those stay). Returns the bios dropped."""
+    state, bios, players = State(db), db[BIOS], db[PLAYERS]
+    own = {BIOS, PLAYERS, *AI.values(), *EQUIPMENT.values()}
+    held = set()
+    for t in db.tables:
+        if t.name not in own:
+            for f in t.fields:
+                if f.name in ('game_id', 'playerid', 'playerartid', 'heroplayerid', 'villainplayerid'):
+                    held.update(t.get(i, f.name) for i in range(t.count))
+    held.update(players.get(i, 'playerid') for i in range(players.count) if players.get(i, 'table') != 0)
+    gone = set()
+    for i in range(bios.count):
+        gid = bios.get(i, 'game_id')
+        if (gid >= SPECIAL_IDS or gid in held or gid in keeping or bios.get(i, 'team') != -1
+                or any(p in state.entry or p in state.free for p in state.pis_of.get(gid, ()))):
+            continue
+        gone.add(gid)
+    for t in (bios, players, *(db[n] for n in (*AI.values(), *EQUIPMENT.values()))):
+        name = 'playerid' if t is players else 'game_id'
+        for i in reversed(range(t.count)):
+            if t.get(i, name) in gone and (t is not players or t.get(i, 'table') == 0):
+                t.delete(i)
+    return len(gone)
+
+
+def rebuild_national(db, squads, shift, log=lambda m: None):
+    """The national teams from the data pack's IIHF squads ({code: [player]}: NATIONAL_TEAMS). A player the roster has
+    (name + birth date) plays through a record of the team's own, anyone else is created, on the national team alone,
+    without a contract. Returns ({counts}, {teams changed})."""
+    slots = _national_slots(db)
+    wanted = {c: list(s) for c, s in squads.items() if s and _team_key(NATIONAL_TEAMS.get(c)) in slots}
+    log(f"national teams without a squad: {', '.join(sorted(set(NATIONAL_TEAMS) - set(wanted))) or 'none'}")
+    rows = [p for squad in wanted.values() for p in squad]
+    brow_of = {id(row): brow for row, brow, level in R.match(db, rows, shift=shift) if level in ('exact', 'date')}
+    state, maker, bios = State(db), _Maker(db), db[BIOS]
+    gid_at = {brow: gid for gid, brow in state.bio_row.items()}
+    created, changed, found = {}, set(), 0
+    for code, squad in sorted(wanted.items()):
+        slot, picks, made = slots[_team_key(NATIONAL_TEAMS[code])], [], {}
+        for p in squad:
+            gid = gid_at.get(brow_of.get(id(p)))
+            who = (p['first'], p['last'], tuple(p['birth']))
+            gid = created.get(who) if gid is None else gid
+            if gid is None:
+                y, m, d = p['birth']
+                real = {'first': p['first'], 'last': p['last'], 'birth': f'{y:04d}-{m:02d}-{d:02d}',
+                        'position': 'CLR'[len(created) % 3] if p['pos'] == 'F' else p['pos'], 'shoots': p.get('shoots'),
+                        'height': p.get('height_cm'), 'weight': p.get('weight_kg'), 'country': code}
+                pi, gid, _style, _donor = maker.make(real, slot, -1, p.get('num') or 2, None, shift)
+                brow = bios.count - 1
+                for f, v in dict(N.NO_CONTRACT, contractstatus=-1).items():
+                    bios.set(brow, f, v)
+                state.bio_row[gid] = brow
+                state.pis_of.setdefault(gid, []).append(pi)
+                created[who], made[gid] = gid, pi
+            else:
+                found += 1
+            if gid not in {g for g, _n in picks}:
+                picks.append((gid, p.get('num')))
+        _set_squad(db, maker, state, slot, picks, made)
+        changed.add(slot)
+    db[PLAYERS].sort_by('index')
+    sort_players(db)
+    return {'national_teams': len(changed), 'national_found': found, 'national_created': len(created)}, changed
+
+
+def team_russia(db):
+    """Russia has played no IIHF event since 2022, so no squad comes: its team is the best Russians at clubs today
+    (RUSSIA_SHAPE), lines dealt. Returns whether it changed."""
+    slot = _national_slots(db).get(_team_key(RUSSIA))
+    bios = db[BIOS]
+    clubs = {r['index'] for r in db[T.TEAMS].rows() if r['league'] in CLUB_LEAGUES and r['index'] not in SHADOW_TEAMS}
+    groups = {g: [] for g in RUSSIA_SHAPE}
+    for i in range(bios.count):
+        b = bios.row(i)
+        if b['intlcountry'] == COUNTRY['RUS'] and b['team'] in clubs and b['game_id'] < SPECIAL_IDS:
+            groups[_group(b['position'])].append((-_ai_value(db, b, 'skill_overall', 0), b['game_id']))
+    if slot is None or len(groups['G']) < DRESS_GOALIES or len(groups['D']) < 6 or len(groups['F']) < 12:
+        return False
+    picks = [(gid, None) for g, n in RUSSIA_SHAPE.items() for _o, gid in sorted(groups[g])[:n]]
+    _set_squad(db, _Maker(db), State(db), slot, picks)
+    db[PLAYERS].sort_by('index')
+    lines.build(db, slot)
+    return True
+
+
+def give_captains(db):
+    """A national team without letters: its highest rated dressed skater wears the C, the next two the A. The squads
+    come with no letters, and _rebuild_roster's new rows have none. Returns the teams given them."""
+    roster, state = db[ROSTER], State(db)
+    slots = set(_national_slots(db).values())
+    by_team = {}
+    for i in range(roster.count):
+        if roster.get(i, 'team') in slots:
+            by_team.setdefault(roster.get(i, 'team'), []).append(i)
+    n = 0
+    for rows in by_team.values():
+        if any(roster.get(i, 'captain') for i in rows):
+            continue
+        ranked = []
+        for i in rows:
+            b = state.bio(roster.get(i, 'playerindex'))
+            if b and b['position'] != GOALIE and roster.get(i, 'rosterstatus'):
+                ranked.append((-_ai_value(db, b, 'skill_overall', 0), b['game_id'], i))
+        for (_o, _g, i), letter in zip(sorted(ranked), (CAPTAIN, ALTERNATE, ALTERNATE)):
+            roster.set(i, 'captain', letter)
+        n += bool(ranked)
+    return n
 
 
 def _record_ids(db):

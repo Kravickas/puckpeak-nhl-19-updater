@@ -1,4 +1,6 @@
-"""The real 2026-27 calendars of the other leagues NHL 19 schedules: the AHL and Liiga (docs/notes/calendar.md).
+"""The real 2026-27 calendars of the other leagues NHL 19 schedules (docs/notes/calendar.md): the AHL and Liiga by
+their own places, and every league in LEAGUE_TABLES by club name: the ECHL from HockeyTech, the others from the data
+pack's `schedules` (pack_games).
 
 The tables have the NHL ones' layout (calendar.py: round, day, month 0-based, index, home, away); a team index is the
 team's place in its league (exhibitionteams in `index` order).
@@ -22,6 +24,12 @@ from . import calendar
 from .calendar import CalendarError
 
 AHL32, AHL31, LIIGA = 'ahl32schedule', 'ahlschedule', 'finnishschedule'
+# a calendar's key -> (exhibitionteams.league, its table). A club is found by its name in the roster being written
+# (rosterupdate._calendar_places): the data pack's slots and league numbers are another game's. No source has
+# Allsvenskan's, the ICE Hockey League's, the Champions League's or the Spengler Cup's: those keep the game's own.
+LEAGUE_TABLES = {'shl': (2, 'swedishschedule'), 'del': (4, 'germanschedule'), 'extraliga': (5, 'czechschedule'),
+                 'nl': (6, 'swissschedule'), 'ohl': (11, 'ohlschedule'), 'qmjhl': (12, 'qmjhlschedule'),
+                 'whl': (13, 'whlschedule'), 'echl': (15, 'echlschedule')}
 AHL_LEAGUE, LIIGA_LEAGUE = 1, 3
 AHL_EXPANSION = 31          # place of customteams 498 in ahl32schedule
 # HockeyTech club code -> NHL parent (calendar.SLOTS code), 2026-27 (theahl.com schedule release, 2026)
@@ -39,6 +47,10 @@ AHL_KEY = '50c2cd9b5e18e390'    # theahl.com's public feed key
 AHL_URL = ('https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=schedule&key={key}&fmt=json'
            '&client_code=ahl&lang=en&season_id={sid}&team_id=&month=-1&location=home')
 LIIGA_URL = 'https://liiga.fi/api/v2/games?tournament=runkosarja&season={season}'
+ECHL_SEASONS = {2026: 78}   # as AHL_SEASONS
+ECHL_KEY = '2c2b89ea7345cae8'   # echl.com's public feed key
+ECHL_URL = ('https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=schedule&key={key}&fmt=json'
+            '&client_code=echl&lang=en&season_id={sid}&team_id=&month=-1&location=home')
 AHL_CREDIT = 'Official statistics provided by American Hockey League'
 USER_AGENT = 'OvertimeRoster (+https://ot.puckpeak.com)'
 
@@ -56,6 +68,13 @@ def ahl_games(body):
     return [g[:3] for g in sorted(games, key=lambda g: (g[0], g[3]))]
 
 
+def echl_games(body):
+    """[(date, home name, away name)] of a HockeyTech schedule feed, date order."""
+    rows = (body.get('SiteKit') or {}).get('Schedule') or []
+    games = [(g['date_played'], g['home_team_name'], g['visiting_team_name'], int(g['game_id'])) for g in rows]
+    return [g[:3] for g in sorted(games, key=lambda g: (g[0], g[3]))]
+
+
 def liiga_games(body):
     """[(date, home name, away name)] of liiga.fi's games list (local date of the face-off), date order."""
     games = []
@@ -66,8 +85,8 @@ def liiga_games(body):
 
 
 def fetch_season(start_year, fetch=_http_get, log=lambda msg: None):
-    """{'ahl': games, 'liiga': games} of the season starting in `start_year`, live; a league that can't be read is
-    left out (logged)."""
+    """{'ahl': games, 'echl': games, 'liiga': games} of the season starting in `start_year`, live; a league that
+    can't be read is left out (logged)."""
     out = {}
     if start_year in AHL_SEASONS:
         try:
@@ -75,6 +94,12 @@ def fetch_season(start_year, fetch=_http_get, log=lambda msg: None):
             log(f"AHL {start_year}-{(start_year + 1) % 100:02d}: {len(out['ahl'])} games (HockeyTech)")
         except (OSError, ValueError, KeyError, TypeError) as err:
             log(f'AHL calendar: {err}')
+    if start_year in ECHL_SEASONS:
+        try:
+            out['echl'] = echl_games(json.loads(fetch(ECHL_URL.format(key=ECHL_KEY, sid=ECHL_SEASONS[start_year]))))
+            log(f"ECHL {start_year}-{(start_year + 1) % 100:02d}: {len(out['echl'])} games (HockeyTech)")
+        except (OSError, ValueError, KeyError, TypeError) as err:
+            log(f'ECHL calendar: {err}')
     try:
         out['liiga'] = liiga_games(json.loads(fetch(LIIGA_URL.format(season=start_year + 1))))
         log(f"Liiga {start_year}-{(start_year + 1) % 100:02d}: {len(out['liiga'])} games (liiga.fi)")
@@ -84,7 +109,7 @@ def fetch_season(start_year, fetch=_http_get, log=lambda msg: None):
 
 
 def load_snapshot(path, start_year):
-    """The offline copy {'ahl': games, 'liiga': games} for `start_year`; {} without one."""
+    """The offline copy {'ahl': games, 'echl': games, 'liiga': games} for `start_year`; {} without one."""
     try:
         with open(path, encoding='utf-8') as f:
             snap = json.load(f)
@@ -92,7 +117,24 @@ def load_snapshot(path, start_year):
         return {}
     if snap.get('season') != start_year:
         return {}
-    return {k: [tuple(g[:3]) for g in snap.get(k) or []] for k in ('ahl', 'liiga') if snap.get(k)}
+    return {k: [tuple(g[:3]) for g in snap.get(k) or []] for k in ('ahl', 'echl', 'liiga') if snap.get(k)}
+
+
+def pack_games(pack, start_year):
+    """{key: [(date, home name, away name)]} of the data pack's `schedules` for LEAGUE_TABLES' leagues. The pack gives
+    a club as its team slot, or as its name when it has no slot: a slot is turned into its name. {} for another
+    season."""
+    if not pack or pack.get('season') != start_year:
+        return {}
+    name = {t['slot']: t['full'] for league in (pack.get('leagues') or {}).values() for t in league.get('teams') or []
+            if t.get('slot') is not None}
+    out = {}
+    for key, games in (pack.get('schedules') or {}).items():
+        if key in LEAGUE_TABLES:
+            rows = [(g[0], name.get(g[1], g[1]), name.get(g[2], g[2])) for g in games]
+            if not any(isinstance(c, int) for _d, h, a in rows for c in (h, a)):
+                out[key] = rows
+    return out
 
 
 def snapshot(start_year, leagues, generated):
@@ -158,6 +200,31 @@ def liiga_rows(games):
     if unknown:
         raise CalendarError(f"no Liiga place for {', '.join(unknown)}")
     return _even([(d, LIIGA_SLOTS[h], LIIGA_SLOTS[a]) for d, h, a in games if h in LIIGA_SLOTS and a in LIIGA_SLOTS])
+
+
+def other_rows(games, places):
+    """`games` [(date, home, away)] as rows of a league's table: `places` {club name: place}; a club without a place
+    is left out with its games."""
+    return _even([(d, places[h], places[a]) for d, h, a in games if h in places and a in places])
+
+
+def apply_other(db, key, games, places):
+    """Write the calendar of LEAGUE_TABLES[key]. Every place must play: raises CalendarError otherwise, before
+    anything is written. Returns what `apply` returns."""
+    league, name = LEAGUE_TABLES[key]
+    if name not in db:
+        raise CalendarError(f'this roster has no {name}')
+    teams = len(_league(db, league))
+    rows = other_rows(games, places)
+    if len({c for _d, h, a in rows for c in (h, a)}) != teams:
+        raise CalendarError(f'{name}: not every one of the {teams} teams has games')
+    t = db[name]
+    if len(rows) > t.max_records:
+        raise CalendarError(f'{len(rows)} games do not fit in {name} ({t.max_records})')
+    calendar.fill(t, rows)
+    counts = calendar.per_team(rows)
+    return {name: {'games': len(rows), 'per_team': (min(counts.values()), max(counts.values())),
+                   'first': rows[0][0], 'last': rows[-1][0], 'teams': teams}}
 
 
 def apply(db, schema, leagues):
