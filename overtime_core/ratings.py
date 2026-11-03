@@ -166,6 +166,44 @@ def _split(name):
     return first, last
 
 
+def attribute_mean(values, goalie):
+    """The mean of a player's listed attributes (`values` {c_* field: rating}): his level, what a starter deal goes by."""
+    fields = {f for f in (GOALIE_ATTRS if goalie else SKATER_ATTRS).values() if f in values}
+    return sum(values[f] for f in fields) / len(fields) if fields else 0.0
+
+
+def level_offset(rows):
+    """{goalie: how far EA's overall lies above the mean of a player's attributes}: the median of EA's list (`rows`), 0
+    without one. A level plus this is an overall."""
+    out = {False: 0.0, True: 0.0}
+    for goalie, attrs in ((False, SKATER_ATTRS), (True, GOALIE_ATTRS)):
+        gaps = []
+        for r in rows or ():
+            values = [v for k, v in (r.get('attrs') or {}).items() if k in attrs and v is not None]
+            if (r.get('position') or '').startswith('G') == goalie and r.get('ovr') and len(values) >= 10:
+                gaps.append(r['ovr'] - sum(values) / len(values))
+        gaps.sort()
+        if gaps:
+            out[goalie] = gaps[len(gaps) // 2]
+    return out
+
+
+def level_line(pack):
+    """{goalie: (a, b)} of the straight line level = a + b * overall through NHL 27's players (`pack`, nhl27.py): its
+    overall runs lower than the level below the NHL (an OHL player's about 13 lower, an NHL player's about the same)."""
+    out = {}
+    for goalie, kind in ((False, 'skater'), (True, 'goalie')):
+        at = {name: k for k, name in enumerate(pack['fields'][kind])}
+        pairs = [(p['v'][at['c_overall']], attribute_mean({f: p['v'][at[f]] for f in at}, goalie))
+                 for p in pack['players'] if (p.get('pos') == 'G') == goalie]
+        n = len(pairs)
+        mx, my = sum(x for x, _ in pairs) / max(n, 1), sum(y for _, y in pairs) / max(n, 1)
+        var = sum((x - mx) ** 2 for x, _ in pairs)
+        b = sum((x - mx) * (y - my) for x, y in pairs) / var if var else 1.0
+        out[goalie] = (my - b * mx if var else 0.0, b)
+    return out
+
+
 def match(db, ratings, game_ids=None, shift=0):
     """[(rating, bio row, level)] for the rating rows that find their player (a goalie only a goalie, a skater only
     a skater); `game_ids` limits the players looked at (default: everyone with a bio). Birth dates also match up to

@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from overtime_core import art, eb, overlay
+from overtime_core import art, clubdata, eb, overlay
 
 IDLE = {'running': lambda: False}
 LOGO = 'nhl/ui/kettle_assets/teamlogos/large/t22.gnf'
@@ -240,6 +240,27 @@ def test_portrait_flags_follow_the_art_served():
     assert art.portrait_flags(db, stock, {}) == 2
     assert [r['hasportrait'] for r in db[art.BIOS].rows] == [1, 0, 0, 0]
     assert art.portrait_flags({}, stock, files) == 0  # no bio table: nothing to do
+
+
+def test_player_portraits_give_each_person_his_art_id():
+    name = lambda first, last: clubdata._key(first, last)
+    people = [[name('Gavin', 'McKenna'), 2007, 12, 20, 40001], [name('Nick', 'Suzuki'), 1999, 8, 10, 1500],
+              [name('Late', 'Feed'), 2005, 1, 1, 40002], [name('One', 'Name'), 2004, 3, 3, 40003],
+              [name('Two', 'Same'), 2000, 2, 2, 40004], [name('Mitch', 'Marner'), 1997, 5, 5, 40005]]
+    shift = 8
+    bio = lambda first, last, y, m, d, artid: {'firstname': first, 'lastname': last, 'year': y - 1900 - shift, 'month': m - 1,
+                                               'day': d - 1, 'artid': artid, 'hasportrait': 0}
+    rows = [bio('Gavin', 'McKenna', 2007, 12, 20, 20641),   # a new player: his art id was a free one
+            bio('Nick', 'Suzuki', 1999, 8, 10, 1500),        # a stock art id stays
+            bio('Late', 'Feed', 2006, 1, 1, 20700),          # the feed's year is off by one: the same day
+            bio('One', 'Name', 2004, 9, 9, 20701),           # another day: the only bio and the only person of that name
+            bio('Two', 'Same', 1990, 9, 9, 20702), bio('Two', 'Same', 1991, 9, 9, 20703),    # two bios: which one is not known
+            bio('No', 'Photo', 2000, 1, 1, 20704),
+            bio('Mitchell', 'Marner', 1997, 5, 5, 20705)]    # another first name, the same last name and birth date
+    db = {art.BIOS: _Bios(rows)}
+    assert art.player_portraits(db, people, shift) == 5
+    assert [r['artid'] for r in db[art.BIOS].rows] == [40001, 1500, 40002, 40003, 20702, 20703, 20704, 40005]
+    assert art.player_portraits({}, people) == 0
 
 
 def test_delta_pack_round_trip_and_refusals(tmp_path, game):

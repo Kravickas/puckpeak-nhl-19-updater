@@ -11,7 +11,7 @@ import struct
 
 import pytest
 
-from overtime_core import calendar, careerstats, nhl27 as N, overlay, ratings as R, rosterupdate as U, tdb
+from overtime_core import calendar, careerstats, lines, nhl27 as N, overlay, ratings as R, rosterupdate as U, tdb
 from overtime_core import teams as T
 from overtime_core.schema import parse_schema
 from overtime_core.tdb import TYPE_INT, TYPE_STRING, Database, Field, Table
@@ -46,7 +46,7 @@ TABLES27 = {'exhibitionplayerbiotable': ('PBIO', BIO), 'exhibitionskaterai': ('S
             'exhibitiongoalieai': ('GOAI', GOALIE), 'exhibitionteams': ('TEAM', TEAM),
             'stockcareerseasongoaliestats': ('GSTA', CAREER)}
 TABLES19 = {'exhibitionplayerbiotable': ('PBIO', BIO), 'exhibitionskaterai': ('SKAI', SKATER19),
-            'exhibitiongoalieai': ('GOAI', GOALIE19)}
+            'exhibitiongoalieai': ('GOAI', GOALIE19), 'exhibitionteams': ('TEAM', TEAM)}
 
 
 def schema_xml(tables):
@@ -260,7 +260,6 @@ def test_money_rows_read_and_refused():
         N.money(money_brk(floor=1100))  # floor above the cap
     with pytest.raises(N.Nhl27Error):
         N.money(bytes(50))
-    assert N.season_money({'money': m}) == (850_000, 1_025_000) == N.season_money(None)
 
 
 def test_pack_is_deterministic(nhl27_db, tmp_path):
@@ -345,7 +344,17 @@ def nhl19_rows(pack, shift=0):
     skaters.append({'game_id': 5001, 'c_speed': 60, 'c_passing': 60, 'c_overall': 60, 'c_potential': 1,
                     'c_fighting': 0, 'playerstyle': 2, 'off_defbias': 7, 'pass_carrybias': 7, 'shoot_passbias': 7,
                     'skatingstyle': 3, 'skill_overall': 60})
-    return {'exhibitionplayerbiotable': bios, 'exhibitionskaterai': skaters, 'exhibitiongoalieai': goalies}
+    # a player of a minor league club without any deal
+    bios.append(bio(5002, 'Club', 'Player', (2001, 1, 1), 3, 35))
+    skaters.append({'game_id': 5002, 'c_speed': 60, 'c_passing': 60, 'c_overall': 60, 'c_potential': 1,
+                    'c_fighting': 0, 'playerstyle': 2, 'off_defbias': 7, 'pass_carrybias': 7, 'shoot_passbias': 7,
+                    'skatingstyle': 3, 'skill_overall': 60})
+    teams = [{'index': i, 'abbrname': calendar.CODES[i][:3], 'teamname': f'Club {calendar.CODES[i]}', 'league': 0}
+             for i in range(32)]
+    teams += [{'index': 35, 'abbrname': 'AHL', 'teamname': 'Farm Team', 'league': 1},
+              {'index': 40, 'abbrname': 'ALU', 'teamname': 'Alumni', 'league': 21}]
+    return {'exhibitionplayerbiotable': bios, 'exhibitionskaterai': skaters, 'exhibitiongoalieai': goalies,
+            'exhibitionteams': teams}
 
 
 @pytest.fixture()
@@ -407,7 +416,7 @@ def test_contracts_after_the_update(pack, nhl19):
     other = next(d for d in deals if d['org'] == 'BOS')
     deals.remove(other)
     deals.append(dict(other, org='MTL', birth=[other['birth'][0] - 1, 1, 1]))
-    counts = U._contracts(db, dict(pack, contracts=deals), 2026, 0, set())
+    counts = U._contracts(db, dict(pack, contracts=deals), 2026, 0, set(), {5002: 80})
     after = {r['game_id']: r for r in bios.rows()}
     name_of = {(b['firstname'], b['lastname']): gid for gid, b in after.items()}
     for d in deals:
@@ -419,14 +428,18 @@ def test_contracts_after_the_update(pack, nhl19):
         if d['last'] == 'Hand':
             assert b['proteam'] == calendar.SLOTS[d['org']] and b['team'] == 40  # a minor leaguer's organisation
     b = after[name_of[(other['first'], other['last'])]]
-    assert b['contractlength'] in (1, 3) and b['contractdollars'] in (170, 205)
+    assert b['contractlength'] in (1, 3) and b['contractdollars'] in (170, 195)
     gone = after[5000]  # an NHL club player NHL 27 does not have: one season at the lowest salary (41)
     assert (gone['contractdollars'], gone['contractlength'], gone['contractstatus']) == (170, 1, 0)
     stale = after[5001]  # an AHL player with 2018 rights and no NHL 27 deal: no contract
     assert {k: stale[k] for k in N.NO_CONTRACT} == N.NO_CONTRACT
     fa = next(gid for gid, r in before.items() if r['team'] == -1)
     assert after[fa] == before[fa]  # free agents keep what they have
+    starter = after[5002]   # a minor league club's player: Legacy's starter deal, no NHL contract to the game
+    assert (starter['contractlength'], starter['contractis2way'], starter['contractstatus']) == (2, 0, -1)
+    assert starter['contractdollars'] == N.starter(N.STARTER_ROW[1], 80, 25)['contractdollars'] > 0
     assert counts['deals'] >= 300 and counts['minors'] == 1 and counts['cleared'] == 1 and counts['estimated'] >= 2
+    assert counts['starter'] == 1
     meta = _schema.by_name(U.BIOS)
     for r in bios.rows():
         for f in meta.fields.values():
@@ -434,10 +447,164 @@ def test_contracts_after_the_update(pack, nhl19):
                 assert f.low <= r[f.name] <= f.high
 
 
+def test_an_unsigned_picks_rights_stay_with_no_money(pack, nhl19):
+    """The pack's `rights` (NHL rights without a deal) keep a club player's organisation with no money, as NHL 19's own
+    roster keeps its unsigned picks (contractstatus 0, $0, no seasons) and Legacy gives them no starter deal. Seattle
+    holds no rights (a custom team): its pick gets the starter deal. A second run changes nothing."""
+    db, _schema = nhl19
+    bios = db[U.BIOS]
+
+    def row(gid):
+        return next(r for r in bios.rows() if r['game_id'] == gid)
+
+    def right(b, org):
+        return {'first': b['firstname'], 'last': b['lastname'], 'birth': [b['year'] + 1900, b['month'] + 1, b['day'] + 1],
+                'pos': 'C' if b['position'] != 4 else 'G', 'org': org}
+
+    rights = [right(row(5001), 'BOS'), right(row(5002), 'SEA')]
+    counts = U._contracts(db, dict(pack, contracts=[], rights=rights), 2026, 0, set(), {5002: 80})
+    stale, club = row(5001), row(5002)
+    assert {k: stale[k] for k in N.CONTRACT_FIELDS} == dict.fromkeys(N.CONTRACT_FIELDS, 0)
+    assert (stale['proteam'], stale['contractstatus']) == (calendar.SLOTS['BOS'], 0)
+    assert (club['proteam'], club['contractstatus']) == (-1, -1) and club['contractdollars'] > 0
+    assert counts['rights'] == 1
+    again = U._contracts(db, dict(pack, contracts=[], rights=rights), 2026, 0, set(), {5002: 80})
+    assert again['rights'] == again['starter'] == 0
+
+
+def test_an_ahl_player_whose_list_names_an_nhl_team_is_its(pack, nhl19):
+    """`orgs` (the AHL list's NHL organisation, _feed_facts): with no deal and no rights in the pack, the player is that
+    team's on a two-way deal by his age, as NHL 19's own AHL players under an NHL contract and Legacy clubs._rights (the
+    tester's Stramel and Dexheimer, at Iowa with nobody's rights). Seattle holds no rights: the starter deal. A second run
+    changes nothing."""
+    db, _schema = nhl19
+    bios = db[U.BIOS]
+
+    def row(gid):
+        return next(r for r in bios.rows() if r['game_id'] == gid)
+
+    assert U._rights_holder('SEA') is None and U._rights_holder('XYZ') is None and U._rights_holder(None) is None
+    counts = U._contracts(db, dict(pack, contracts=[], rights=[]), 2026, 0, set(), {5002: 80}, orgs={5002: 'SEA'})
+    assert (row(5002)['proteam'], row(5002)['contractstatus']) == (-1, -1) and counts['organisation'] == 0
+    counts = U._contracts(db, dict(pack, contracts=[], rights=[]), 2026, 0, set(), {5002: 80}, orgs={5002: 'MIN'})
+    club = row(5002)
+    want = dict(N.estimate(2026 - club['year'] - U.YEAR_BASE), contractis2way=1)
+    assert {k: club[k] for k in want} == want
+    assert (club['proteam'], club['contractstatus']) == (calendar.SLOTS['MIN'], 0) and counts['organisation'] == 1
+    fa = next(r for r in bios.rows() if r['team'] == -1)
+    kept = U._contracts(db, dict(pack, contracts=[], rights=[]), 2026, 0, set(), {5002: 80},
+                        orgs={5002: 'MIN', fa['game_id']: 'MIN'})
+    assert kept['organisation'] == 0 and row(fa['game_id']) == fa  # a free agent keeps what he has
+
+
+def test_deals_follow_the_salary_cap_the_game_plays(pack, nhl19):
+    """money_scale: with Game patch's 2026-27 cap the deals are real dollars; without it, NHL 19's own cap over 2026-27's,
+    so the 2026 lowest salary ($850,000) comes out as 2018's ($650,000) and a second run changes nothing (Legacy's
+    contracts.GAME)."""
+    assert U.money_scale(pack, True) == 1.0
+    scale = U.money_scale({'money': {'cap': 1040}}, False)
+    assert scale == U.money_scale(None, False) == 795 / 1040
+    db, _schema = nhl19
+    bios = db[U.BIOS]
+    U._contracts(db, dict(pack, contracts=[]), 2026, 0, set(), {}, money=scale)
+    gone = next(r for r in bios.rows() if r['game_id'] == 5000)     # one season at the lowest salary
+    assert gone['contractdollars'] * N.UNIT == 650_000
+    deal = pack['contracts'][0]
+    U._contracts(db, dict(pack, contracts=[deal]), 2026, 0, set(), {}, money=scale)
+    b = next(r for r in bios.rows() if (r['firstname'], r['lastname']) == (deal['first'], deal['last']))
+    assert b['contractdollars'] == round(N.terms(deal)['contractdollars'] * scale)
+    again = U._contracts(db, dict(pack, contracts=[deal]), 2026, 0, set(), {}, money=scale)
+    assert not any(again.values())
+
+
+def test_the_ufa_year_follows_the_birth_year(nhl19):
+    """_ufa_years: NHL 19's own roster keeps yearufa = year + 27 (97 % of its bios); only the game_ids given change, and
+    a roster without the field is left alone."""
+    assert U._ufa_years(nhl19[0], {5002}) == 0
+    tables = {U.BIOS: ('PBIO', BIO + [('yearufa', 8, 0, 255)])}
+    db, _schema = make_db(tables, {U.BIOS: [bio(1, 'A', 'B', (2004, 1, 1), 0, 0, yearufa=0),
+                                            bio(2, 'C', 'D', (1990, 1, 1), 0, 0, yearufa=0)]}, schema_xml(tables))
+    assert U._ufa_years(db, {1}) == 1
+    assert [r['yearufa'] for r in db[U.BIOS].rows()] == [104 + U.UFA_AGE, 0]
+    assert U._ufa_years(db, {1}) == 0
+
+
+GEAR = [('game_id', 16, 0, 65535), ('maskid', 10, 0, 1023), ('masktype', 7, 0, 127), ('showcustomcolors', 1, 0, 1),
+        ('keepcustomiftraded', 1, 0, 1), ('showcustomstick', 1, 0, 1), ('keepcustomstickiftraded', 1, 0, 1)]
+
+
+def test_a_goalie_who_changed_teams_wears_its_mask_and_colours():
+    """_fit_masks: the moved goalie takes his NHL team's own mask its goalies wear least, a club's own, or the plain one
+    (Utah: also an unmoved goalie in the coyote); a mask that fits, another masktype and an unmoved goalie stay; his
+    own colours go unless keep-if-traded says otherwise; a second run changes nothing."""
+    bos, uta = T.SLOTS['BOS'], T.UTAH_SLOT
+    tables = {U.BIOS: ('PBIO', BIO), U.EQUIPMENT[True]: ('GOEQ', GEAR), 'exhibitionteams': ('TEAM', TEAM)}
+    goalies = {  # game_id: (team before, team now, maskid, masktype, colours, keep colours, stick, keep stick)
+        1: (-1, bos, 7, 0, 0, 0, 0, 0), 2: (bos, bos, bos, 0, 1, 0, 1, 0), 3: (5, uta, 5, 0, 0, 0, 0, 0),
+        4: (uta, uta, 148, 0, 0, 0, 0, 0), 5: (bos, 103, 7, 0, 0, 0, 0, 0), 6: (103, 103, 109, 0, 0, 0, 0, 0),
+        7: (bos, 104, 124, 0, 0, 0, 0, 0), 8: (-1, bos, 7, 6, 0, 0, 0, 0), 9: (5, bos, bos, 0, 1, 0, 1, 1),
+        10: (bos, bos, 7, 0, 1, 0, 1, 0)}
+    rows = {U.BIOS: [bio(g, 'G', letters(g), (1995, 1, 1), U.GOALIE, v[1]) for g, v in goalies.items()],
+            U.EQUIPMENT[True]: [dict(zip([f[0] for f in GEAR], (g,) + v[2:])) for g, v in goalies.items()],
+            'exhibitionteams': [{'index': t, 'abbrname': 'T', 'teamname': f'T{t}', 'league': 0 if t < 31 else 3}
+                                for t in (5, bos, uta, 103, 104)]}
+    db, _schema = make_db(tables, rows, schema_xml(tables))
+    got = U._fit_masks(db, {g: v[0] for g, v in goalies.items()})
+    gear = {r['game_id']: r for r in db[U.EQUIPMENT[True]].rows()}
+    assert {g: gear[g]['maskid'] for g in goalies} == {1: bos + 126, 2: bos, 3: 120, 4: 120, 5: 109, 6: 109, 7: 124,
+                                                       8: 7, 9: bos, 10: 7}
+    assert (gear[9]['showcustomcolors'], gear[9]['showcustomstick'], gear[10]['showcustomcolors']) == (0, 1, 1)
+    assert got == {'masks': 4, 'goalie_colours': 1}
+    assert U._fit_masks(db, U._bio_teams(db)) == {'masks': 0, 'goalie_colours': 0}
+
+
+def test_the_pack_lists_rights_without_a_deal(nhl27_db):
+    """rights_part: a player whose rights a club holds with no money; not one with a deal, not one on the club itself."""
+    db = nhl27_db[0]
+    rights = N.rights_part(db)
+    deals = {(d['first'], d['last']) for d in N.contracts_part(db)}
+    assert all((r['first'], r['last']) not in deals for r in rights)
+    assert all(set(r) == {'first', 'last', 'birth', 'pos', 'org'} for r in rights)
+
+
 def test_estimates():
-    young, old = N.estimate(20), N.estimate(30, 900_000, 1_075_000)
-    assert (young['contractdollars'], young['contractlength'], young['contractismultiyear']) == (205, 3, 1)
-    assert (old['contractdollars'], old['contractlength'], old['contractismultiyear']) == (180, 1, 0)
+    young, old = N.estimate(22), N.estimate(23)
+    assert (young['contractdollars'], young['contractlength'], young['contractismultiyear']) == (195, 3, 1)
+    assert (old['contractdollars'], old['contractlength'], old['contractismultiyear']) == (170, 1, 0)
+
+
+def test_a_made_players_age_counts_from_the_games_clock(nhl19):
+    db, _schema = nhl19
+    bios = db[U.BIOS]
+    brow = next(i for i, r in enumerate(bios.rows()) if r['game_id'] == 5002)
+    bios.set(brow, 'year', 2006 - 1900 - 8)     # 20 this season, kept 8 years back on the game's clock
+    pack = {'contracts': []}
+    U._contracts(db, pack, 2026, 8, set(), {5002: 60})
+    assert bios.row(brow)['contractlength'] == 1     # read as 28: what a made player missing from on_clock got
+    U._contracts(db, pack, 2026, 8, {5002}, {5002: 60})
+    assert bios.row(brow)['contractlength'] == 2
+
+
+def test_a_bio_the_default_put_on_the_clock_counts_as_on_it(pack, nhl19):
+    db, _schema = nhl19
+    bios = db[U.BIOS]
+    found = U._nhl27_matches(db, pack['players'], 0, 'team')[:2]
+    p, brow, _level = found[0]
+    bios.set(brow, 'year', p['birth'][0] - 1900 - 8)
+    assert U._on_clock(db, found, 8) == {bios.get(brow, 'game_id')}
+
+
+def test_a_seattle_deal_in_the_minors_has_no_organisation(nhl19):
+    db, _schema = nhl19
+    bios = db[U.BIOS]
+    b = next(r for r in bios.rows() if r['game_id'] == 5002)
+    deal = {'first': b['firstname'], 'last': b['lastname'], 'birth': [b['year'] + 1900, b['month'] + 1, b['day'] + 1],
+            'pos': 'C' if b['position'] != 4 else 'G', 'org': 'SEA', 'cap': 890_000, 'years': 1, 'two_way': 1}
+    U._contracts(db, {'contracts': [deal]}, 2026, 0, set(), {})
+    after = next(r for r in bios.rows() if r['game_id'] == 5002)
+    terms = N.terms(deal)
+    assert {k: after[k] for k in terms} == terms
+    assert (after['proteam'], after['contractstatus']) == (-1, -1)
 
 
 # --- where the app finds the pack, the update's lines ----------------------------------------------
@@ -545,7 +712,7 @@ def test_update_with_nhl27_on_the_default_roster(game_db):
     rep = U.apply(db, schema, todo, start_year=2026, active=[], nhl27=pack)
     n = rep.nhl27
     assert n['rated'] >= 0.95 * len(reals) and n['values'] == rep.ratings and n['styles'] > 0
-    assert n['deals'] >= 0.85 * len(reals) and n['estimated'] > 0 and n['cleared'] > 0
+    assert n['deals'] >= 0.85 * len(reals) and n['estimated'] > 0 and n['starter'] > 0
     assert rep.problems == [] and U.check(db, schema, None, 2026) == []
     for name in (U.BIOS, *U.AI.values(), U.ROSTER, U.CUSTOM_ROSTER):
         meta = schema.by_name(name)
@@ -628,8 +795,8 @@ def test_update_rebuilds_the_ahl_clubs_from_nhl27(game_db):
         add('Marlie', letters(i), f'2004-0{1 + i}-1{i}', 'CDLRDC'[i], 'ahl', 'Toronto Marlies')
     for i in range(4):  # Toronto's ECHL players: the Marlies fill from them first
         add('Growler', letters(i), f'2003-0{1 + i}-0{1 + i}', 'GCDL'[i], 'echl', 'Newfoundland Growlers')
-    for i in range(28):  # too many Bears: trimmed to AHL_SIZE[1]
-        add('Bear', letters(i), f'2002-{1 + i % 12:02d}-{1 + i:02d}', 'G' if i < 3 else 'CLRDD'[i % 5], 'ahl',
+    for i in range(U.AHL_SIZE[1] + 2):  # too many Bears: trimmed to AHL_SIZE[1]
+        add('Bear', letters(i), f'2002-{1 + i % 12:02d}-{1 + i % 27:02d}', 'G' if i < 3 else 'CLRDD'[i % 5], 'ahl',
             'Hershey Bears')
     for i in range(21):  # Binghamton's slot plays as NHL 27's Abbotsford Canucks
         add('Canuck', letters(i), f'2001-{1 + i % 12:02d}-{1 + i:02d}', 'G' if i < 2 else 'CLRDD'[i % 5], 'ahl',
@@ -647,6 +814,11 @@ def test_update_rebuilds_the_ahl_clubs_from_nhl27(game_db):
     n = rep.nhl27
     assert n['ahl_teams'] == 3 and n['ahl_created'] > 0 and n['ahl_trimmed'] > 0 and n['ahl_filled'] > 0
     assert rep.problems == [] and U.check(db, schema, None, 2026) == [] and U.key_problems(db) == []
+    abbotsford = db[T.TEAMS].row(T._rows_by_index(db[T.TEAMS])[binghamton])
+    assert n['ahl_renamed'] == 1 and (abbotsford['teamname'], abbotsford['cityname'], abbotsford['abbrname'],
+                                      abbotsford['divisiongroup']) == ('Abbotsford Canucks', 'Abbotsford', 'ABB', T.AHL_PACIFIC)
+    # three of the four renamed clubs are not on this roster yet: no farm link moves (all or none)
+    assert db[T.TEAMS].get(T._rows_by_index(db[T.TEAMS])[T.SLOTS['VAN']], 'ahlaffiliate') == 64
     state = U.State(db)
     bios = {r['game_id']: r for r in db[U.BIOS].rows()}
     on = collections.defaultdict(list)
@@ -659,6 +831,8 @@ def test_update_rebuilds_the_ahl_clubs_from_nhl27(game_db):
     club_teams = {r['index'] for r in db[T.TEAMS].rows() if r['league'] in U.CLUB_LEAGUES}
     clubs = collections.Counter(b['game_id'] for team, bs in on.items() if team in club_teams for b in bs)
     assert not [g for g, k in clubs.items() if k > 1]  # nobody on two club rosters
+    # a club signs once its league is rebuilt: no free agent it signed is taken off again by a later league's rebuild
+    assert all(state.entry.get(pi) == tuple(where) for pi, _n, where in rep.signed), rep.signed
     names = lambda team: {(b['firstname'], b['lastname']) for b in on[team]}  # noqa: E731
     assert {(b['firstname'], b['lastname']) for b in kept} <= names(marlies)
     assert {('Growler', letters(i)) for i in range(4)} <= names(marlies)  # Toronto's ECHL players filled in
@@ -682,6 +856,57 @@ def test_update_rebuilds_the_ahl_clubs_from_nhl27(game_db):
             assert all(now[f] == v for f, v in N.NO_CONTRACT.items())
 
 
+@pytest.mark.game
+def test_coachella_valley_gets_its_players_in_the_custom_roster(game_db):
+    """Coachella Valley (customteams 498, Seattle's AHL club, no exhibitionteams slot) gets its list's players in
+    customrostertable, dresses its 20, wears its listed numbers, has starter deals and is active; the expansion start
+    roster leaves it empty (empty_expansion, as Seattle) with its players free agents. Before, the Update placed nobody
+    there (owner, 2026-11-03: "fill coachella valley")."""
+    raw, schema = game_db
+    db = tdb.Database.parse(raw, schema)
+    with open(os.path.join(DATA, 'nhl_rosters_20262027.json'), encoding='utf-8') as f:
+        reals = json.load(f)
+    pack = fake_pack(reals, schema)
+    extra = [{'first': 'Firebird', 'last': letters(i), 'birth': f'2003-{1 + i % 12:02d}-{1 + i:02d}',
+              'position': 'G' if i < 2 else 'CLRDD'[i % 5], 'team': 'Coachella Valley Firebirds'} for i in range(22)]
+    more = fake_pack(extra, schema)['players']
+    for i, p in enumerate(more):
+        p['league'], p['team'] = 'ahl', 'Coachella Valley Firebirds'
+        p['feed'] = {'num': 40 + i, 'org': 'SEA', **({'letter': 'C'} if i == 5 else {})}
+    pack['players'] += more
+    rep = U.apply(db, schema, U.plan(db, reals), start_year=2026, active=[], nhl27=pack)
+    assert rep.problems == [] and U.check(db, schema, None, 2026) == [] and U.key_problems(db) == []
+    state = U.State(db)
+    on = {pi: state.bio(pi) for pi, e in state.entry.items() if e == (U.CUSTOM_ROSTER, T.SEATTLE_AHL)}
+    assert {b['lastname'] for b in on.values() if b['firstname'] == 'Firebird'} == {letters(i) for i in range(22)}
+    assert all(b['team'] == T.SEATTLE_AHL and b['proteam'] == -1 and b['contractstatus'] == -1
+               and b['contractdollars'] > 0 for b in on.values())  # Seattle holds no rights: starter deals
+    custom = db[U.CUSTOM_ROSTER]
+    rows = [custom.row(i) for i in range(custom.count) if custom.get(i, 'team') == T.SEATTLE_AHL]
+    assert sorted(r['jersey'] for r in rows) == list(range(40, 62))
+    assert sum(r[lines.DRESSED] for r in rows) == 20
+    assert db[T.CUSTOM].get(U._seattle_row(db, T.SEATTLE_AHL), 'active') == 1
+    before = [custom.row(i) for i in range(custom.count)]
+    U.rebuild_ahl(db, pack, T.year_shift(2026))  # a second run keeps Coachella Valley as it is
+    assert [custom.row(i) for i in range(custom.count)] == before
+    # the app lists it under the AHL with its players and their custom roster numbers
+    from overtime_roster.app import rail, roster_card as RC
+    from overtime_roster.app.session import RosterSession
+    s = RosterSession(db)
+    r = rail.Rail.__new__(rail.Rail)
+    r.picks, r._seattle = {}, (None, 0)
+    cv = [t for t in r.listed(s, rail.AHL) if t['id'] == rail.COACHELLA]
+    assert cv and cv[0]['code'] == 'CV' and cv[0]['count'] == len(on) and r.league_of(s, rail.COACHELLA) == rail.AHL
+    assert sorted(s.players_of(rail.COACHELLA)) == sorted(on)
+    pi = next(iter(on))
+    assert RC.rail_team(s, pi) == rail.COACHELLA and RC.copy_kind(s, pi) == 'coachella'
+    assert RC.card_rows(s, pi) and len(RC.mates(s, pi)) == len(on) - 1
+    gone = U.empty_expansion(db)
+    assert set(on) <= set(gone) and set(on) <= U.State(db).free
+    assert db[T.CUSTOM].get(U._seattle_row(db, T.SEATTLE_AHL), 'active') == 0
+    assert not [p for p in U.check(db, schema) if 'active' in p or 'Coachella' in p]
+
+
 def test_nhl27_club_players_nhlcom_leaves_out_are_added():
     real = [{'first': 'Sidney', 'last': 'Crosby', 'birth': '1987-08-07', 'position': 'C', 'team': 'PIT'}]
     players = [{'first': 'Sidney', 'last': 'Crosby', 'birth': [1987, 8, 7], 'pos': 'C', 'team': 'PIT', 'league': 'nhl'},
@@ -692,10 +917,55 @@ def test_nhl27_club_players_nhlcom_leaves_out_are_added():
     deal = lambda p, org: {'first': p['first'], 'last': p['last'], 'birth': p['birth'], 'org': org}  # noqa: E731
     pack = {'players': players, 'contracts': [deal(players[0], 'PIT'), deal(players[1], 'NYI'),
                                               deal(players[2], 'TOR'), deal(players[3], 'NYI')]}
-    out, extra = U.with_nhl27_clubs(real, pack)
-    assert [(r['first'], r['last'], r['team'], r['birth'], r['position']) for r in extra] == [
-        ('Mathew', 'Barzal', 'NYI', '1997-05-26', 'C')]
-    assert out == real + extra and round(extra[0]['height']) == 183
+    out, extra, _farmed = U.with_absent(real, pack)
+    assert sorted((r['first'], r['last'], r['team'], r['birth'], r['position']) for r in extra) == [
+        ('Kevin', 'Traded', 'TOR', '1995-01-01', 'D'), ('Mathew', 'Barzal', 'NYI', '1997-05-26', 'C')]
+    assert out == real + extra and round(next(r for r in extra if r['last'] == 'Barzal')['height']) == 183
+
+
+def _absent_pack():
+    deal = lambda first, last, birth, pos, org: {'first': first, 'last': last, 'birth': birth, 'pos': pos, 'org': org}  # noqa: E731
+    return {'players': [], 'contracts': [deal('Simon', 'Edvinsson', [2003, 2, 5], 'D', 'DET'),
+                                         deal('Kept', 'Inahl', [2000, 1, 1], 'C', 'NYI'),
+                                         deal('Benjamin', 'Kindel', [2007, 4, 4], 'C', 'PIT')]}
+
+
+def test_with_absent_a_feed_wins_over_a_deal_and_over_lines():
+    real = [{'first': 'Ben', 'last': 'Kindel', 'birth': '2007-04-19', 'position': 'C', 'team': 'PIT', 'id': 1}]
+    data = {'nhl_last': [{'first': 'Named', 'last': 'Byline', 'birth': [1999, 1, 1], 'pos': 'LW', 'team': 'COL', 'nhl_id': 7},
+                         {'first': 'Left', 'last': 'Theleague', 'birth': [1985, 1, 1], 'pos': 'D', 'team': 'BOS', 'nhl_id': 8},
+                         {'first': 'Moved', 'last': 'Clubs', 'birth': [1995, 1, 1], 'pos': 'G', 'team': 'CBJ', 'nhl_id': 9}]}
+    lines = {'COL': {'slots': {'l1lw': 7, 'l1c': 10}}}
+    data['nhl_last'].append({'first': 'Only', 'last': 'Onlines', 'birth': [1998, 1, 1], 'pos': 'C', 'team': 'COL', 'nhl_id': 10})
+    listed = {U._team_key('Kept' + 'Inahl'), U._team_key('Named' + 'Byline')}
+    pages = {8: {'active': False, 'team': None}, 9: {'active': True, 'team': 'TOR'}}
+    pack = _absent_pack()
+    pack['contracts'].append({'first': 'Moved', 'last': 'Clubs', 'birth': [1995, 1, 1], 'pos': 'G', 'org': 'CBJ'})
+    _out, extra, _farmed = U.with_absent(real, pack, data, lines, listed, pages.get)
+    assert {r['last']: r['team'] for r in extra} == {'Onlines': 'COL', 'Edvinsson': 'DET', 'Clubs': 'TOR'}
+    assert listed == {U._team_key('Kept' + 'Inahl'), U._team_key('Named' + 'Byline')}      # a league lists these two
+
+
+def test_with_absent_sends_a_two_way_deal_on_no_list_to_the_farm_club():
+    real = [{'first': 'Ben', 'last': 'Kindel', 'birth': '2007-04-19', 'position': 'C', 'team': 'PIT', 'id': 1}]
+    pack = _absent_pack()
+    pack['contracts'][0]['two_way'] = 1     # Edvinsson's on a two-way deal, Kept Inahl on a one-way one
+    farms = {'DET': ('Grand Rapids Griffins', 21), 'NYI': ('Bridgeport Islanders', 21)}
+    _out, extra, farmed = U.with_absent(real, pack, farms=farms)
+    assert [(club, p['last']) for club, p in farmed] == [('Grand Rapids Griffins', 'Edvinsson')]
+    assert {r['last'] for r in extra} >= {'Inahl'} and 'Edvinsson' not in {r['last'] for r in extra}
+    farms['DET'] = ('Grand Rapids Griffins', U.FARM_ROOM)   # no room on the farm: his NHL club holds him
+    _out, extra, farmed = U.with_absent(real, pack, farms=farms)
+    assert not farmed and 'Edvinsson' in {r['last'] for r in extra}
+
+
+def test_with_absent_stops_at_a_clubs_room():
+    real = [{'first': f'P{i}', 'last': f'L{i}', 'birth': '2000-01-01', 'position': 'C', 'team': 'DET'}
+            for i in range(U.KEEP_ROOM)]
+    pack = _absent_pack()
+    assert 'DET' not in {r['team'] for r in U.with_absent(real, pack)[1]}
+    pack['players'] = [dict(pack['contracts'][0], team='DET', league='nhl')]
+    assert 'DET' in {r['team'] for r in U.with_absent(real, pack)[1]}        # he was there: he stays
 
 
 @pytest.mark.game
@@ -707,7 +977,7 @@ def test_update_keeps_injured_nhl27_players_on_the_clock(game_db):
     pack = fake_pack(reals, schema)  # deals at their clubs for all but every tenth
     injured = [r for i, r in enumerate(reals) if i % 10 == 3 and r['team'] != 'SEA'][:30]
     listed = [r for r in reals if r not in injured]
-    rep = U.apply(db, schema, U.plan(db, listed, nhl27=pack), start_year=2026, active=[], nhl27=pack)
+    rep = U.apply(db, schema, U.plan(db, U.with_absent(listed, pack)[0]), start_year=2026, active=[], nhl27=pack)
     assert rep.problems == [] and U.key_problems(db) == []
     shift = T.year_shift(2026)
     hurt = [pack['players'][reals.index(r)] for r in injured]
@@ -787,6 +1057,21 @@ def test_pack_players_carry_their_gear():
 
 
 @pytest.mark.game
+def test_the_data_packs_gear_lands_on_its_player_only(game_db):
+    raw, schema = game_db
+    db = tdb.Database.parse(raw, schema)
+    bios = db[U.BIOS]
+    sk = next(i for i in range(bios.count) if bios.get(i, 'position') != 4 and bios.get(i, 'game_id') < U.SPECIAL_IDS)
+    who = {'first': str(bios.get(sk, 'firstname')), 'last': str(bios.get(sk, 'lastname')), 'pos': 'C',
+           'birth': [bios.get(sk, 'year') + U.YEAR_BASE, bios.get(sk, 'month') + 1, bios.get(sk, 'day') + 1]}
+    at = U.EQ.row_of(db, bios.get(sk, 'game_id'), 'skater')
+    t = db[U.EQUIPMENT[False]]
+    t.set(at, 'skatesocktuck', 0)
+    assert U._pack_gear(db, [dict(who, sock=2)], 0) == 1 and t.get(at, 'skatesocktuck') == 2
+    assert U._pack_gear(db, [dict(who, sock=2)], 0) == 0                                # a second pass changes nothing
+    assert U._pack_gear(db, [dict(who, sock=3, last='Nobody')], 0) == 0 and t.get(at, 'skatesocktuck') == 2
+
+
 def test_real_gear_goes_through_the_equipment_checks(game_db):
     raw, schema = game_db
     db = tdb.Database.parse(raw, schema)

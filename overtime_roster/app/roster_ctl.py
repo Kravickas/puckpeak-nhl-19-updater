@@ -14,7 +14,7 @@ import copy
 from overtime_core import faces as F, equipment as EQ
 
 from . import labels as L, myedits, roster_card as RC
-from .rail import SEATTLE
+from .rail import COACHELLA, SEATTLE
 from .registry import Part
 from .session import EditError
 
@@ -26,6 +26,8 @@ SEATTLE_COPY = {'text': 'Seattle copy', 'tip': 'His Season and Franchise card. S
 COPY_NOTES = {
     'seattle': 'Seattle copy: his Season and Franchise card (the expansion Franchise lists him as a free agent). Edits '
                'here change Season and Franchise. Seattle in the Teams list holds his Play Now card.',
+    'coachella': "Coachella Valley plays in Season and Franchise only: NHL 19's Play Now has no place for it. The "
+                 'expansion Franchise starts it empty, its players as free agents.',
     'play_now': 'His Play Now card. His Season and Franchise card is on the free agent list (Seattle copy). Edits here '
                 'change Play Now and that card alike.',
 }
@@ -273,6 +275,8 @@ class RosterCtl(Part):
                 note = 'Free agents. Edit one here. Signing him to a team comes later.'
             elif not searching and c.team == SEATTLE:
                 note = 'Seattle is added by Overtime. Most Kraken have a generic head: give them a face in Face & type.'
+            elif not searching and c.team == COACHELLA:
+                note = COPY_NOTES['coachella']
             unsaved, sea = self.unsaved(), RC.seattle_rows(s)
             return {
                 'loaded': True, 'busy': bool(c.busy), 'team': team, 'query': query, 'searching': searching,
@@ -296,7 +300,7 @@ class RosterCtl(Part):
             _, _, ai = s.ai(b)
             goalie = b['position'] == L.GOALIE
             team = RC.rail_team(s, pi)
-            free = e is None
+            free = team == L.FREE_AGENTS
             values = RC.values(s, clock, pi)
             style = ai.get(F.STYLE) if ai else None
             name = F.type_name(style, goalie)

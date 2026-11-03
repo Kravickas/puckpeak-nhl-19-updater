@@ -16,10 +16,10 @@ import datetime
 import os
 import time
 
-from overtime_core import nhlcom, rosterupdate as U, sfo
+from overtime_core import gamefiles, nhlcom, photos, rosterupdate as U, sfo, teams as T
 
 from .. import VERSION
-from . import install, jobs, myedits, paths, roster_card as RC, savegame, selfupdate, update
+from . import install, jobs, myedits, office, patch, paths, roster_card as RC, savegame, selfupdate, update
 from .registry import Part
 from .shell import friendly_date
 
@@ -86,12 +86,16 @@ PATCH_FIRST = {
     'problem': 'The game patch has a problem. Open Game patch and press Patch again.',
     'older': "NHL 19 was patched by an older Overtime. Press Patch again so the game gets this version's default "
              'roster and calendars.',
+    'money': "The 2026-27 salary cap switch in Game patch changed after this roster was updated, so its contracts "
+             'no longer fit the cap the game plays. Press Go to update it again, or set the switch back.',
 }
 
 
 def patch_notice(c):
     """The line over the Update tab when the game patch is missing, broken or made by an older Overtime (the patch
-    remembers its version, patch_ctl): {'kind', 'text', 'tone'} or None. None until the Game patch tab has looked."""
+    remembers its version, patch_ctl), or when the active roster's deals were written for the other salary cap
+    (_remember_saved's 'cap', office.league_served: Legacy marks such a roster too): {'kind', 'text', 'tone'} or None.
+    None until the Game patch tab has looked."""
     f = c.parts['patch'].facts()
     if not f['checked']:
         return None
@@ -101,10 +105,38 @@ def patch_notice(c):
         kind = 'problem'
     else:
         by = selfupdate.parse_version(c.prefs.get('patched_by'))
-        if by is not None and by >= selfupdate.parse_version(VERSION):
+        if by is None or by < selfupdate.parse_version(VERSION):
+            kind = 'older'
+        elif money_misfit(c):
+            kind = 'money'
+        else:
             return None
-        kind = 'older'
     return {'kind': kind, 'text': PATCH_FIRST[kind], 'tone': 'bad' if kind == 'problem' else 'caution'}
+
+
+def money_misfit(c):
+    """Whether the roster NHL 19 plays had its deals written for the other salary cap than Game patch serves now."""
+    try:
+        cap = ((c.prefs.get('update_saved') or {}).get(savegame.active_roster(c.save_dir)) or {}).get('cap')
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    return cap is not None and cap != ('2026' if office.league_served(c.game_dir, c.patch_status) else '2018')
+
+
+def not_active(c, folder):
+    """What the user must do for NHL 19 to play the roster saved as `folder`; None when it does already."""
+    now = savegame.active_roster(c.save_dir)
+    if now == folder:
+        return None
+    return (f'NHL 19 is set to {savegame.roster_label(now)}, so that is what it plays. In the game, go to Rosters > '
+            f'Active Rosters and pick {savegame.roster_label(folder)}.')
+
+
+def active_notice(c):
+    """The line over the Update tab while NHL 19 is not set to the roster Go saved last: {'text'} or None."""
+    saved = {k: v for k, v in (c.prefs.get('update_saved') or {}).items() if os.path.isdir(os.path.join(c.save_dir, k))}
+    text = not_active(c, max(saved, key=lambda k: saved[k]['when'])) if saved else None
+    return {'text': text} if text else None
 
 
 def slot_number(folder):
@@ -460,9 +492,11 @@ class UpdateCtl(Part):
                                          f"{sm['releases']} leave")
             self._step(2, 'Changing the roster: rosters, lines, ratings, calendar...')
             with c.lock:
+                rec['served'] = office.league_served(c.game_dir, c.patch_status)
+                portraits = patch.served_portraits(c.game_dir, paths.app_dir('cache'))
                 rep = update.run(session, c.game, gathered, todo, per32=per32, names=c._code, log=c.host.log,
                                  nhl27=opts['nhl27'], schedule=opts['calendar'], retire=opts['retire'],
-                                 expansion=True, lines=opts['lines'])
+                                 expansion=True, lines=opts['lines'], portraits=portraits, served=rec['served'])
                 rec['rep'], rec['change'] = rep, session.history[-1]
                 rec['myedits'] = self._replay(session, rec)
             self._upd_step('apply', 'ok', f"{len(rep.created)} created, {len(rep.signed)} signed, "
@@ -485,6 +519,18 @@ class UpdateCtl(Part):
                 rec['out'] = install.run(session, c.game, target, name, c.save_dir, paths.app_dir('exports'),
                                          step=istep, log=c.host.log, overwrite=slot, folder_slot=fslot)
                 rec['written'] = list(session.history)
+            if rec['out'] is not None and rec['out'].ok:
+                if not rec.get('offline'):
+                    rec['photos'] = self._draw_photos(gathered, portraits)
+                cache = paths.app_dir('cache')
+                if patch.clubart_source(cache):         # the club logos of the roster as saved (overtime_core.clubart)
+                    with c.lock:
+                        teams = session.db[T.TEAMS].rows()
+                    rec['clubart'] = patch.make_clubart(teams, c.game_dir, cache, log=c.host.log)
+                if rec.get('clubart'):
+                    k = rec['clubart']
+                    c.host.log(f"club logos: {k['clubs']} clubs, {k['files']} files "
+                               f"({'as before' if k['kept'] else 'made'}), {len(k['missing'])} club slots without one")
             return rec
 
         def done(rec):
@@ -541,7 +587,29 @@ class UpdateCtl(Part):
         done = {k: v for k, v in (c.prefs.get('update_saved') or {}).items() if k in savegame.slot_names()}
         done[folder] = {'when': rec['when'].strftime('%Y-%m-%d %H:%M'), 'version': VERSION,
                         'data': self.data_words(rec), 'season': rec['season']}
+        if 'served' in rec and rec['opts'].get('nhl27'):
+            done[folder]['cap'] = '2026' if rec['served'] else '2018'   # the money its deals were written in
         c.remember(update_saved=done)
+
+    def _draw_photos(self, gathered, portraits):
+        """Draw the photos the people pack lacks on this PC (overtime_core.photos) into the cache's local pack, which
+        the next Patch serves (patch.LOCAL_PEOPLE_PACK). Only while the patch serves the people pack (`portraits`:
+        patch.served_portraits as read before this run); never stops the update. {'drawn', 'failed', 'kept'} or None."""
+        c = self.ctl
+        if not gathered.photos or not portraits[1]:
+            return None
+        cache = paths.app_dir('cache')
+        try:
+            template = gamefiles.read_latest(c.game_dir, photos.TEMPLATE)[0]
+            files, rows, counts = photos.supplement(gathered.photos, patch.people_rows(cache, c.game_dir),
+                                                    os.path.join(cache, 'photos'), template, log=c.host.log)
+            photos.write_local(os.path.join(cache, patch.LOCAL_PEOPLE_PACK), files, rows)
+        except Exception as err:  # noqa: BLE001 - no photo stops an update that is already saved
+            c.host.log(f'player photos: not drawn ({err})')
+            return None
+        c.host.log(f"player photos: {counts['drawn']} drawn, {counts['kept']} kept, {counts['failed']} without a "
+                   'picture')
+        return counts
 
     @staticmethod
     def _backups():
@@ -579,7 +647,9 @@ class UpdateCtl(Part):
                 todo = update.plan(session.db, gathered, self._aliases(session, rec))
                 rep = update.run(session, c.game, gathered, todo, per32=per32, names=c._code, log=c.host.log,
                                  nhl27=opts['nhl27'], schedule=opts['calendar'], retire=opts['retire'],
-                                 expansion=True, lines=opts['lines'])
+                                 expansion=True, lines=opts['lines'],
+                                 portraits=patch.served_portraits(c.game_dir, paths.app_dir('cache')),
+                                 served=office.league_served(c.game_dir, c.patch_status))
                 rec.update(todo=todo, rep=rep, change=session.history[-1])
                 rec['myedits'] = self._replay(session, rec)
                 self._upd_step('apply', 'ok', f"{len(rep.created)} created, {len(rep.signed)} signed, "
@@ -851,10 +921,12 @@ class UpdateCtl(Part):
         if not o.get('lines', True):
             text = v('Off: lines by rating.', 'Off: lines by rating.')
         elif real.get('lined') or real.get('lettered'):
-            n, kept = len(real.get('lined') or []), len(real.get('refused') or {})
-            text = (f"{n} teams play their real lines (games to {real['date'] or dates[-1]}), "
+            full, partly = len(real.get('full') or []), len(real.get('partly') or {})
+            kept = len(real.get('refused') or {})
+            text = (f"{full} teams play their real lines (games to {real['date'] or dates[-1]}), "
                     f"{len(real.get('lettered') or [])} have their real captains."
-                    + (f' {kept} kept lines by rating: Details lists why.' if kept else ''))
+                    + (f' {partly} in part: a player left, or the source has no lines.' if partly else '')
+                    + (f' {kept} kept lines by rating.' if kept else '') + (' Details lists them.' if partly or kept else ''))
         elif would and part:
             text = f'{len(part)} teams would play their real lines and captains (games to {dates[-1]}).'
         else:
@@ -902,6 +974,14 @@ class UpdateCtl(Part):
             out.append({'part': 'My edits', 'text': text})
         elif would and n:
             out.append({'part': 'My edits', 'text': f"{n} player{'s' if n != 1 else ''}' saved edits go back in."})
+        drawn = (rec.get('photos') or {}).get('drawn')
+        if drawn:
+            out.append({'part': 'Player photos', 'text': f"{drawn} new player photo{'s' if drawn != 1 else ''} made "
+                                                         'on this PC. They show after your next Patch and Update.'})
+        clubs = rec.get('clubart') or {}
+        if clubs.get('clubs') and not clubs.get('kept'):
+            out.append({'part': 'Club logos', 'text': f"This season's logos of {clubs['clubs']} clubs made on this PC. "
+                                                      'They show after your next Patch.'})
         return out
 
     def result_view(self):
@@ -996,6 +1076,11 @@ class UpdateCtl(Part):
                 items += [['Data', data]]
                 say = f"Updated: saved as {o['name']}. Start NHL 19 and load {game}."
             title = 'Updated and saved'
+            note = not_active(c, folder)
+            items.insert(2, ['Active in NHL 19', 'No: pick it in the game' if note else 'Yes'])
+            if note:
+                lines = [{'part': 'Not active yet', 'text': note, 'tone': 'bad'}] + lines
+                say = f"Updated: saved as {o['name']}. {note}"
         play = o['target'] == install.TARGET_SAVE and bool(c.setup.known_emulator())
         after = getattr(out, 'after', None) or []
         if after:       # saved all the same (Legacy 0.51.1): the red lines say what failed after the save
@@ -1062,6 +1147,7 @@ class UpdateCtl(Part):
                 'busy': busy,
                 'tip': None,
                 'patch': patch_notice(c),
+                'active': None if busy else active_notice(c),
             }
 
     def list_view(self):

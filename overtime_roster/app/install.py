@@ -83,6 +83,13 @@ def roster_crc(session, game):
     return rostercrc.roster_crc(tdb.Database([session.db[t] for t in order], session.db._header))
 
 
+def _title(save_dir):
+    """The game's title id, or None: shadPS4 names the save folder by it (CUSA11126; Europe CUSA11116), and the
+    controller's save folder follows the game in use (gamesetup.use_game)."""
+    name = os.path.basename(os.path.normpath(save_dir)) if save_dir else ''
+    return name if name.startswith('CUSA') else None
+
+
 def run(session, game, target, name, save_dir, out_root, step=lambda key, state, text='': None, log=print,
         now=None, overwrite=None, folder_slot=None, running=None):
     """Run the pipeline. `step(key, state, text)` reports progress ('run', 'ok', 'fail', 'skip'). `overwrite`: a
@@ -110,7 +117,7 @@ def run(session, game, target, name, save_dir, out_root, step=lambda key, state,
                 folder_name = folder_slot or (savegame.next_free_name(save_dir) if have_dir else f'{savegame.CUSTOM}0')
             except savegame.SaveError as err:
                 raise Failed(str(err)) from None
-            sfo_raw = sfo_raw or savegame.default_sfo(folder_name)
+            sfo_raw = sfo_raw or savegame.default_sfo(folder_name, title=_title(save_dir))
             trailer = trailer or savegame.DEFAULT_TRAILER
         elif target == TARGET_SAVE:
             if not save_dir:
@@ -129,8 +136,7 @@ def run(session, game, target, name, save_dir, out_root, step=lambda key, state,
             # a first save (no save folder yet, or no save with a param.sfo to copy, as for a player who never ran the
             # game) builds what it needs: param.sfo and the trailer are nothing per user (docs/notes/export-folder.md)
             sfo_raw, icon, trailer, _ = savegame.template_files(save_dir)
-            title = os.path.basename(os.path.normpath(save_dir))    # the game's save folder is named by its title id
-            sfo_raw = sfo_raw or savegame.default_sfo(folder_name, title=title if title.startswith('CUSA') else None)
+            sfo_raw = sfo_raw or savegame.default_sfo(folder_name, title=_title(save_dir))
             trailer = trailer or savegame.DEFAULT_TRAILER
         log(f'Roster: {session.source_name}; {len(session.change_lines())} edit(s).')
         step('gather', 'ok', folder_name if is_save else 'export')
@@ -192,14 +198,14 @@ def run(session, game, target, name, save_dir, out_root, step=lambda key, state,
             step('backup', 'skip', 'nothing in a save folder changes')
             current[0] = 'install'
             step('install', 'run')
-            tree = os.path.join(out_dir, howto.DATA_DIR, *howto.SAVE_PARTS)
+            tree = os.path.join(out_dir, howto.DATA_DIR, *howto.save_parts(_title(save_dir)))
             os.makedirs(tree)
             folder = savegame.write_new_folder(tree, folder_name, index, data, sfo_raw, icon, labels={
                 'MAINTITLE': 'Custom Roster', 'SUBTITLE': name, 'DETAIL': f'{name} (Overtime Roster)'})
             if savegame.read(folder).db_bytes != blob:
                 raise Failed(f'{folder_name} was written but does not read back the same; delete {out_dir}.')
             with open(os.path.join(out_dir, howto.FILE), 'w', encoding='utf-8') as f:
-                f.write(howto.text(folder_name, name))
+                f.write(howto.text(folder_name, name, _title(save_dir)))
             log(f'Built {folder}')
             step('install', 'ok', folder_name)
         elif target == TARGET_SAVE:
@@ -265,7 +271,7 @@ def run(session, game, target, name, save_dir, out_root, step=lambda key, state,
                 f'"{name}" was installed as the ' + (f'save folder {folder_name}, replacing the roster that was there '
                                                     '(it is in the backup).' if overwrite else
                                                     f'new save folder {folder_name}.'),
-                f'In NHL 19: Rosters > Active Roster, pick "Custom Roster {int(folder_name[12:]) + 1}". '
+                f'In NHL 19: Rosters > Active Rosters, pick "Custom Roster {int(folder_name[12:]) + 1}". '
                 'Your other saves were not touched (a backup was made first).'],
                 [('Folder', folder), ('Roster CRC', crc), ('Edits', str(len(session.change_lines()))),
                  ('Report', rpath or 'not written')], folder, rpath, crc, after)

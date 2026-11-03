@@ -13,12 +13,20 @@
     Arenas    exhibitionarena 22 becomes the Delta Center, customarena 499 Climate Pledge Arena (with Seattle's city:
               the game resets a custom arena's '$BURNABY' to '$ABBOTSFORD' when the team is saved in the Creation
               Zone, run x2-20261016/run6), customarena 498 Acrisure Arena, exhibitionarena 399 Climate Pledge Arena.
+              The other NHL arenas: 2026's names and capacities (NHL_ARENAS_2026).
+    AHL       the clubs as they are in 2026-27 (AHL_2026, found by name): the four slots rosterupdate.rename_ahl
+              names after their 2026 club get its town, abbreviation, division, colours and arena; every NHL team's
+              farm link (ahlaffiliate) points at its 2026 club (FARMS_2026).
 
 customteams is in the `rosters` / `custom` savegroups (not in `rosterupdate`): Seattle's team 499 travels in a custom
 roster save, not in the online roster (exhibitionteams 399 does). Seattle's draftees keep `draftteam` -1 (the field is 5 bits: -1..30).
 Colours are 0xRRGGBB; the Kraken's and the Mammoth's are the clubs' published ones, the Firebirds' approximate.
 """
+import re
+import unicodedata
+
 from .calendar import SLOTS
+from .equipment import GEAR, NEAR, hue_of
 
 PACIFIC, CENTRAL, ATLANTIC, METROPOLITAN = 8, 9, 10, 11  # divisiongroup (stock data)
 WEST, EAST = 6, 7  # conferencegroup
@@ -110,6 +118,179 @@ def _colour_plan(db, schema):
             if t.get(i, 'team') == UTAH_SLOT:
                 out += [(name, i, f, t.get(i, f), colours[t.get(i, f)]) for f in fields if t.get(i, f) in colours]
     return out
+
+
+# --- the rest of the league as it is in 2026-27 (Legacy builder.NHL_LOOK / AHL_ARENAS, docs/notes/legacy-align.md) ---
+# The NHL arenas (exhibitionarena, index = team slot): buildings renamed or replaced since 2018, and every capacity as
+# NHL 27's arena table gives it for 2026-27. ANA, BOS, DAL, NYR and TOR's rows are 2018's already; Utah: UTAH_ARENA.
+NHL_ARENAS_2026 = {
+    'WPG': {'arenaname': 'Canada Life Centre', 'maxattendance': 15321}, 'BUF': {'maxattendance': 19070},
+    'CGY': {'maxattendance': 19289}, 'CAR': {'arenaname': 'Lenovo Center', 'maxattendance': 18700},
+    'CHI': {'maxattendance': 19717}, 'COL': {'arenaname': 'Ball Arena', 'maxattendance': 17809},
+    'CBJ': {'maxattendance': 18144}, 'DET': {'maxattendance': 19515}, 'EDM': {'maxattendance': 18347},
+    'FLA': {'arenaname': 'Amerant Bank Arena'}, 'LAK': {'arenaname': 'Crypto.com Arena', 'maxattendance': 18230},
+    'MIN': {'arenaname': 'Grand Casino Arena', 'maxattendance': 17954}, 'MTL': {'maxattendance': 21105},
+    'NSH': {'maxattendance': 17159}, 'NJD': {'maxattendance': 16514},
+    'NYI': {'arenaname': 'UBS Arena', 'cityname': 'Elmont, NY', 'maxattendance': 17255, 'yearopened': 2021},
+    'OTT': {'maxattendance': 19153}, 'PHI': {'arenaname': 'Xfinity Mobile Arena', 'maxattendance': 19538},
+    'PIT': {'maxattendance': 18387}, 'STL': {'maxattendance': 18096}, 'SJS': {'maxattendance': 17435},
+    'TBL': {'arenaname': 'Benchmark International Arena', 'maxattendance': 19092}, 'VAN': {'maxattendance': 18910},
+    'WSH': {'maxattendance': 18573}, 'VGK': {'maxattendance': 17367},
+}
+
+
+def _prefixed(prefix, primary, secondary, tertiary):
+    return {f'{prefix}primarycolor': primary, f'{prefix}secondarycolor': secondary, f'{prefix}tertiarycolor': tertiary}
+
+
+# NHL teams whose 2018 menu (fe) and presentation (pres) colours are off since their 2020-21 looks (NHL 27's team
+# rows); their overlay colours stay.
+NHL_COLOURS_2026 = {
+    'BUF': {**_prefixed('fe', 0x1D305F, 0xDD9B26, 0), **_prefixed('pres', 0x103057, 0xFDBB30, 0)},
+    'CBJ': {**_prefixed('fe', 0x002D62, 0xE51937, 0), **_prefixed('pres', 0x002D62, 0xE51937, 0)},
+    'NYI': {**_prefixed('fe', 0x00529B, 0xE2621B, 0), **_prefixed('pres', 0x004E8A, 0xF06D27, 0)},
+}
+
+# The AHL (exhibitionteams league 1, slots 35-65, each its own arena row) as it is in 2026-27. A club is found by its
+# name (club_key: letters only, so 'Hershey Bears®' is Hershey's), so a slot rosterupdate.rename_ahl gave its 2026
+# club's name gets that club's record and a 2018 club the update did not move keeps its own. The four moved slots
+# take the AHL's own abbreviation (the Wranglers' CGY is the Flames' too, as the stock CHI and COL are the Wolves' and
+# the Eagles'), their 2026 division and NHL 27's colours. The other clubs' divisions are 2026's already: Atlantic 7,
+# North 8, Central 7, Pacific 9 (the 10th, Coachella Valley, is Seattle's customteams 498).
+AHL = 1
+AHL_WEST, AHL_EAST = 13, 14  # conferencegroup (stock data; NHL 27 numbers them alike)
+AHL_ATLANTIC, AHL_NORTH, AHL_CENTRAL, AHL_PACIFIC = 15, 16, 17, 18  # divisiongroup
+AHL_2026 = {
+    'Abbotsford Canucks': {'cityname': 'Abbotsford', 'abbrname': 'ABB', 'divisiongroup': AHL_PACIFIC,
+                           'conferencegroup': AHL_WEST, **colours(0x004995, 0xC5C5C5, 0)},
+    'Hamilton Hammers': {'cityname': 'Hamilton', 'abbrname': 'HAM', 'divisiongroup': AHL_NORTH,
+                         'conferencegroup': AHL_EAST, **colours(0xE3621E, 0x213349, 0)},
+    'Henderson Silver Knights': {'cityname': 'Henderson', 'abbrname': 'HSK', 'divisiongroup': AHL_PACIFIC,
+                                 'conferencegroup': AHL_WEST, **colours(0x7C8E98, 0x131313, 0)},
+    'Calgary Wranglers': {'cityname': 'Calgary', 'abbrname': 'CGY', 'divisiongroup': AHL_PACIFIC,
+                          'conferencegroup': AHL_WEST, **colours(0xAB1C14, 0xC5C5C5, 0)},
+    'Hershey Bears': colours(0x3D1315, 0x131313, 0), 'Ontario Reign': colours(0x572A84, 0xE0BE07, 0),
+    'Utica Comets': colours(0xB12B32, 0x131313, 0), 'Wilkes-Barre/Scranton Penguins': colours(0xFEB61B, 0x202020, 0),
+    'Manitoba Moose': {'presprimarycolor': 0x0069AA},
+}
+# Arenas renamed, moved or rebuilt since 2018 (exhibitionarena, the club's arenaid); a year only for a new building.
+AHL_ARENAS_2026 = {
+    'Abbotsford Canucks': {'arenaname': 'Rogers Forum', 'cityname': 'Abbotsford, BC', 'maxattendance': 7000,
+                           'yearopened': 2009},
+    'Hamilton Hammers': {'arenaname': 'TD Coliseum', 'cityname': 'Hamilton, ON', 'maxattendance': 17383,
+                         'yearopened': 1985},
+    'Henderson Silver Knights': {'arenaname': "Lee's Family Forum", 'cityname': 'Henderson, NV', 'maxattendance': 9500,
+                                 'yearopened': 2022},
+    'Calgary Wranglers': {'arenaname': 'Scotiabank Saddledome', 'cityname': 'Calgary, AB', 'maxattendance': 19289,
+                          'yearopened': 1983},
+    'Bakersfield Condors': {'arenaname': 'Dignity Health Arena'}, 'Belleville Senators': {'arenaname': 'CAA Arena'},
+    'Chicago Wolves': {'arenaname': 'Allstate Arena', 'cityname': 'Rosemont, IL'},
+    'Cleveland Monsters': {'arenaname': 'Rocket Mortgage FieldHouse'}, 'Colorado Eagles': {'arenaname': 'Blue Arena'},
+    'Hartford Wolf Pack': {'arenaname': 'PeoplesBank Arena'}, 'Iowa Wild': {'arenaname': "Casey's Center"},
+    'Manitoba Moose': {'arenaname': 'Canada Life Centre', 'maxattendance': 15321},
+    'Ontario Reign': {'arenaname': 'Toyota Arena'}, 'Providence Bruins': {'arenaname': 'Amica Mutual Pavilion'},
+    'Rochester Americans': {'arenaname': 'Blue Cross Arena at the War Memorial'},
+    'Rockford IceHogs': {'arenaname': 'BMO Center'}, 'San Diego Gulls': {'arenaname': 'Pechanga Arena San Diego'},
+    'San Jose Barracuda': {'arenaname': 'Tech CU Arena', 'maxattendance': 4200, 'yearopened': 2022},
+    'Syracuse Crunch': {'arenaname': 'Upstate Medical University Arena'},
+}
+# Each NHL team's AHL club in 2026-27 (leaguecal.AHL_PARENT by club name). The links are written only when all 31 clubs
+# are on the roster (the four moved slots renamed), one each: leaguecal.ahl_slots and the call-ups (rosterupdate.
+# _farm_of) read them, and the stock links sent six teams to the wrong club (Vegas's to Chicago, New Jersey's to
+# Binghamton's slot, which holds Abbotsford's players after the update).
+FARMS_2026 = {
+    'ANA': 'San Diego Gulls', 'WPG': 'Manitoba Moose', 'BOS': 'Providence Bruins', 'BUF': 'Rochester Americans',
+    'CGY': 'Calgary Wranglers', 'CAR': 'Chicago Wolves', 'CHI': 'Rockford IceHogs', 'COL': 'Colorado Eagles',
+    'CBJ': 'Cleveland Monsters', 'DAL': 'Texas Stars', 'DET': 'Grand Rapids Griffins', 'EDM': 'Bakersfield Condors',
+    'FLA': 'Charlotte Checkers', 'LAK': 'Ontario Reign', 'MIN': 'Iowa Wild', 'MTL': 'Laval Rocket',
+    'NSH': 'Milwaukee Admirals', 'NJD': 'Utica Comets', 'NYI': 'Hamilton Hammers', 'NYR': 'Hartford Wolf Pack',
+    'OTT': 'Belleville Senators', 'PHI': 'Lehigh Valley Phantoms', 'UTA': 'Tucson Roadrunners',
+    'PIT': 'Wilkes-Barre/Scranton Penguins', 'STL': 'Springfield Thunderbirds', 'SJS': 'San Jose Barracuda',
+    'TBL': 'Syracuse Crunch', 'TOR': 'Toronto Marlies', 'VAN': 'Abbotsford Canucks', 'WSH': 'Hershey Bears',
+    'VGK': 'Henderson Silver Knights',
+}
+# A club whose colours change repaints its gear (stockteamequipmenttable, the GEAR categories) and its accents
+# (stockteamcolorstable) as Utah's were: a colour with the hue of its old primary or secondary that changed takes the
+# new one of the same rank (Abbotsford's Binghamton red goes blue, Utica's Canucks blue and green go red and black);
+# black, white, grey and hues the old colours lack stay (Wilkes-Barre's gold pads, Hershey's chocolate gear).
+
+
+def club_key(name):
+    """A club's name as letters only, lower case, without accents or marks (rosterupdate._team_key)."""
+    return re.sub('[^a-z]', '', unicodedata.normalize('NFKD', name or '').encode('ascii', 'ignore').decode().lower())
+
+
+AHL_BY_KEY = {club_key(k): v for k, v in AHL_2026.items()}
+AHL_ARENA_BY_KEY = {club_key(k): v for k, v in AHL_ARENAS_2026.items()}
+
+
+def _apart(a, b):
+    return min((a - b) % 360, (b - a) % 360)
+
+
+def _hue_map(found, old, new):
+    """{colour: new colour} for the colours in `found` whose hue is an old colour's (`old` / `new`: [primary,
+    secondary]) that changed."""
+    out = {}
+    for c in found:
+        h = hue_of(c)
+        k = None if h is None else next((k for k, o in enumerate(old) if hue_of(o) is not None
+                                         and _apart(hue_of(o), h) <= NEAR), None)
+        if k is not None and new[k] != old[k] and new[k] != c:
+            out[c] = new[k]
+    return out
+
+
+def _repaint(db, schema, team, old, new):
+    """Rows of `team`'s gear and accents to repaint from its fe colours `old` to `new` (_hue_map)."""
+    out = []
+    for name, fields, kinds in ((EQUIPMENT, ZONES, GEAR), (TEAM_COLOURS, ('color',), None)):
+        if schema.by_name(name).short not in db:
+            continue
+        t = db[schema.by_name(name).short]
+        rows = [i for i in range(t.count) if t.get(i, 'team') == team and (kinds is None or t.get(i, 'equipment') in kinds)]
+        mapping = _hue_map({t.get(i, f) for i in rows for f in fields}, old, new)
+        out += [(name, i, f, t.get(i, f), mapping[t.get(i, f)]) for i in rows for f in fields if t.get(i, f) in mapping]
+    return out
+
+
+FE = ('feprimarycolor', 'fesecondarycolor')
+
+
+def _league_plan(db, schema):
+    """The NHL arenas and colours of 2026-27, the AHL clubs' records, gear and farm links (see above)."""
+    teams, arenas = db[schema.by_name(TEAMS).short], db[schema.by_name(ARENAS).short]
+    team_rows, arena_rows = _rows_by_index(teams), _rows_by_index(arenas)
+    out = []
+
+    def fields(name, t, row, values):
+        return [(name, row, f, t.get(row, f), v) for f, v in values.items() if _clean(t.get(row, f)) != v]
+    for code, values in NHL_ARENAS_2026.items():
+        out += fields(ARENAS, arenas, arena_rows[teams.get(team_rows[SLOTS[code]], 'arenaid')], values)
+    for code, values in NHL_COLOURS_2026.items():
+        out += fields(TEAMS, teams, team_rows[SLOTS[code]], values)
+    slot_of = {}
+    for row in range(teams.count):
+        if teams.get(row, 'league') != AHL:
+            continue
+        key = club_key(teams.get(row, 'teamname'))
+        slot_of[key] = teams.get(row, 'index')
+        values = AHL_BY_KEY.get(key, {})
+        out += fields(TEAMS, teams, row, values)
+        arena = arena_rows.get(teams.get(row, 'arenaid'))
+        if arena is not None:
+            out += fields(ARENAS, arenas, arena, AHL_ARENA_BY_KEY.get(key, {}))
+        old = [teams.get(row, f) for f in FE]
+        new = [values.get(f, o) for f, o in zip(FE, old)]
+        if new != old:
+            out += _repaint(db, schema, teams.get(row, 'index'), old, new)
+    farms = {code: slot_of.get(club_key(club)) for code, club in FARMS_2026.items()}
+    if None not in farms.values() and len(set(farms.values())) == len(farms):
+        for code, slot in farms.items():
+            out += fields(TEAMS, teams, team_rows[SLOTS[code]], {'ahlaffiliate': slot})
+    return out
+
+
 JERSEYS = ((CUSTOM_JERSEYS, SEATTLE), (STOCK_JERSEYS, SEATTLE_PLAY_NOW))
 
 
@@ -229,7 +410,7 @@ def plan(db, schema):
             old = t.get(row, field)
             if _clean(old) != value:
                 out.append((name, row, field, old, value))
-    return out + _colour_plan(db, schema)
+    return out + _colour_plan(db, schema) + _league_plan(db, schema)
 
 
 def apply(db, schema, setter=None):

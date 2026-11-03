@@ -153,7 +153,7 @@ class OfficeCtl(Part):
         elif farm:
             farm_note = 'No players of this organisation on the farm club.'
         elif org == office.SEATTLE:
-            farm_note = f"Seattle's farm club, the {office.SEATTLE_FARM}, has no players in this roster."
+            farm_note = f"Seattle's farm club, the {office.SEATTLE_FARM}, is a custom team; Front office does not list its players yet."
         else:
             farm_note = 'This organisation has no farm club in this roster.'
         key, direction = self.sort_by['key'], self.sort_by['dir']

@@ -16,6 +16,8 @@ FA = L.FREE_AGENTS
 AHL = 1                                     # labels.LEAGUES
 SEATTLE = T.SEATTLE_PLAY_NOW                # the rail's Seattle
 SEATTLE_TEAM = {'code': 'SEA', 'name': 'Seattle Kraken', 'colours': ['#001628', '#99D9D9', '#355464']}
+COACHELLA = T.SEATTLE_AHL                   # customteams 498: Season and Franchise only (no Play Now row)
+COACHELLA_TEAM = {'code': 'CV', 'name': 'Coachella Valley Firebirds', 'colours': ['#A6192E', '#FFB81C', '#000000']}
 GREY = ['#45484C', '#838E96', '#1F2122']    # free agents, a team without colours
 COLOURS = ('feprimarycolor', 'fesecondarycolor', 'fetertiarycolor')
 TIP = 'Alt+Up / Alt+Down: the next team'
@@ -73,6 +75,15 @@ class Rail(Part):
         row = s.rows[TEAMS][i] if i is not None else {}
         if tid == SEATTLE:
             return {'id': tid, **SEATTLE_TEAM, 'league': T.NHL_LEAGUE, 'extra': False, 'count': count}
+        if tid == COACHELLA and i is None:
+            out = {'id': tid, **COACHELLA_TEAM, 'league': AHL, 'extra': False, 'count': count}
+            try:                            # the custom team's own colours (teams.py writes them)
+                j = rosterupdate._seattle_row(s.db, COACHELLA)
+                if j is not None:
+                    out['colours'] = [colour(s.db[T.CUSTOM].get(j, k)) for k in COLOURS]
+            except (KeyError, IndexError, TypeError, ValueError):
+                pass
+            return out
         name = s.team_name(tid)
         city = str(row.get('cityname') or '').strip()
         if city.startswith('$'):            # "$SEATTLE": the game spells the city itself
@@ -110,6 +121,14 @@ class Rail(Part):
             n = self.seattle_players(s)
             if n:
                 out.append(self.team(s, SEATTLE, n))
+        if league == AHL and COACHELLA not in s.team_row:
+            try:
+                t = s.db[rosterupdate.CUSTOM_ROSTER]
+                n = sum(1 for i in range(t.count) if t.get(i, 'team') == COACHELLA)
+            except (AttributeError, KeyError, IndexError, TypeError, ValueError):  # no custom tables
+                n = 0
+            if n:
+                out.append(self.team(s, COACHELLA, n))
         out.sort(key=lambda t: (t['extra'], t['name']))
         return out
 
@@ -118,6 +137,8 @@ class Rail(Part):
             return FA
         if tid == SEATTLE:
             return T.NHL_LEAGUE
+        if tid == COACHELLA and tid not in s.team_row:
+            return AHL
         i = s.team_row.get(tid)
         return s.rows[TEAMS][i]['league'] if i is not None else None
 
@@ -151,6 +172,8 @@ class Rail(Part):
         if kind == 'farm':
             return self.farm_of(s, rail_id)
         if kind == 'org':
+            if rail_id == COACHELLA and rail_id not in s.team_row:
+                return SEATTLE
             return next((t['id'] for t in s.teams(T.NHL_LEAGUE) if self.farm_of(s, t['id']) == rail_id), None)
         raise ValueError(f'no rail id map {kind!r}')
 
@@ -172,6 +195,7 @@ class Rail(Part):
             farms = {}
             if c.league == AHL:
                 farms = {self.farm_of(s, t['id']): t['code'] for t in self.listed(s, T.NHL_LEAGUE)}
+                farms.setdefault(COACHELLA, SEATTLE_TEAM['code'])
             edited = c.parts['save'].teams()
             rows = []
             for t in self.listed(s, c.league):

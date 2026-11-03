@@ -86,18 +86,18 @@ def test_beta_versions_sort_before_their_release():
     assert r is None and offered is None
 
 
-def test_v0_40_0_is_offered_to_every_beta_and_0_10_0():
+def test_v0_50_0_is_offered_to_every_beta_and_0_10_0():
     from overtime_roster import VERSION
     v = selfupdate.parse_version(VERSION)
-    assert str(v) == '0.40.0'
+    assert str(v) == '0.50.0'
     assert v > selfupdate.parse_version('0.1.0-beta4') and v > selfupdate.parse_version('0.1.0')
-    assert v > selfupdate.parse_version('0.1.0-beta3') and v > selfupdate.parse_version('0.20.0') and v < selfupdate.parse_version('0.40.1')
+    assert v > selfupdate.parse_version('0.1.0-beta3') and v > selfupdate.parse_version('0.20.0') and v < selfupdate.parse_version('0.50.1')
     url = 'https://ot.puckpeak.com/app/latest.json'
     pages = {url: json.dumps({'version': VERSION, 'exe': 'OvertimeNHL19.exe'}),
              'https://ot.puckpeak.com/app/SHA256SUMS.txt': f"{'ab' * 32}  OvertimeNHL19.exe"}
     r = selfupdate.latest('0.1.0-beta4', url, pages.__getitem__, selfupdate.EXE_ASSET)
-    assert r is not None and r.text == '0.40.0'
-    assert selfupdate.latest('0.20.0', url, pages.__getitem__, selfupdate.EXE_ASSET).text == '0.40.0'
+    assert r is not None and r.text == '0.50.0'
+    assert selfupdate.latest('0.20.0', url, pages.__getitem__, selfupdate.EXE_ASSET).text == '0.50.0'
     assert selfupdate.latest(VERSION, url, pages.__getitem__, selfupdate.EXE_ASSET) is None
 
 

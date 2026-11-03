@@ -144,20 +144,32 @@ def game_id(s, pi):
 
 
 def rail_team(s, pi):
-    """The rail id he is listed under: his roster row's team, or the free agents."""
+    """The rail id he is listed under: his roster row's team, Coachella Valley (498, the custom roster only), or the
+    free agents."""
     _, e = s.entry(pi)
-    return e['team'] if e else FA
+    if e:
+        return e['team']
+    _, b = s.bio(pi)
+    if b and b['team'] == T.SEATTLE_AHL and game_id(s, pi) in custom_rows(s, T.SEATTLE_AHL):
+        return T.SEATTLE_AHL
+    return FA
+
+
+def custom_rows(s, team):
+    """{game_id: [(table, row)]} of one custom team's roster rows (499 Seattle, 498 Coachella Valley)."""
+    out = {}
+    if U.CUSTOM_ROSTER in s.db:
+        t = s.db[U.CUSTOM_ROSTER]
+        for i in range(t.count):
+            if t.get(i, 'team') == team:
+                out.setdefault(game_id(s, t.get(i, 'playerindex')), []).append((U.CUSTOM_ROSTER, i))
+    return out
 
 
 def seattle_rows(s):
     """{game_id: [(table, row)]} of Seattle's roster rows: the custom team 499 (Season and Franchise) and its Play Now
     copy 399."""
-    out = {}
-    if U.CUSTOM_ROSTER in s.db:
-        t = s.db[U.CUSTOM_ROSTER]
-        for i in range(t.count):
-            if t.get(i, 'team') == T.SEATTLE:
-                out.setdefault(game_id(s, t.get(i, 'playerindex')), []).append((U.CUSTOM_ROSTER, i))
+    out = custom_rows(s, T.SEATTLE)
     for i in s.team_entries.get(T.SEATTLE_PLAY_NOW, []):
         out.setdefault(game_id(s, s.rows[ROSTER][i]['playerindex']), []).append((ROSTER, i))
     return out
@@ -171,6 +183,8 @@ def copy_kind(s, pi, sea=None):
     if b is None:
         return ''
     if e is None:
+        if b['team'] == T.SEATTLE_AHL:
+            return 'coachella' if game_id(s, pi) in custom_rows(s, T.SEATTLE_AHL) else ''
         if b['team'] != T.SEATTLE:
             return ''
         return 'seattle' if game_id(s, pi) in (seattle_rows(s) if sea is None else sea) else ''
@@ -190,6 +204,8 @@ def card_rows(s, pi, sea=None):
     if (e and e['team'] == T.SEATTLE_PLAY_NOW) or (not e and b and b['team'] == T.SEATTLE):
         sea = seattle_rows(s) if sea is None else sea
         rows += [r for r in sea.get(game_id(s, pi), []) if r not in rows]
+    elif not e and b and b['team'] == T.SEATTLE_AHL:
+        rows += custom_rows(s, T.SEATTLE_AHL).get(game_id(s, pi), [])
     return rows
 
 
@@ -209,8 +225,11 @@ def mates(s, pi, sea=None):
     the custom team 499 alike), nobody for a free agent."""
     _, e = s.entry(pi)
     kind = copy_kind(s, pi, sea)
-    if kind in ('seattle', 'play_now'):
-        sea = seattle_rows(s) if sea is None else sea
+    if kind in ('seattle', 'play_now', 'coachella'):
+        if kind == 'coachella':
+            sea = custom_rows(s, T.SEATTLE_AHL)
+        else:
+            sea = seattle_rows(s) if sea is None else sea
         own = game_id(s, pi)
         out = []
         for gid, rows in sea.items():
@@ -240,6 +259,9 @@ def values(s, clock, pi):
     """His card's values in the card's units (docs/ui/roster.md `values`)."""
     _, b = s.bio(pi)
     _, e = s.entry(pi)
+    if e is None and b['team'] == T.SEATTLE_AHL:     # Coachella Valley's card is its custom roster row
+        rows = custom_rows(s, T.SEATTLE_AHL).get(game_id(s, pi))
+        e = s.db[rows[0][0]].row(rows[0][1]) if rows else None
     _, _, ai = s.ai(b)
     inches, lbs = b['height'] + L.HEIGHT_BASE, b['weight'] + L.WEIGHT_BASE
     keys = [f for g in rating_groups(s, b) for f, _l in g['items']]

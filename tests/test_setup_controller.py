@@ -70,7 +70,7 @@ def sc(world, monkeypatch):  # noqa: F811
 
     calls['art'] = []
 
-    def apply(game_dir, layers, database=None, menus=None, art=None):
+    def apply(game_dir, layers, database=None, menus=None, art=None, lang=None):
         calls['apply'].append(layers)
         calls['menus'].append(menus)
         calls['art'].append(art)
@@ -83,6 +83,7 @@ def sc(world, monkeypatch):  # noqa: F811
     monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: list(getattr(
         patch, '_test_found', patch.ART_PACKS if getattr(patch, '_test_packs', None) else [])))
     monkeypatch.setattr(SC, 'patch_cache', lambda: None)
+    monkeypatch.setattr(patch_ctl, 'game_text', lambda game_dir, log=None: 'eng_us')    # the fake game has no loc files
     monkeypatch.setattr(SC.SetupController, '_seattle_ready', lambda self, database: getattr(self, 'seattle', False))
     ctl = FakeCtl(str(world['game']))
     s = SC.SetupController(ctl)
@@ -346,7 +347,7 @@ def test_downloads_list_every_pack_and_fetch_them(sc, monkeypatch, tmp_path):
     assert sc.pack_download('looks.zip') == {'error': d['note']} and got == []
     sc.setup_set_emulator(str(sc.world['emu']))
     d = _downloads(sc)
-    assert d['all'] == {'can': True, 'count': 3, 'title': 'Download the 3 packs not on this PC'}
+    assert d['all'] == {'can': True, 'count': 5, 'title': 'Download the 5 packs not on this PC'}
     row = {r['name']: r for r in d['rows']}
     assert row['looks32.zip']['can_remove'] and not row['looks32.zip']['can_download']
     assert row['looks.zip']['can_download'] and row['looks.zip']['size'] == '5 MB'
@@ -355,7 +356,7 @@ def test_downloads_list_every_pack_and_fetch_them(sc, monkeypatch, tmp_path):
     assert got == ['looks.zip'] and sc.ctl.busy is None and sc.dl is None
     assert sc.ctl.said[-1] == ('Downloaded: Utah and Seattle looks. Patch the game again to put them in.', 'good')
     sc.packs_download_all()
-    assert got == ['looks.zip', 'photos.zip', 'kits.zip'] and _downloads(sc)['all']['count'] == 0
+    assert got == ['looks.zip', 'photos.zip', 'people.zip', 'clubart.zip', 'kits.zip'] and _downloads(sc)['all']['count'] == 0
     sc.packs_download_all()
     assert sc.ctl.said[-1] == ('Every pack is downloaded already.', 'good')
     assert sc._kits(_downloads(sc))['state'] == 'ready'                    # beta1's kits row follows kits.zip
@@ -397,18 +398,19 @@ def test_a_pack_switch_downloads_the_pack_and_off_keeps_it(sc, monkeypatch, tmp_
     sc.ctl.patch_want.update(art=True)
     assert list(_extras(sc)) == list(patch_ctl.EXTRA_KEYS) and 'nothing is downloaded' in _extras(sc)['alts_intl']['text']
     sc.pack_switch('alts_intl', True)
-    assert got == ['alts_intl.zip'] and sc.ctl.busy is None and sc.dl is None and sc.ctl.patch_want['alts_intl']
+    assert got == ['kitlayers_intl.zip'] and sc.ctl.busy is None and sc.dl is None and sc.ctl.patch_want['alts_intl']
     assert sc.ctl.said[-1][1] == 'good' and 'Press Patch' in sc.ctl.said[-1][0]
     assert _extras(sc)['alts_intl']['on'] and _extras(sc)['alts_intl']['text'] == 'Downloaded (5 MB).'
     assert patch_ctl.switches(sc.ctl.patch_want, sorted(have))['alts_intl']
     sc.pack_switch('alts_intl', False)
-    assert 'alts_intl.zip' in have and not sc.ctl.patch_want['alts_intl']   # kept on this PC
+    assert 'kitlayers_intl.zip' in have and not sc.ctl.patch_want['alts_intl']   # kept on this PC
     assert 'Kept on this PC' in _extras(sc)['alts_intl']['text']
     picked, now = {'alts_intl': False}, {'alts_intl': True}
-    row = sc.extra_card(sc.known_emulator(), dict(sc.ctl.patch_want), picked, now, True)['rows'][1]
-    assert row['key'] == 'alts_intl' and row['tag']['text'] == 'Patch to take away' and 'Kept on this PC' in row['text']
+    rows = sc.extra_card(sc.known_emulator(), dict(sc.ctl.patch_want), picked, now, True)['rows']
+    row = next(r for r in rows if r['key'] == 'alts_intl')
+    assert row['tag']['text'] == 'Patch to take away' and 'Kept on this PC' in row['text']
     sc.pack_switch('alts_intl', True)
-    assert got == ['alts_intl.zip'] and sc.ctl.patch_want['alts_intl']      # here already: no second download
+    assert got == ['kitlayers_intl.zip'] and sc.ctl.patch_want['alts_intl']      # here already: no second download
     assert sc.pack_switch('nope', True) == {'error': 'Overtime Roster does not know this pack.'}
 
 
@@ -420,7 +422,7 @@ def test_packs_switched_on_during_a_download_wait_their_turn_and_a_failure_goes_
     sc.ctl.patch_want.update(art=True, ice_all=True, alts_intl=True)        # both on before the first job starts
     sc.packs = SC.pack_status(SC.patch_cache())
     sc._extras_next()
-    assert got == ['ice_all.zip', 'alts_intl.zip'] and sc.ctl.busy is None
+    assert got == ['ice_all.zip', 'kitlayers_intl.zip'] and sc.ctl.busy is None
     have.difference_update(patch.EXTRA_PACKS)
     sc.ctl.patch_want.update(ice_all=False, alts_intl=False)
     sc.packs = SC.pack_status(SC.patch_cache())
@@ -464,21 +466,29 @@ def test_the_pack_card_is_not_the_jersey_packs_download(sc, monkeypatch, tmp_pat
     have, _got = _packs_world(sc, monkeypatch, tmp_path)
     sc.setup_set_emulator(str(sc.world['emu']))
     sc.packs = SC.pack_status(SC.patch_cache())
-    sc.dl = {'names': ['alts_intl.zip'], 'name': 'alts_intl.zip', 'part': 0.1, 'share': 0.1}
+    sc.dl = {'names': ['kitlayers_intl.zip'], 'name': 'kitlayers_intl.zip', 'part': 0.1, 'share': 0.1}
     sc.ctl.busy = 'Downloading'
     assert sc.pack_card(sc.known_emulator())['state'] != 'downloading'
     sc.ctl.busy, sc.dl = None, None
 
 
 def test_only_the_packs_switched_on_are_served(monkeypatch, tmp_path):
-    monkeypatch.setenv('OVERTIME_ART_PACKS', str(tmp_path))
-    for i, name in enumerate(['looks32.zip', *patch.EXTRA_PACKS]):
-        art.write_pack(str(tmp_path / name), name[:-4], {f'nhl/ui/kettle_assets/teamlogos/large/t{i}.gnf': b'GNF ' + bytes(60)})
+    from overtime_core import kitcompose
+    from overtime_roster.app import sources
+    monkeypatch.delenv('OVERTIME_ART_PACKS', raising=False)
+    monkeypatch.setattr(sources, 'BUILD_PACKS', str(tmp_path / 'exe-packs'))
+    monkeypatch.setattr(sources, 'REPO_PACKS', str(tmp_path / 'repo-packs'))
+    # the jerseys a family's layer pack made on this PC (patch.make_kits) are served as the family's switch says
+    names = {'looks32.zip': 'looks32', patch.ICE_PACK: 'ice_all', patch.RINK_PACK: 'rink',
+             **{kitcompose.local_pack(f): kitcompose.served_name(f) for f in kitcompose.FAMILIES}}
+    for i, (name, served) in enumerate(names.items()):
+        art.write_pack(str(tmp_path / name), served, {f'nhl/ui/kettle_assets/teamlogos/large/t{i}.gnf': b'GNF ' + bytes(60)})
     layers = []
-    packs = patch.art_layer({'art': True, 'kits': False, 'photos': False, 'alts_intl': True, 'ice_all': True}, layers)
-    assert [p.name for p in packs] == ['looks32', 'ice_all', 'alts_intl'] and layers == ['art']
-    assert not set(patch.ALT_PACKS) - set(patch.EXTRA_PACKS) & set(patch.ART_PACKS)   # the packs left out of 0.30.0 stay out
-    assert [p.name for p in patch.art_layer({'art': True, 'kits': False, 'photos': False}, [])] == ['looks32']
+    want = {'art': True, 'kits': False, 'photos': False, 'alts_intl': True, 'ice_all': True}
+    packs = patch.art_layer(want, layers, str(tmp_path))
+    assert [p.name for p in packs] == ['looks32', 'ice_all', 'alts-intl'] and layers == ['art']
+    assert not set(patch.KITLAYER_PACKS) & set(patch.ART_PACKS)     # the layer packs are made into textures first
+    assert [p.name for p in patch.art_layer({'art': True, 'kits': False, 'photos': False}, [], str(tmp_path))] == ['looks32']
 
 
 def test_downloads_delete_asks_first(sc, monkeypatch, tmp_path):
@@ -618,16 +628,16 @@ def test_pack_card_downloads_all_and_switches_on(sc, monkeypatch, tmp_path):
     assert card['title'] == SC.PACK_TITLE and not card['can_download'] and 'Pick shadPS4' in card['text']
     sc.setup_set_emulator(str(sc.world['emu']))
     card = _card(sc)
-    assert card['state'] == 'partial' and card['can_download'] and card['size'] == '15 MB'   # the 3 missing
-    assert card['text'] == '1 of 4 packs downloaded. Download the rest (15 MB).' and card['can_remove']
+    assert card['state'] == 'partial' and card['can_download'] and card['size'] == '25 MB'   # the 5 missing
+    assert card['text'] == '1 of 6 packs downloaded. Download the rest (25 MB).' and card['can_remove']
     sc.packs_get()
-    assert got == ['looks.zip', 'photos.zip', 'kits.zip'] and sc.dl is None
+    assert got == ['looks.zip', 'photos.zip', 'people.zip', 'clubart.zip', 'kits.zip'] and sc.dl is None
     assert sc.ctl.said[-1] == (f'{SC.PACK_TITLE} downloaded and switched on. Press Patch to put it in the game.',
                                'good')
     assert all(sc.ctl.patch_want[k] for k in patch_ctl.PACK_KEYS)
     assert sc.ctl.prefs['patch']['art'] and sc.ctl.prefs['patch']['kits']
     card = _card(sc)
-    assert card['state'] == 'here' and card['tone'] == 'good' and card['size'] == '20 MB'
+    assert card['state'] == 'here' and card['tone'] == 'good' and card['size'] == '30 MB'
 
 
 def test_pack_card_photos_wait_for_the_roster_switch(sc, monkeypatch, tmp_path):
@@ -650,7 +660,7 @@ def test_pack_card_delete_asks_then_switches_off(sc, monkeypatch, tmp_path):
     sc.packs = SC.pack_status(SC.patch_cache())
     sc.packs_drop()
     (title, lines, buttons, answers), = sc.ctl.shell.asked
-    assert title == f'Delete the {SC.PACK_TITLE}?' and buttons == ['delete', 'keep'] and '20 MB' in lines[0]
+    assert title == f'Delete the {SC.PACK_TITLE}?' and buttons == ['delete', 'keep'] and '25 MB' in lines[0]
     assert have == set(patch.ART_PACKS) - set(patch.EXTRA_PACKS)         # nothing gone before the answer
     answers['delete']()
     assert not have and not any(sc.ctl.patch_want[k] for k in patch_ctl.PACK_KEYS)
@@ -678,3 +688,88 @@ def test_pack_switches_migrate_once(tmp_path, monkeypatch):
     assert C.packs_migrate(old, str(game))['art'] is True                     # served art counts too
     marked = {'patch': {'art': False, 'photos': True}, 'packs_default': C.PACKS_DEFAULT}
     assert C.packs_migrate(marked, str(game)) == {'art': False, 'photos': True}
+
+
+def test_a_new_server_and_switched_off_network_need_no_patch(sc, monkeypatch):
+    """Owner, 2026-11-03: "the app doesnt need a patch each time we edit network settings"."""
+    from overtime_roster.app import patch_ctl
+    sc.setup_set_server('192.168.1.15')                 # not patched yet: Patch puts it in
+    assert sc.ctl.said[-1] == ('Server set to 192.168.1.15. Patch the game to use it.', 'good')
+    sc.setup_set_server('')
+    sc.setup_refresh()
+    sc.setup_patch()
+    emu = str(sc.world['emu'])
+    sc.setup_set_server('192.168.1.15')
+    st = gamesetup.status(emu)
+    assert st['intact'] and st['targets']['redirector'] == '192.168.1.15'
+    assert sc.ctl.said[-1] == ('Server set to 192.168.1.15. NHL 19 uses it from its next start.', 'good')
+    cfg_path = sc.world['user'] / 'custom_configs' / 'CUSA11126.json'
+    cfg = json.loads(cfg_path.read_text())
+    cfg['GPU'] = {'full_screen': False}                 # the player's own shadPS4 setting: still patched
+    cfg_path.write_text(json.dumps(cfg))
+    assert gamesetup.status(emu)['intact']
+    cfg['General']['shad_net_enabled'] = False          # a network switch off: Play turns it on again
+    cfg_path.write_text(json.dumps(cfg))
+    assert gamesetup.status(emu)['problems'] == [f'network switched off: {cfg_path}']
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: True)
+    sc.setup_set_server('')                             # shadPS4 runs: the next start does it
+    assert sc.ctl.said[-1] == ('The Overtime server is set again. NHL 19 uses it from its next start.', 'good')
+    assert gamesetup.status(emu)['targets']['redirector'] == '192.168.1.15'
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    at_start = []
+    monkeypatch.setattr(launch, 'start', lambda emu_exe, game_dir: at_start.append(gamesetup.status(emu)) or
+                        types.SimpleNamespace(pid=7, poll=lambda: 0))
+    monkeypatch.setattr(sc, '_watch_play', lambda emu_exe, proc: None)
+    assert patch_ctl.start(sc) == {'ok': True}
+    assert at_start[0]['intact'] and at_start[0]['targets']['redirector'] == 'ot.puckpeak.com'
+    after = json.loads(cfg_path.read_text())
+    assert after['GPU'] == {'full_screen': False} and after['General']['shad_net_enabled'] is True
+    assert patch_ctl.refresh_network(sc) == 'same'
+    sc.setup_unpatch()                                  # the player's own settings come back as they were
+    general = json.loads(cfg_path.read_text())['General']
+    assert general['connected_to_network'] is False and 'shad_net_enabled' not in general
+
+
+def test_a_patch_file_of_another_version_still_asks_for_patch(sc):
+    from overtime_roster.app import patch_ctl
+    sc.setup_refresh()
+    sc.setup_patch()
+    path = sc.world['user'] / 'patches' / 'Overtime' / gamesetup.PATCH_FILE
+    path.write_bytes(path.read_bytes().replace(b'82104380', b'82104381'))
+    assert patch_ctl.refresh_network(sc) is None
+    sc.setup_set_server('192.168.1.15')
+    assert sc.ctl.said[-1] == ('Server set to 192.168.1.15. Patch the game again to use it.', 'good')
+
+
+def test_a_game_without_english_text_is_patched_without_the_text_layers(sc, monkeypatch):
+    """CUSA11116 (2026-11-03): no English text file leaves the text layers out with a line; the rest goes in."""
+    from overtime_roster.app import patch_ctl
+    monkeypatch.setattr(patch_ctl, 'game_text', lambda game_dir, log=None: None)
+    sc.ctl.patch_want.update(names=True, league=True)
+    sc.setup_refresh()
+    sc.setup_patch()
+    assert sc.calls['apply'] == [['league']]
+    assert sc.ctl.prefs['left_out'] == ['text', 'names']
+    text, tone = sc.ctl.said[-1]
+    assert tone == 'good' and text.endswith("The Overtime texts and the new team names stay the game's own: this NHL 19 "
+                                            'has no English text file.')
+    monkeypatch.setattr(patch_ctl, 'game_text', lambda game_dir, log=None: 'eng_gb')
+    monkeypatch.setattr(overlay, 'layer_fits', lambda game_dir, layer, lang: layer == 'text')
+    sc.setup_patch()
+    assert sc.calls['apply'][-1] == ['text', 'league'] and sc.ctl.prefs['left_out'] == ['names']
+    assert sc.ctl.said[-1][0].endswith("The new team names stay the game's own: its English text file (eng_gb) is not "
+                                       'the one the patch knows.')
+
+
+def test_an_update_folder_alone_is_refused_in_plain_words(tmp_path):
+    from overtime_roster.app import patch_ctl
+    from test_textpack import make_eb
+    (tmp_path / 'databigs').mkdir()
+    make_eb(str(tmp_path / 'databigs' / 'patch_inxp_56.big'), [('nhl/data/kettle/loc', 'eng_us.db', b'x')])
+    with pytest.raises(patch_ctl.Refused, match='update but not the game itself'):
+        patch_ctl.game_text(str(tmp_path))
+    make_eb(str(tmp_path / 'databigs' / 'inxp_00.big'), [('nhl/data/common/gamemodes/database/t3db', 'nhl_game-meta.xml', b'x'),
+                                                         ('nhl/data/kettle/loc', 'ger_de-meta.xml', b'x')])
+    said = []
+    assert patch_ctl.game_text(str(tmp_path), log=said.append) == 'eng_us'
+    assert said == ['Text files: eng_us; metas: ger_de. The patch edits eng_us (read with the ger_de meta).']

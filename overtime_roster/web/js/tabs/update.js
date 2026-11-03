@@ -189,6 +189,7 @@ export default function Update({ go }) {
   return html`<div class=${cls('up', s.result && 'has-result')}>
     <${FromBar} f=${s.from} go=${go}/>
     ${s.patch && html`<${PatchBar} p=${s.patch} go=${go}/>`}
+    ${s.active && html`<div class="card up-patch bad" role="status"><span class="up-patch-text">${s.active.text}</span></div>`}
     <${StepsCard} s=${s}/>
     ${s.result && html`<${Result} r=${s.result}/>`}
     <${SaveCard} s=${s}/>

@@ -13,6 +13,8 @@ import threading
 import time
 import urllib.request
 
+from . import net
+
 BASE = 'https://api-web.nhle.com/v1'
 ROSTER_TTL = 20 * 60
 USER_AGENT = 'OvertimeRoster/0.1 (+offline NHL 19 roster editor)'
@@ -24,7 +26,7 @@ class NhlComError(RuntimeError):
 
 def _http_get(url, timeout=20):
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (fixed https base)
+    with net.urlopen(req, timeout=timeout) as r:
         return r.read()
 
 
@@ -131,9 +133,27 @@ def schedule_games(body, game_type=REGULAR):
     return out
 
 
+def landing_player(body):
+    """A `/player/{id}/landing` answer as a roster_players row, its `team` the player's club now (None: no NHL club) and
+    `active` whether he still plays."""
+    return {'id': body.get('playerId'),
+            'first': (body.get('firstName') or {}).get('default', ''),
+            'last': (body.get('lastName') or {}).get('default', ''),
+            'birth': body.get('birthDate', ''),
+            'number': body.get('sweaterNumber'),
+            'position': body.get('position', ''),
+            'shoots': body.get('shootsCatches', ''),
+            'height': body.get('heightInCentimeters'),
+            'weight': body.get('weightInKilograms'),
+            'country': body.get('birthCountry', ''),
+            'birthplace': (body.get('birthCity') or {}).get('default', ''),
+            'team': body.get('currentTeamAbbrev'),
+            'active': bool(body.get('isActive'))}
+
+
 def roster_players(body, team=None):
     """Flatten a `/roster/...` answer into plain dicts: id, first, last, birth (YYYY-MM-DD), number, position,
-    shoots, height (cm), weight (kg), country, team."""
+    shoots, height (cm), weight (kg), country, birthplace (the city, as NHL 19 writes it), team."""
     out = []
     for group in ('forwards', 'defensemen', 'goalies'):
         for p in body.get(group, []) or []:
@@ -148,6 +168,7 @@ def roster_players(body, team=None):
                 'height': p.get('heightInCentimeters'),
                 'weight': p.get('weightInKilograms'),
                 'country': p.get('birthCountry', ''),
+                'birthplace': (p.get('birthCity') or {}).get('default', ''),
                 'team': team,
             })
     return out

@@ -108,6 +108,16 @@ def read_latest(game_dir, path, mods=False):
     return found
 
 
+def winning(game_dir):
+    """{game path: archive} of the game's own archives, the copy that wins (the last mounted)."""
+    where = {}
+    for big in archives(game_dir):
+        with EbArchive(big) as arc:
+            for p in arc.entries:
+                where[p] = big
+    return where
+
+
 def default_database(game_dir, mods=False):
     return read_latest(game_dir, DB_PATH, mods)
 

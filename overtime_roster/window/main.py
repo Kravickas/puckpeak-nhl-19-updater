@@ -448,6 +448,14 @@ def selftest():
         bad += not ok
         lines.append(f'{"ok  " if ok else "FAIL"}  file {_short(path)}')
     lines.append(f'info  icon {"present" if os.path.isfile(ICON) else "missing"}; WebView2 {webview2.available()}')
+    try:    # the server's certificate is checked against Mozilla's list too: a PC without the newest roots (2026-11-03)
+        from overtime_core import net
+        ok = net.certifi_loaded() or not getattr(sys, 'frozen', False)
+        bad += not ok
+        lines.append(f'{"ok  " if ok else "FAIL"}  certificates: Windows' + (' + certifi' if net.certifi_loaded() else ' only'))
+    except Exception as err:  # noqa: BLE001
+        bad += 1
+        lines.append(f'FAIL  certificates: {err}')
     try:
         _found, failed = _pack_lines(lines)
         bad += failed

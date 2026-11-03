@@ -6,7 +6,10 @@
 #                           the release host (overtime_roster\app\packdownload.py).
 #   OvertimeNHL19-cli.exe   with -Cli: the same program with a console (--browser, --selftest, --update)
 #   packs\<name>            the picture packs the app downloads, next to latest.json: -Packs (looks32.zip, looks.zip,
-#                           photos.zip, ice_all.zip, alts_intl.zip, alts_nhl.zip from packs\, made from the owner's own game files;
+#                           photos.zip, people.zip, ice_all.zip, rink.zip, clubart.zip (the clubs' logos and centre
+#                           ice the app makes on the player's PC, overtime_core\clubart.py), kitlayers_nhl.zip, kitlayers_intl.zip,
+#                           kitlayers_clubs.zip (NHL 27's jerseys the app makes into the game's textures on the player's PC at
+#                           Patch, overtime_core\kitcompose.py, tools\build_kitlayers.py) from packs\, made from the owner's own game files;
 #                           never in git), -Kits <file> (kits.zip) and shadps4_nhl19.zip (Boost performance: Kravickas's build as
 #                           its CI made it, docs/notes/shadps4-network.md). Each must read; photos.zip (p<artid> of that roster's bios) is checked
 #                           against -DefaultDb with packaging\check_photos.py, its sha256 goes into the build record.
@@ -25,7 +28,7 @@ param(
     [switch]$NoPacks,       # stage no packs and leave the NHL 27 data pack out (a spike, or before the packs are made)
     [switch]$Cli,           # also build OvertimeNHL19-cli.exe
     [switch]$NoSplash,      # no start-up splash (it needs Tcl/Tk in the exe: about 2 MB more)
-    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip', 'ice_all.zip', 'alts_intl.zip', 'alts_nhl.zip', 'shadps4_nhl19.zip'),   # the packs to stage (packdownload.PACKS, EMULATOR_PACK)
+    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip', 'people.zip', 'ice_all.zip', 'rink.zip', 'clubart.zip', 'kitlayers_nhl.zip', 'kitlayers_intl.zip', 'kitlayers_clubs.zip', 'shadps4_nhl19.zip'),   # the packs to stage (packdownload.PACKS, EMULATOR_PACK)
     [string]$Kits = '',     # the kits pack to stage too (e.g. re\extract\release-fixture\app\packs\kits.zip)
     [string]$DefaultDb = '',    # the verified default roster: a capture folder (or its nhl_game.db); main picks it
     [string]$DefaultDbSha = '', # its sha256, needed when the folder has no db.json (with one, both must agree)
@@ -57,9 +60,10 @@ if ($CheckOnly) {
         if ($LASTEXITCODE -ne 0) { throw "could not make the build environment (.venv-build)" }
     }
     # pywebview shows the window (WebView2 through pythonnet); certifi brings Mozilla's list of trusted certificates
-    # (Windows' own list can lack the one the update server uses)
-    & $py -m pip install --quiet --upgrade pip pyinstaller "pywebview==6.2.1" certifi
-    if ($LASTEXITCODE -ne 0) { throw "could not install PyInstaller, pywebview and certifi" }
+    # (Windows' own list can lack the one the update server uses); Pillow draws the photos the packs lack on the
+    # player's PC (overtime_core.photos; imported inside functions only, the server stays stdlib)
+    & $py -m pip install --quiet --upgrade pip pyinstaller "pywebview==6.2.1" certifi "pillow==12.1.1"
+    if ($LASTEXITCODE -ne 0) { throw "could not install PyInstaller, pywebview, certifi and Pillow" }
 }
 
 $version = (& $py -c "import overtime_roster; print(overtime_roster.VERSION)").Trim()
@@ -109,9 +113,10 @@ if ($Kits) {
     $staged['kits.zip'] = (Resolve-Path $Kits).Path
 }
 # each pack must read: every file of a picture pack against its checksum; the kits (a delta pack) its manifest, its
-# bases are checked against the player's game when the patch lays it in
+# bases are checked against the player's game when the patch lays it in; the emulator and the club art source pack by
+# their own checks (packdownload.CHECKS)
 $readPack = 'import sys; from overtime_core import art; from overtime_roster.app import packdownload as p; ' +
-            'e = sys.argv[2] == p.EMULATOR_PACK; (p.check_emulator if e else p.check_zip)(sys.argv[1]); ' +
+            'e = sys.argv[2] in p.CHECKS; p.CHECKS.get(sys.argv[2], p.check_zip)(sys.argv[1]); ' +
             'e or sys.argv[2] == sys.argv[3] or art.load_pack(sys.argv[1])'
 foreach ($pack in $staged.Keys) {
     & $py -c $readPack $staged[$pack] $pack 'kits.zip'

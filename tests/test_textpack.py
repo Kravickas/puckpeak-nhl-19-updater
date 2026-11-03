@@ -88,3 +88,64 @@ def test_apply_and_undo_on_a_copy(game_dir, tmp_path):
     textpack.undo(str(game), **idle)
     assert not os.path.exists(out['overlay'])
     assert in_place or textpack.status(str(game), pack)['not_current']
+
+
+def _loc_game(root, names, bigs=None):
+    """A game folder whose inxp_00.big holds the loc files `names` (b'' each); `bigs` adds {archive: [(folder, name,
+    data)]}."""
+    (root / 'databigs').mkdir(parents=True)
+    make_eb(str(root / 'databigs' / 'inxp_00.big'),
+            [(textpack.LOC_DIR.rstrip('/'), n, b'x') for n in names] or [('nhl', 'readme.txt', b'x')])
+    for big, files in (bigs or {}).items():
+        make_eb(str(root / 'databigs' / big), files)
+    return str(root)
+
+
+def test_the_text_file_is_eng_us_else_another_english_else_none(tmp_path):
+    """CUSA11116, 2026-11-03: the patch read eng_us whatever the game had ("eng_us-meta.xml not in ...")."""
+    assert textpack.game_language(_loc_game(tmp_path / 'a', ['ger_de.db', 'eng_gb.db', 'eng_us.db'])) == 'eng_us'
+    assert textpack.game_language(_loc_game(tmp_path / 'b', ['ger_de.db', 'eng_gb.db', 'eng_gb-meta.xml'])) == 'eng_gb'
+    assert textpack.game_language(_loc_game(tmp_path / 'c', ['ger_de.db', 'fre_fr.db'])) is None
+    assert textpack.load_pack(lang='eng_gb') == textpack.load_pack()     # the English pack serves every English
+    with pytest.raises(FileNotFoundError):
+        textpack.load_pack(lang='ger_de')
+
+
+def test_a_text_file_without_its_own_meta_reads_with_another(tmp_path):
+    """The update holds every language's text file, the base only its own metas: the table is the same in each."""
+    loc = textpack.LOC_DIR.rstrip('/')
+    game = _loc_game(tmp_path / 'g', ['eng_us.db'], {'boot.big': [(loc, 'ger_de-meta.xml', b'<de/>')]})
+    assert textpack.loc_meta(game, 'eng_us') == b'<de/>'
+    with pytest.raises(FileNotFoundError):
+        textpack.loc_meta(_loc_game(tmp_path / 'h', ['eng_us.db']), 'eng_us')
+
+
+@pytest.mark.game
+def test_another_english_and_a_borrowed_meta_take_the_text_layers(game_dir, tmp_path):
+    """The real loc files under another English name (eng_gb), and eng_us with only German's meta: both layers fit and
+    apply; a pack with a string the file lacks does not fit."""
+    from overtime_core import overlay
+    loc = textpack.LOC_DIR.rstrip('/')
+    db_path, meta_path = textpack.loc_paths('eng_us')
+    raw = gamefiles.read_latest(game_dir, db_path)[0]
+    meta = gamefiles.read_latest(game_dir, meta_path)[0]
+    gb = tmp_path / 'gb'
+    _loc_game(gb, [], {'patch_inxp_56.big': [(loc, 'eng_gb.db', raw)],
+                       'boot.big': [(loc, 'eng_gb-meta.xml', meta.replace(b'"eng_us"', b'"eng_gb"'))]})
+    assert textpack.game_language(str(gb)) == 'eng_gb'
+    assert overlay.layer_fits(str(gb), 'text', 'eng_gb') and overlay.layer_fits(str(gb), 'names', 'eng_gb')
+    state = overlay.apply(str(gb), ['text', 'names'], lang='eng_gb', running=lambda: False)
+    assert state['layers']['text']['file'] == state['layers']['names']['file'] == 'eng_gb'
+    with eb.EbArchive(os.path.join(overlay.overlay_dir(str(gb)), 'databigs', 'patch_inxp_56.big')) as arc:
+        pack = textpack.load_pack()
+        got = textpack.read_strings(arc.read('nhl/data/kettle/loc/eng_gb.db'), meta, pack['strings'])
+    assert got == pack['strings']
+    overlay.undo(str(gb), running=lambda: False)
+    de = tmp_path / 'de'
+    de_meta = gamefiles.read_latest(game_dir, textpack.loc_paths('ger_de')[1])[0]
+    _loc_game(de, [], {'patch_inxp_56.big': [(loc, 'eng_us.db', raw)], 'boot.big': [(loc, 'ger_de-meta.xml', de_meta)]})
+    assert textpack.game_language(str(de)) == 'eng_us' and overlay.layer_fits(str(de), 'text', 'eng_us')
+    bad = dict(textpack.load_pack(), strings={'NOT_A_STRING_OF_NHL_19': 'x'})
+    import unittest.mock
+    with unittest.mock.patch.object(textpack, 'load_pack', lambda *a, **kw: bad):
+        assert not overlay.layer_fits(str(gb), 'text', 'eng_gb')

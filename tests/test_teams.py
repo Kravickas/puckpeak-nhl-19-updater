@@ -146,16 +146,69 @@ def test_utah_wears_utah_colours_not_arizona_red(game_db):
         return {eq.get(i, 'zone1') for i in range(eq.count)
                 if eq.get(i, 'team') == team and eq.get(i, 'equipment') == 7 and eq.get(i, 'variant') == -1}
 
-    others = [eq.row(i) for i in range(eq.count) if eq.get(i, 'team') != T.UTAH_SLOT]
+    repainted = {eq.get(row, 'team') for name, row, *_ in T.plan(db, schema) if name == T.EQUIPMENT}
+    assert repainted == {T.UTAH_SLOT, 64}  # Utah, and Utica in New Jersey's red and black
+    others = [eq.row(i) for i in range(eq.count) if eq.get(i, 'team') not in repainted]
     assert 0x821113 in helmets(T.UTAH_SLOT)  # stock: the Coyotes' brick-red helmet
-    assert any(name == T.EQUIPMENT for name, *_ in T.plan(db, schema)) and any(T.EQUIPMENT in p for p in T.check(db, schema))
+    assert any(T.EQUIPMENT in p for p in T.check(db, schema))
     T.apply(db, schema)
     assert T.plan(db, schema) == []
     assert 0x0F0F0F in helmets(T.UTAH_SLOT) and not helmets(T.UTAH_SLOT) & set(T.UTAH_EQUIPMENT)
     utah = [eq.row(i) for i in range(eq.count) if eq.get(i, 'team') == T.UTAH_SLOT]
     assert not {r[z] for r in utah for z in T.ZONES} & set(T.UTAH_EQUIPMENT)
-    assert [eq.row(i) for i in range(eq.count) if eq.get(i, 'team') != T.UTAH_SLOT] == others
+    assert [eq.row(i) for i in range(eq.count) if eq.get(i, 'team') not in repainted] == others
     tc = db[schema.by_name(T.TEAM_COLOURS).short]
     assert sorted(tc.get(i, 'color') for i in range(tc.count) if tc.get(i, 'team') == T.UTAH_SLOT) == \
         sorted([0x6CACE4, 0xFFFFFF, 0x101010])
+
+
+def test_farms_name_every_nhl_teams_2026_club():
+    from overtime_core import leaguecal
+    assert set(T.FARMS_2026) == set(calendar.SLOTS) - {'SEA'}  # Seattle's farm is Coachella Valley (customteams)
+    assert len({T.club_key(c) for c in T.FARMS_2026.values()}) == 31
+    assert set(T.FARMS_2026) == set(leaguecal.AHL_PARENT.values()) - {'SEA'}
+
+
+def test_gear_follows_the_colour_its_hue_matches():
+    # Binghamton's red becomes Abbotsford's blue; black has no hue and stays; gold matches neither old colour
+    assert T._hue_map({0x922328, 0x131313, 0xFDBB30}, [0xB12B32, 0x131313], [0x004995, 0xC5C5C5]) == {0x922328: 0x004995}
+    assert T._hue_map({0x922328}, [0xB12B32, 0x131313], [0xB12B32, 0x131313]) == {}  # same colours, nothing to do
+
+
+@pytest.mark.game
+def test_renamed_ahl_clubs_take_their_2026_records_and_farm_links(game_db):
+    from overtime_core import leaguecal
+    from overtime_core import rosterupdate as U
+    raw, schema = game_db
+    db = tdb.Database.parse(raw, schema)
+    teams, eq = db[T.TEAMS], db[schema.by_name(T.EQUIPMENT).short]
+
+    def gear(team):
+        return [eq.row(i) for i in range(eq.count) if eq.get(i, 'team') == team]
+
+    kept = {team: gear(team) for team in (45, 65)}  # Hershey, Wilkes-Barre: new colours, gear already fits
+    T.apply(db, schema)
+    rows = T._rows_by_index(teams)
+    assert teams.get(rows[calendar.SLOTS['VGK']], 'ahlaffiliate') == 40  # stock: Chicago; Henderson is not there yet
+    binghamton = gear(37)
+    assert sorted(U.rename_ahl(db)) == [37, 38, 55, 59] and U.rename_ahl(db) == []
+    assert T.apply(db, schema)
+    assert T.plan(db, schema) == [] and T.check(db, schema) == []
+    links = {code: teams.get(rows[calendar.SLOTS[code]], 'ahlaffiliate') for code in T.FARMS_2026}
+    assert (links['VGK'], links['NJD'], links['VAN'], links['CAR'], links['STL'], links['FLA']) == (55, 64, 37, 40, 58, 39)
+    assert all(T.club_key(teams.get(rows[slot], 'teamname')) == T.club_key(T.FARMS_2026[code])
+               for code, slot in links.items())
+    slots = leaguecal.ahl_slots(db)
+    assert len(slots) == 32 and len(set(slots.values())) == 32
+    hsk = teams.row(rows[55])
+    assert (hsk['teamname'], hsk['cityname'], hsk['abbrname']) == ('Henderson Silver Knights', 'Henderson', 'HSK')
+    assert (hsk['divisiongroup'], hsk['conferencegroup']) == (T.AHL_PACIFIC, T.AHL_WEST)
+    arenas = db[T.ARENAS]
+    arena = arenas.row(T._rows_by_index(arenas)[hsk['arenaid']])
+    assert (arena['arenaname'], arena['cityname']) == ("Lee's Family Forum", 'Henderson, NV')
+    abbotsford = gear(37)
+    assert abbotsford != binghamton and 0x922328 not in {r[z] for r in abbotsford for z in T.ZONES}  # the red is gone
+    assert all(gear(team) == before for team, before in kept.items())
+    blob = db.to_bytes()
+    assert tdb.Database.parse(blob, schema).to_bytes() == blob
 

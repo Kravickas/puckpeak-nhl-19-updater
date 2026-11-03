@@ -7,7 +7,8 @@ docs/notes/roster-format.md.
 import datetime
 from dataclasses import dataclass, field
 
-from overtime_core import lines
+from overtime_core import lines, teams as T
+from overtime_core.rosterupdate import CUSTOM_ROSTER
 from overtime_core.roster import ALTERNATE, CAPTAIN, GOALIE_SLOTS, Roster
 
 from . import labels as L
@@ -127,6 +128,9 @@ class RosterSession:
     def players_of(self, team):
         if team == L.FREE_AGENTS:
             return list(self.free_agents)
+        if team == T.SEATTLE_AHL and CUSTOM_ROSTER in self.db:     # Coachella Valley: the custom roster only
+            t = self.db[CUSTOM_ROSTER]
+            return [t.get(i, 'playerindex') for i in range(t.count) if t.get(i, 'team') == team]
         return [self.rows[ROSTER][i]['playerindex'] for i in self.team_entries.get(team, [])]
 
     def birth(self, b):

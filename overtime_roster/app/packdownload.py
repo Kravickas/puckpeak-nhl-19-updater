@@ -29,10 +29,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from overtime_core import art
+from overtime_core import art, clubart, kitcompose
 
 from . import defaultdb, paths, selfupdate, sources
-from .patch import ART_ENV, EXTRA_PACKS, KITS_PACK, PHOTOS_PACK
+from .patch import ART_ENV, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK, PEOPLE_PACK, PHOTOS_PACK
 
 # name -> what a player reads, and whether the patch needs it for the art (core; until v0.10.0 the one click fetched those)
 EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
@@ -41,6 +41,9 @@ PACKS = {
     'looks32.zip': {'title': 'NHL 27 looks for all 32 teams', 'core': True},
     'looks.zip': {'title': 'Utah and Seattle looks', 'core': True},
     PHOTOS_PACK: {'title': 'Player photos from NHL.com', 'core': True},
+    PEOPLE_PACK: {'title': 'Player photos of every league', 'core': True},
+    # not served by the patch itself: Update makes the clubs' logos and centre ice of it on this PC (overtime_core.clubart)
+    CLUBART_PACK: {'title': 'Club logos and centre ice of every league', 'core': True},
     KITS_PACK: {'title': 'NHL 27 3D kits for 30 teams', 'core': False},
     **{name: {'title': title, 'core': False} for name, title in EXTRA_PACKS.items()},
 }
@@ -458,7 +461,7 @@ def _fetch(release, part, report=None, cancelled=None):
         if sha.hexdigest() != release.digest or (release.size and got != release.size):
             raise PackError(WRONG_FILE)
         try:
-            (check_emulator if release.asset == EMULATOR_PACK else check_zip)(part)
+            CHECKS.get(release.asset, check_zip)(part)
         except art.ArtError as err:
             raise PackError(f'The pack does not read: {err}') from err
     except OSError as err:              # the cache folder: full, read only
@@ -619,6 +622,28 @@ def check_emulator(path):
                 raise art.ArtError(f'{EMULATOR_EXE} is not a Windows program')
     except (zipfile.BadZipFile, OSError) as err:
         raise art.ArtError(str(err)) from err
+
+
+def check_clubart(path):
+    """The club art source pack's manifest reads (clubart.Source). ArtError otherwise."""
+    clubart.Source(path)
+
+
+def check_kitlayers(path):
+    """A jersey layer pack's manifest reads (kitcompose.Source) and every picture it lists is in it. ArtError otherwise."""
+    import zipfile
+    pack = kitcompose.Source(path)
+    try:
+        with zipfile.ZipFile(path) as z:
+            missing = sorted(set(pack.members) - set(z.namelist()))
+    except (zipfile.BadZipFile, OSError) as err:
+        raise art.ArtError(str(err)) from err
+    if missing:
+        raise art.ArtError(f'{len(missing)} pictures missing, {missing[0]} first')
+
+
+CHECKS = {EMULATOR_PACK: check_emulator, CLUBART_PACK: check_clubart,     # the packs that are not art packs
+          **{name: check_kitlayers for name in KITLAYER_PACKS}}
 
 
 def located(name, cache_dir):

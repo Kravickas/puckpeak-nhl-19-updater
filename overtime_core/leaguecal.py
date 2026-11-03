@@ -20,7 +20,7 @@ written by tools/build_leaguecal.py).
 import json
 import urllib.request
 
-from . import calendar
+from . import calendar, net
 from .calendar import CalendarError
 
 AHL32, AHL31, LIIGA = 'ahl32schedule', 'ahlschedule', 'finnishschedule'
@@ -57,7 +57,7 @@ USER_AGENT = 'OvertimeRoster (+https://ot.puckpeak.com)'
 
 def _http_get(url, timeout=30):
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (fixed https bases)
+    with net.urlopen(req, timeout=timeout) as r:
         return r.read()
 
 

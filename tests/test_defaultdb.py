@@ -35,6 +35,21 @@ def _setup(gathered=None, season=20262027):
     return types.SimpleNamespace(ctl=ctl)
 
 
+def test_the_default_of_an_update_plays_the_real_lines(monkeypatch):
+    seen = {}
+
+    def run(*a, **k):
+        seen.update(k)
+        raise InterruptedError
+
+    monkeypatch.setattr(patch, 'RosterSession', lambda *a: type('Session', (), {'db': None}))
+    monkeypatch.setattr(patch.update, 'plan', lambda *a: type('Plan', (), {'summary': staticmethod(str)}))
+    monkeypatch.setattr(patch.update, 'run', run)
+    with pytest.raises(InterruptedError):
+        patch.updated_default(type('Game', (), {'default_db': staticmethod(bytes)}), None)
+    assert seen['lines'] is True
+
+
 def test_embedded_needs_its_record(shipped):
     assert defaultdb.embedded() == (BASE, _sha(BASE))
     assert defaultdb.check()[0]

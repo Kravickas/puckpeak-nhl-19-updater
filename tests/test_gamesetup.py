@@ -151,10 +151,16 @@ def test_changed_custom_config_gets_only_our_keys_back(world):
     path.write_text(json.dumps({'General': {'connected_to_network': False, 'volume_slider': 50}}))
     gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     cfg = json.loads(path.read_text())
-    cfg['General']['volume_slider'] = 80  # the user changes a setting while patched
+    cfg['General']['volume_slider'] = 80  # the user changes a setting while patched: the patch stays intact
     path.write_text(json.dumps(cfg))
     st = gamesetup.status(str(world['emu']))
-    assert st['installed'] and not st['intact']
+    assert st['installed'] and st['intact'], st['problems']
+    cfg['General']['shad_net_enabled'] = False      # one of our keys off: said, Play puts it back (patch_ctl)
+    path.write_text(json.dumps(cfg))
+    st = gamesetup.status(str(world['emu']))
+    assert not st['intact'] and st['problems'] == [f'network switched off: {path}']
+    cfg['General']['shad_net_enabled'] = True
+    path.write_text(json.dumps(cfg))
     gamesetup.remove(running=lambda: False)
     assert json.loads(path.read_text())['General'] == {'connected_to_network': False, 'volume_slider': 80}
 

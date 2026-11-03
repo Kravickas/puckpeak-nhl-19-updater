@@ -6,7 +6,8 @@ groups of exhibitionplayerbiotable rows (game_id < rosterupdate.SPECIAL_IDS):
 
     nhl         the bios on the club with a deal (contractstatus 0); only these count toward the cap
     farm        the AHL club that holds most of the organisation's other players (`proteam`; exhibitionteams'
-                ahlaffiliate is stale for six clubs in the default roster), and those players on it
+                ahlaffiliate is stale for six clubs in NHL 19's own roster, Update relinks it: teams.FARMS_2026),
+                and those players on it
     prospects   the organisation's other `proteam` bios (rights, juniors, Europe, free agents)
 
 Money is in dollars (contractdollars and extensiondollars x labels.CONTRACT_UNIT) and comes out as text: $12.5M,
@@ -33,7 +34,7 @@ SORTS = ('name', 'pos', 'age', 'ovr', 'cap', 'years', 'ext')
 ORDER = {'C': 0, 'LW': 1, 'RW': 2, 'F': 3, 'D': 4, 'G': 5}   # the Pos column's order
 AHL = 1                                         # labels.LEAGUES
 SEATTLE = T.SEATTLE_PLAY_NOW                    # the rail's Seattle; its players are on the custom team 499
-SEATTLE_FARM = 'Coachella Valley Firebirds'     # customteams 498: no players in the default roster
+SEATTLE_FARM = 'Coachella Valley Firebirds'     # customteams 498: Update fills it (customrostertable), not listed here
 TIGHT = 2_000_000                               # cap space under this shows caution
 MARKER = 20                                     # NHL deals a roster needs before its lengths tell the extra season
 CONTRACT = 'Change his cap hit, years and one-way or two-way. Save writes it; My edits keeps it for every update.'
@@ -277,6 +278,9 @@ def why_text(team, league):
         return 'Free agents belong to no NHL organisation. Pick an NHL club or its farm club.'
     if team.get('extra'):
         return 'All-Star teams have no contracts. Pick an NHL club.'
+    if team['id'] == T.SEATTLE_AHL:                 # the custom team 498 (rail.COACHELLA)
+        return f"The front office does not list the {team['name']} yet: they play in Season and Franchise only. " \
+               'Edit their players on the Roster tab.'
     if league == 'AHL':
         return f"{team['name']} are the farm club of no NHL organisation in this roster. Pick an NHL club."
     if league == 'NHL':                             # Seattle in a roster that does not have its players

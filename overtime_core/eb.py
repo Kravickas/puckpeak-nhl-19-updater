@@ -68,6 +68,16 @@ class EbArchive:
     def read(self, name):
         return unchunk(self.raw(name))
 
+    def head(self, name, n):
+        """The first `n` bytes of entry `name` (a texture's header), reading and unpacking only the chunks they are in."""
+        off, size = self.entries[name]
+        start = self._at(off, min(size, 0x1c))
+        if start[:8] != b'chunkzip':
+            return self._at(off, min(size, n))
+        csize = struct.unpack_from('>I', start, 16)[0]
+        chunks = n // max(csize, 1) + 1
+        return unchunk(self._at(off, min(size, 0x30 + chunks * (csize + 0x20))), n)[:n]
+
 
 def _entry_index(path, name):
     with EbArchive(path) as arc:
@@ -117,14 +127,17 @@ def restore_entry(path, record):
         f.truncate(record['file_size'])
 
 
-def unchunk(data):
-    """Return the unpacked bytes of a chunkzip blob (or `data` unchanged if it is not one)."""
+def unchunk(data, limit=None):
+    """Return the unpacked bytes of a chunkzip blob (or `data` unchanged if it is not one). With `limit` it stops once
+    that many bytes are unpacked (the rest of the blob need not be there)."""
     if data[:8] != b'chunkzip':
         return data
     _ver, usize, csize, nchunks, _align = struct.unpack_from('>5I', data, 8)
     out = bytearray()
     pos = 0x1c
     for _ in range(nchunks):
+        if limit is not None and len(out) >= limit:
+            return bytes(out)
         pos = (pos + 8 + 15) // 16 * 16 - 8  # chunk data starts on a 16-byte boundary
         packed, method = struct.unpack_from('>II', data, pos)
         pos += 8

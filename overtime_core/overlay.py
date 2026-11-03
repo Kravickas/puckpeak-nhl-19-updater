@@ -68,6 +68,45 @@ NAMES = {
     'X_XLA_TEAM_PHX': ('ARZ', UTAH_ABBR), 'NHLTeamName_Abbr3_22': ('ARZ', UTAH_ABBR),
     'NHLTeamName_Abbr3_PHX': ('ARI', UTAH_ABBR),
     'BURNABY': ('Burnaby', 'Coachella Valley'),
+    # The clubs the update renames on their slot (rosterupdate.rename_ahl, rename_allsvenskan): the menus show the loc
+    # texts keyed by the slot's artabbr, not the database's names (docs/notes/nhl19-2026-patch.md). Ids spelt as the
+    # loc database has them; TEAMLINE1 of the Swedish clubs is ' ' and stays.
+    'NHLCityName_BIN': ('Binghamton', 'Abbotsford'), 'NHLTeamName_BIN': ('Binghamton Devils', 'Abbotsford Canucks'),
+    'NHLTeamName_ABBR3_BIN': ('BNG', 'ABB'), 'TXT_NICKNAME_BIN': ('Devils', 'Canucks'),
+    'TXT_NICKNAME_ALT_BIN': ('Baby Sens', 'Canucks'), 'Teamline1_BIN': ('Binghamton', 'Abbotsford'),
+    'Teamline2_BIN': ('Devils', 'Canucks'),
+    'NHLCityName_BRP': ('Bridgeport', 'Hamilton'), 'NHLTeamName_BRP': ('Bridgeport Sound Tigers', 'Hamilton Hammers'),
+    'NHLTeamName_ABBR3_BRP': ('BRI', 'HAM'), 'TXT_NICKNAME_BRP': ('Sound Tigers', 'Hammers'),
+    'TXT_NICKNAME_ALT_BRP': ('Sound Tigers', 'Hammers'), 'Teamline1_BRP': ('Bridgeport', 'Hamilton'),
+    'Teamline2_BRP': ('Sound Tigers', 'Hammers'),
+    'NHLCityName_SAN': ('San Antonio', 'Henderson'), 'NHLTeamName_SAN': ('San Antonio Rampage', 'Henderson Silver Knights'),
+    'NHLTeamName_ABBR3_SAN': ('SA', 'HSK'), 'TXT_NICKNAME_SAN': ('Rampage', 'Silver Knights'),
+    'TXT_NICKNAME_ALT_SAN': ('Rampage', 'Silver Knights'), 'Teamline1_SAN': ('San Antonio', 'Henderson'),
+    'Teamline2_SAN': ('Rampage', 'Silver Knights'), 'X_XLA_TEAM_SAN': ('SA', 'HSK'),
+    'NHLCITYNAME_STOC': ('Stockton', 'Calgary'), 'NHLTEAMNAME_STOC': ('Stockton Heat', 'Calgary Wranglers'),
+    'NHLTeamName_Abbr3_STOC': ('STK', 'CGY'), 'NICKLINE2_STOC': ('Heat', 'Wranglers'),
+    'TEAMLINE1_STOC': ('Stockton', 'Calgary'), 'TEAMLINE2_STOC': ('Heat', 'Wranglers'),
+    'TXT_NICKNAME_STOC': ('Heat', 'Wranglers'), 'TXT_NICKNAME_ALT_STOC': ('Heat', 'Wranglers'),
+    'X_XLA_TEAM_STOC': ('STK', 'CGY'),
+    'NHLCityName_BJOR': ('Björklöven', 'Östersund'), 'NHLTEAMNAME_BJOR': ('IF Björklöven', 'Östersunds IK'),
+    'NHLTEAMNAME_Abbr3_BJOR': ('IFB', 'OST'), 'TEAMLINE2_BJOR': ('IF Bjorkloven', 'Östersunds IK'),
+    'TXT_NICKNAME_BJOR': ('Björklöven', 'Östersund'), 'TXT_NICKNAME_ALT_BJOR': ('Björklöven', 'Östersund'),
+    'NHLCITYNAME_KRLS': ('Karlskrona HK', 'Kalmar HC'), 'NHLTEAMNAME_KRLS': ('Karlskrona HK', 'Kalmar HC'),
+    'NHLTeamName_Abbr3_KRLS': ('KHK', 'KAL'), 'NICKLINE2_KRLS': ('Karlskrona', 'Kalmar'),
+    'TEAMLINE2_KRLS': ('Karlskrona HK', 'Kalmar HC'), 'TXT_NICKNAME_KRLS': ('Karlskrona', 'Kalmar'),
+    'TXT_NICKNAME_ALT_KRLS': ('Karlskrona', 'Kalmar'), 'X_XLA_TEAM_KRLS': ('KHK', 'KAL'),
+    'NHLCityName_PANT': ('Pantern', 'Nybro'), 'NHLTEAMNAME_PANT': ('IK Pantern', 'Nybro Vikings IF'),
+    'NHLTEAMNAME_Abbr3_PANT': ('PAN', 'NYB'), 'TEAMLINE2_PANT': ('IK Pantern', 'Nybro Vikings IF'),
+    'TXT_NICKNAME_PANT': ('Pantern', 'Nybro'), 'TXT_NICKNAME_ALT_PANT': ('Pantern', 'Nybro'),
+    'NHLCityName_TING': ('Tingsryd', 'Vimmerby'), 'NHLTEAMNAME_TING': ('Tingsryds AIF', 'Vimmerby Hockey'),
+    'NHLTEAMNAME_Abbr3_TING': ('TAIF', 'VIM'), 'TEAMLINE2_TING': ('Tingsryds AIF', 'Vimmerby Hockey'),
+    'TXT_NICKNAME_TING': ('Tingsryds', 'Vimmerby'), 'TXT_NICKNAME_ALT_TING': ('Tingsryds', 'Vimmerby'),
+    'NHLCityName_VIK': ('Västervik', 'Visby'), 'NHLTEAMNAME_VIK': ('Västerviks IK', 'Visby/Roma HK'),
+    'NHLTEAMNAME_Abbr3_VIK': ('VVIK', 'VIS'), 'TEAMLINE2_VIK': ('Västerviks IK', 'Visby/Roma HK'),
+    'TXT_NICKNAME_VIK': ('Västervik', 'Visby'), 'TXT_NICKNAME_ALT_VIK': ('Västervik', 'Visby'),
+    'NHLCityName_VITA': ('Vita Hästen', 'Mora'), 'NHLTEAMNAME_VITA': ('HC Vita Hästen', 'Mora IK'),
+    'NHLTEAMNAME_Abbr3_VITA': ('VIT', 'MORA'), 'TEAMLINE2_VITA': ('HC Vita Hästen', 'Mora IK'),
+    'TXT_NICKNAME_VITA': ('Vita Hästen', 'Mora'), 'TXT_NICKNAME_ALT_VITA': ('Vita Hästen', 'Mora'),
 }
 
 # The league layer. capdefs.brk (170 bytes, the league kernel's money table; the same rows as the table Legacy found
@@ -482,9 +521,9 @@ def build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None,
         raise PatchError(f'unknown layer(s): {", ".join(sorted(unknown))}')
     edits, info = {}, {}
     if 'text' in layers or 'names' in layers:
-        db_path, meta_path = textpack.loc_paths(lang)
+        db_path = textpack.loc_paths(lang)[0]
         archive = textpack._winner(game_dir, db_path)
-        meta = gamefiles.read_latest(game_dir, meta_path)[0]
+        meta = textpack.loc_meta(game_dir, lang)
         tmp_dir = overlay_dir(game_dir)
         with eb.EbArchive(archive) as arc:
             raw = arc.read(db_path)
@@ -499,14 +538,14 @@ def build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None,
         strings = {}
         if 'names' in layers:
             strings.update(names_strings(raw, meta))
-            info['names'] = {'strings': len(NAMES)}
+            info['names'] = {'strings': len(NAMES), 'file': lang}
         if 'text' in layers:
             pack = pack or textpack.load_pack(lang=lang)
             clash = sorted(set(pack['strings']) & set(strings))
             if clash:
                 raise PatchError(f'text pack and names layer both set {", ".join(clash)}')
             strings.update(pack['strings'])
-            info['text'] = {'language': pack['language'], 'strings': len(pack['strings']),
+            info['text'] = {'language': pack['language'], 'file': lang, 'strings': len(pack['strings']),
                             'pack_sha256': hashlib.sha256(json.dumps(pack, sort_keys=True).encode()).hexdigest()}
         new, missing = textpack.edit_database(raw, meta, strings)
         if missing:
@@ -567,6 +606,16 @@ def build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None,
         info['art'] = {'packs': _art_record(art), 'archives': record,
                        'textures': len(set().union(*(set(e) for e in new.values())))}
     return edits, info
+
+
+def layer_fits(game_dir, layer, lang):
+    """Whether the text or names layer can be made on `lang`'s text file: every string the pack sets is there, and the
+    names layer's stock texts (another English than eng_us: CUSA11116). Nothing is written."""
+    try:
+        build(game_dir, [layer], lang=lang)
+    except (PatchError, FileNotFoundError, KeyError):
+        return False
+    return True
 
 
 def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='eng_us', running=None, menus=None,

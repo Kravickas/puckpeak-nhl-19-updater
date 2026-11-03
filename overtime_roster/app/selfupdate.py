@@ -15,12 +15,13 @@ import hashlib
 import json
 import os
 import re
-import ssl
 import subprocess
 import sys
 import time
 import urllib.parse
 import urllib.request
+
+from overtime_core import net
 
 from .. import VERSION
 from . import paths
@@ -151,21 +152,9 @@ def from_json(data, base, fetch_text=None, asset=EXE_ASSET):
                    asset)
 
 
-_tls = None
-
-
 def tls_context():
     """Windows' trusted certificates, plus Mozilla's list when certifi is there (a PC can lack the root a site uses)."""
-    global _tls
-    if _tls is None:
-        ctx = ssl.create_default_context()
-        try:
-            import certifi
-            ctx.load_verify_locations(certifi.where())
-        except Exception:
-            pass
-        _tls = ctx
-    return _tls
+    return net.tls_context()
 
 
 def _open(url, timeout):

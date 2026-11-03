@@ -18,18 +18,59 @@ from .tdb import Database
 
 STATE_SUFFIX = '.overtime-text.json'
 PACK_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'client', 'textpack')
+LOC_DIR = 'nhl/data/kettle/loc/'
+LANG = 'eng_us'     # the text file the patch was made on (CUSA11126); the English pack serves another English too
 
 
 def loc_paths(lang):
-    return f'nhl/data/kettle/loc/{lang}.db', f'nhl/data/kettle/loc/{lang}-meta.xml'
+    return f'{LOC_DIR}{lang}.db', f'{LOC_DIR}{lang}-meta.xml'
+
+
+def loc_files(game_dir):
+    """(languages with a text file, languages with a meta) in the game's archives, sorted."""
+    dbs, metas = set(), set()
+    for p in gamefiles.winning(game_dir):
+        name = p[len(LOC_DIR):] if p.startswith(LOC_DIR) else ''
+        if name.endswith('-meta.xml'):
+            metas.add(name[:-len('-meta.xml')])
+        elif name.endswith('.db'):
+            dbs.add(name[:-len('.db')])
+    return sorted(dbs), sorted(metas)
+
+
+def game_language(game_dir, files=None):
+    """The text file the text layers edit: eng_us when the game has it, else another English (the European disc,
+    CUSA11116, may have its own), else None (no English: the text and names layers stay off). `files`: loc_files."""
+    langs = (files or loc_files(game_dir))[0]
+    if LANG in langs:
+        return LANG
+    return next(iter(sorted(lang for lang in langs if lang.startswith('eng_'))), None)
+
+
+def loc_meta(game_dir, lang):
+    """The meta XML that reads `lang`'s text file. A game without that language's own meta (the update holds the text
+    files of every language, the base only its own metas) reads it with another language's: every language has the
+    same LanguageStrings table, only the database name differs (CUSA11126's seven metas, 2026-11-03)."""
+    try:
+        return gamefiles.read_latest(game_dir, loc_paths(lang)[1])[0]
+    except FileNotFoundError:
+        other = sorted(p for p in gamefiles.winning(game_dir) if p.startswith(LOC_DIR) and p.endswith('-meta.xml'))
+        if not other:
+            raise
+        return gamefiles.read_latest(game_dir, other[0])[0]
 
 
 def overlay_dir(game_dir):
     return gamefiles.mods_dir(game_dir)
 
 
-def load_pack(path=None, lang='eng_us'):
-    with open(path or os.path.join(PACK_DIR, f'{lang}.json'), encoding='utf-8') as f:
+def load_pack(path=None, lang=LANG):
+    """The pack of `lang`; another English without a pack of its own takes the English one."""
+    if path is None:
+        path = os.path.join(PACK_DIR, f'{lang}.json')
+        if not os.path.exists(path) and lang.startswith('eng_'):
+            path = os.path.join(PACK_DIR, f'{LANG}.json')
+    with open(path, encoding='utf-8') as f:
         return json.load(f)
 
 
@@ -76,12 +117,12 @@ def _target(game_dir, archive):
 
 
 def status(game_dir, pack):
-    db_path, meta_path = loc_paths(pack['language'])
+    db_path = loc_paths(pack['language'])[0]
     archive = _winner(game_dir, db_path)
     target = _target(game_dir, archive)
     live_file = target if os.path.exists(target) else archive
     with eb.EbArchive(live_file) as arc:
-        live = read_strings(arc.read(db_path), gamefiles.read_latest(game_dir, meta_path)[0], pack['strings'])
+        live = read_strings(arc.read(db_path), loc_meta(game_dir, pack['language']), pack['strings'])
     from . import overlay
     text = ((overlay._load_state(game_dir) or {}).get('layers') or {}).get('text') or {}
     legacy = _load_json(target + STATE_SUFFIX) or {}

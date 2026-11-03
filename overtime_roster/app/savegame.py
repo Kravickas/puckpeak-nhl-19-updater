@@ -37,6 +37,10 @@ class SaveError(ValueError):
     pass
 
 
+ACTIVE_SLOT = re.compile(rb'"ActiveRosterSaveSlot"\s*:\s*(-?\d+)')
+ACTIVE_TYPE = re.compile(rb'"ActiveRosterType"\s*:\s*"(\w*)"')
+
+
 @dataclass
 class RosterSave:
     folder: str  # path
@@ -158,6 +162,30 @@ def check_container(name, index, data, db_bytes):
 CUSTOM, SLOTS = 'RosterCustom', 15  # the game lists RosterCustom0-14 only (run 2026-10-19): a 16th never shows
 FULL = (f'The game shows only {SLOTS} custom rosters ({CUSTOM}0-{SLOTS - 1}) and all are taken: delete one in the '
         'game, or overwrite one of them.')
+
+
+def active_roster(save_dir):
+    """The save folder of the roster NHL 19 plays ('RosterCustom2'), read from the profile save (ActiveRosterType +
+    ActiveRosterSaveSlot); None for the game's own roster or no profile. Only the game's Rosters > Active Rosters sets
+    it: the profile is the user's save, and the online roster both players of a match need is chosen there too."""
+    try:
+        entries = savefile.read_folder(os.path.join(save_dir, 'Profile0'))
+    except (OSError, ValueError):
+        return None
+    for e in entries:
+        raw = savefile.unpack(e.payload) if savefile.is_packed(e.payload) else e.payload
+        slot, kind = ACTIVE_SLOT.search(raw), ACTIVE_TYPE.search(raw)
+        if slot and kind and kind.group(1) and int(slot.group(1)) >= 0:
+            return f'Roster{kind.group(1).decode()}{int(slot.group(1))}'
+    return None
+
+
+def roster_label(folder):
+    """What the game's Active Rosters list calls a save folder."""
+    m = re.fullmatch(r'Roster(Custom|Download)(\d+)', folder or '')
+    if not m:
+        return "the game's own roster"
+    return f"{'Custom' if m[1] == 'Custom' else 'Online'} Roster {int(m[2]) + 1}"
 
 
 def slot_names():

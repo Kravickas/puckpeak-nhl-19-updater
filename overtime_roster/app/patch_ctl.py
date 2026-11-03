@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-from overtime_core import gamefiles, nhlcom, overlay, rosterupdate, xmlpatch
+from overtime_core import gamefiles, nhlcom, overlay, rosterupdate, tdb, teams as T, textpack, xmlpatch
 
 from .. import VERSION
 from . import gamesetup, jobs, launch, packdownload, patch, paths, selfupdate, update
@@ -67,12 +67,15 @@ PACK_KEYS = ('art', 'photos', 'kits')   # the switches the Photos, logos pack br
 NO_PACK = ("Until you get the Photos, logos pack, Utah plays in the Coyotes' look and Seattle shows a stand-in crest "
            "and kit.")
 # the packs each pack switch reads (patch.ART_PACKS names); the art switch needs one of its two
-PACK_FILES = {'art': (patch.LOOKS32_PACK, 'looks.zip'), 'photos': (patch.PHOTOS_PACK,), 'kits': (patch.KITS_PACK,)}
+PACK_FILES = {'art': (patch.LOOKS32_PACK, 'looks.zip'), 'photos': (patch.PHOTOS_PACK, patch.PEOPLE_PACK), 'kits': (patch.KITS_PACK,)}
 # the packs with a switch of their own: {switch key: pack}
 EXTRA_KEYS = {patch.extra_key(name): name for name in patch.EXTRA_PACKS}
-EXTRA_TITLES = {'ice_all': ('Centre ice for every league', 'The centre ice of every club NHL 27 has.'),
-                'alts_intl': ('National team jerseys', "NHL 27's main and alternate jerseys."),
-                'alts_nhl': ('NHL alternate jerseys', "NHL 27's alternate jerseys of the NHL teams.")}
+EXTRA_TITLES = {'ice_all': ('Centre ice of the clubs of every league', 'The centre ice of every club NHL 27 has.'),
+                'rink': ('IIHF centre ice and puck, NHL 27 rink art', "The IIHF emblem and puck in national team games, NHL 27's pucks, board ads and league logos. National team games keep NHL 19's boards."),
+                'alts_nhl': ('NHL alternate jerseys', "NHL 27's alternate jerseys of the NHL teams, made on this PC at Patch."),
+                'alts_intl': ('National team jerseys', "NHL 27's main and alternate jerseys, made on this PC at Patch."),
+                'alts_clubs': ('Club jerseys of every league', "NHL 27's jerseys of the AHL, ECHL, junior and European "
+                               "clubs, made on this PC at Patch (a few minutes the first time, about 3 GB on the disk).")}
 COMING = {'title': '32 teams in every mode',
           'sub': 'Classic Franchise and NHL Season with both Seattle and Utah. Today a 32 Team Expansion Draft Franchise '
                  'has both. Still being built.'}
@@ -100,6 +103,39 @@ EXPECTED = (gamesetup.SetupError, launch.LaunchError, overlay.PatchError, patch.
 
 class Refused(Exception):
     """A step that cannot run now (shadPS4 runs, no NHL 19): said as a caution, not as an error of the patch."""
+
+
+NO_BASE = ('This folder has the NHL 19 update but not the game itself. In Setup, pick the folder of the base game (the '
+           'one with databigs\\inxp_00.big). An update kept beside it, in a folder of the same name with -UPDATE at the '
+           'end, is found by itself.')
+TEXT_LAYERS = {'text': 'the Overtime texts', 'names': 'the new team names'}
+
+
+def game_text(game_dir, log=None):
+    """The game's text file the text layers edit (textpack.game_language: eng_us, else another English, else None),
+    after checking the folder holds the game itself and not only its update (a tester's CUSA11116, 2026-11-03: the raw
+    "eng_us-meta.xml not in" stopped the patch). `log` gets the text files found: which one a European game shows is
+    not known here (its update may carry eng_us.db beside its own English)."""
+    try:
+        gamefiles.schema_xml(game_dir)
+    except FileNotFoundError:
+        raise Refused(NO_BASE) from None
+    files = textpack.loc_files(game_dir)
+    lang = textpack.game_language(game_dir, files)
+    if log:
+        dbs, metas = files
+        meta = lang if lang in metas else (metas[0] if metas and lang else 'none')
+        log(f"Text files: {', '.join(dbs) or 'none'}; metas: {', '.join(metas) or 'none'}. "
+            f"The patch edits {lang or 'none'} (read with the {meta} meta).")
+    return lang
+
+
+def left_out_text(lang, left):
+    """The line for text layers Patch left out (game_text): the rest of the patch went in."""
+    what = ' and '.join(TEXT_LAYERS[k] for k in left)
+    why = ('this NHL 19 has no English text file' if lang is None else
+           f'its English text file ({lang}) is not the one the patch knows')
+    return f"{what[0].upper()}{what[1:]} stay the game's own: {why}."
 
 
 def served(st):
@@ -373,14 +409,19 @@ def one_click(setup, then=None):
         if overlay.emulator_running():
             raise Refused('shadPS4 is running. Close NHL 19, then press Patch again.')
         gamesetup.use_game(game_dir)
-        if game['title_id'] != gamesetup.TITLE_ID:     # another disc: the same game is assumed; its hash is for support
+        if game['title_id'] != gamesetup.TITLE_ID:     # CUSA11116 v1.60 runs CUSA11126's eboot (same sha256, 2026-11-03)
             ctl.host.log(f"NHL 19 {game['title_id']}: eboot.bin sha256 "
                          f"{gamesetup._file_sha(gamefiles.locate(game_dir, 'eboot.bin'))}")
+        lang = game_text(game_dir, log=ctl.host.log)
         xml = setup._xml()
         if gamesetup.load_clean() is None:
             step('noting the clean game first...', 0.02)
             gamesetup.save_clean(gamesetup.snapshot(game_dir))
         layers = [k for k in DATA_LAYERS if on[k]]
+        texts = [k for k in TEXT_LAYERS if k in layers]
+        left_out = texts if lang is None else [
+            k for k in texts if lang != textpack.LANG and not overlay.layer_fits(game_dir, k, lang)]
+        layers = [k for k in layers if k not in left_out]
         database = None
         if on['roster']:
             step(f'making the {SEASON_LABEL} default roster...', 0.5)
@@ -389,13 +430,19 @@ def one_click(setup, then=None):
         now = overlay.status(game_dir)
         if on['art'] and 'art' in (now.get('layers') or {}):
             layers.append('art')  # with no pack here the served art stays (patch.art_layer)
+        if on['art'] and database is not None and patch.clubart_source(cache):
+            step('making the club logos of that roster...', 0.6)    # as Update does after a save; unchanged: kept
+            patch.make_clubart(tdb.Database.parse(database, ctl.game.schema())[T.TEAMS].rows(), game_dir, cache,
+                               log=ctl.host.log)
+        if on['art']:       # the jerseys of the layer packs on this PC's game files; unchanged: kept
+            patch.make_kits(on, game_dir, cache, log=ctl.host.log, step=lambda text: step(text, 0.62))
         art = patch.art_layer(on, layers, cache, log=ctl.host.log, game_dir=game_dir)
         step('writing the patch files' + (' and the NHL 27 team art...' if 'art' in layers else '...'), 0.65)
         applied = None
         if layers:
             # news is no switch: always the tile (a beta1 patch served the hub without it, and apply keeps served options)
             applied = overlay.apply(game_dir, layers, database=database, menus={'chel': on['chel'], 'news': True},
-                                    art=art)
+                                    art=art, lang=lang or textpack.LANG)
         elif now.get('applied'):
             overlay.undo(game_dir)  # every switch off: no data patch, the server alone
         teams32 = setup._seattle_ready(database)
@@ -407,17 +454,18 @@ def one_click(setup, then=None):
         manifest = gamesetup.install(emu, xml)
         step('checking the patch files...', 0.92)
         return {'layers': list((applied or {}).get('layers') or []), 'targets': manifest['targets'],
-                'teams32': teams32}
+                'teams32': teams32, 'lang': lang, 'left_out': left_out}
 
     def said(out):
         layers = ', '.join(out['layers']) or 'none'
         ctl.host.log(f"Game patched: server {out['targets']['redirector']}, layers {layers}, "
                      f"{'32 teams' if out['teams32'] else '31 teams (the roster served has no active Seattle)'}")
-        ctl.remember(patched_by=VERSION)  # Update warns when an older Overtime patched the game (update_ctl)
+        # Update warns when an older Overtime patched the game (update_ctl); a text layer left out is no change waiting
+        ctl.remember(patched_by=VERSION, left_out=out['left_out'])
         text = patched_text(out['teams32'], on['roster'])
-        if gamesetup.active_title() != gamesetup.TITLE_ID:
-            text += (f' {gamesetup.active_title()} is patched like CUSA11126 (the same game is assumed). If it will not '
-                     'start, press Unpatch and send the error log.')
+        if out['left_out']:
+            ctl.host.log(f"Text file {out['lang'] or 'none'}: left out {', '.join(out['left_out'])}")
+            text += ' ' + left_out_text(out['lang'], out['left_out'])
         if out['teams32'] and then is None:
             offer_update(ctl)
         return text, 'good'
@@ -555,8 +603,43 @@ def play(setup):
     return start(setup)
 
 
+def refresh_network(setup):
+    """Point the patched game at the server of Setup's field and switch shadPS4's two network keys back on, without
+    Patch (owner, 2026-11-03: "the app doesnt need a patch each time we edit network settings"). Only the eboot patch
+    file and the keys are written (gamesetup.install keeps the first backups and the player's first settings), never
+    game data. Returns 'written', 'same' (nothing to do), 'later' (shadPS4 runs: the next start does it) or None (not
+    patched by this Overtime, or its patch file is another version's: Patch makes it new)."""
+    emu = setup.known_emulator()
+    text = gamesetup.installed_patch() if emu else None
+    if text is None:
+        return None
+    try:
+        new = xmlpatch.repoint(text, setup.server['host'], setup.server.get('nucleus_url'))
+    except xmlpatch.PatchError as err:
+        setup.ctl.host.log(f'The server was not put into the patch file: {err}')
+        return None
+    user = gamesetup.emu_user_dir(emu)
+    if new == text and gamesetup.network_on(user):
+        return 'same'
+    if overlay.emulator_running():
+        return 'later'
+    gamesetup.install(emu, new)
+    setup.ctl.host.log(f"Server {setup.server['host']} put into the patch file, network keys on (no Patch needed).")
+    return 'written'
+
+
+def _refresh_before_start(setup):
+    """refresh_network before a start; a failure is logged and the game starts as it is."""
+    try:
+        return refresh_network(setup)
+    except Exception as err:    # noqa: BLE001 (Play must not stop on it; the block is for a bug report)
+        jobs.log_block(err, 'Server into the patch file before Play')
+        return None
+
+
 def start(setup):
-    """Start shadPS4 with NHL 19 (launch.start) and watch its log a few minutes (SetupController._watch_play)."""
+    """Start shadPS4 with NHL 19 (launch.start) and watch its log a few minutes (SetupController._watch_play). The
+    server of Setup's field and the network keys go in first (refresh_network)."""
     ctl = setup.ctl
     with ctl.lock:
         emu, game_dir = setup.emulator, ctl.game_dir
@@ -564,6 +647,8 @@ def start(setup):
             return None
         setup._launching = True  # until Popen returned: then emulator_running() sees it
     try:
+        if _refresh_before_start(setup) == 'written':
+            ctl.changed('setup', 'patch')
         proc = launch.start(emu, game_dir)
     except launch.LaunchError as err:
         ctl.say(str(err), 'bad')
@@ -641,6 +726,8 @@ def eboot_problem(text):
     if text.startswith('missing: '):
         return ("shadPS4's network settings for NHL 19 are missing. Press Patch again." if settings else
                 'The Overtime server patch is missing in shadPS4. Press Patch again.')
+    if text.startswith('network switched off: '):
+        return "shadPS4's network switches for NHL 19 are off. Play turns them back on (no Patch needed)."
     if text.startswith('changed since setup: '):
         return ("shadPS4's network settings for NHL 19 were changed. Press Patch again." if settings else
                 'The Overtime server patch in shadPS4 was changed. Press Patch again.')
@@ -852,6 +939,7 @@ class PatchCtl(Part):
             found = packs_here(cache_dir()) if found is None else found
             now = served(st)
             picked = switches(want, found)
+            left = set(c.prefs.get('left_out') or ())    # text layers this game cannot take (one_click)
             online = bool(eboot.get('installed'))
             patched = bool(st.get('applied')) or online
             when = max([w for w in (st.get('applied_at') if st.get('applied') else None, eboot.get('updated')) if w],
@@ -861,7 +949,8 @@ class PatchCtl(Part):
                 'checked': c.patch_status is not None or self.eboot is not None,
                 'running': bool(c.patch_running), 'error': self.error, 'patched': patched, 'online': online,
                 'problems': problems_of(st, eboot) if patched else [], 
-                'changed': patched and any(picked[k] != now[k] for k in picked), 'served': now, 'picked': picked,
+                'changed': patched and any(picked[k] != now[k] and not (now[k] is False and k in left)
+                                           for k in picked), 'served': now, 'picked': picked,
                 'want': want, 'kits': patch.KITS_PACK in found, 'teams32': self.teams32 if online else None,
                 'applied_at': friendly_date(when) if patched else '', 'st': st,
             }

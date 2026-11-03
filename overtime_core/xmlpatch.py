@@ -248,3 +248,31 @@ def bap32_off(text):
 def bap32(text):
     """Whether a patch file's Be a Pro block (bap32) is there and enabled."""
     return any(b['enabled'] and b['name'] == BAP32_TITLE for b in parse(text))
+
+
+def _switched(text, e32, bap):
+    """`text` (a build) with the 32-team switch / Be a Pro block as a patch file had them (patch_ctl.one_click)."""
+    if not e32:
+        return expansion32_off(text)
+    return text if bap else bap32_off(text)
+
+
+def repoint(text, host, nucleus_url=None):
+    """The patch file `text` for another server: the same features and switches, the redirector and Nucleus slots
+    naming `host` / `nucleus_url`. A server change then needs no Patch (owner, 2026-11-03). Refused (PatchError) when
+    `text` is not what this version writes for its own server (another Overtime's file, a hand edit): Patch makes it
+    new then."""
+    old = targets(text)
+    if not old['redirector']:
+        raise PatchError('the patch file names no server')
+    own = f"https://{old['redirector']}/"
+    nucleus = next((u for u in old['nucleus'] if u != own), None)
+    newline = '\r\n' if '\r\n' in text else '\n'
+    e32, bap = expansion32(text), bap32(text)
+    try:
+        same = _switched(build(old['redirector'], nucleus, newline=newline), e32, bap) == text
+    except PatchError:
+        same = False
+    if not same:
+        raise PatchError('the patch file is not the one this Overtime writes; Patch the game again')
+    return _switched(build(host, nucleus_url, newline=newline), e32, bap)

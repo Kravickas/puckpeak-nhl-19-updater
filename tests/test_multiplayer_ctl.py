@@ -663,3 +663,18 @@ def test_a_server_without_match_rules_shows_no_card_and_bakes_nothing(mp, monkey
     assert mp.view()['lobby']['rules'] is None
     mp._launch_job()
     assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS})
+
+
+def test_why_the_service_did_not_answer_goes_to_the_error_log_once(mp, monkeypatch):
+    logged = []
+    monkeypatch.setattr(MC.jobs, 'log_block', lambda err, step='': logged.append((str(err), step)))
+    mp.service.fail = LC.LobbyDown('the lobby service did not answer (timed out)')
+    mp._lobbies()
+    mp.service.fail = LC.LobbyDown('the lobby service did not answer (timed out)')
+    mp._lobbies()
+    assert mp.view()['error'] == MC.DOWN_TEXT and len(logged) == 1 and logged[0][1].startswith('Lobby service')
+    mp.service.fail = LC.LobbyDown('the lobby service did not answer (CERTIFICATE_VERIFY_FAILED)', certificate=True)
+    mp._lobbies()
+    assert mp.view()['error'] == MC.CERT_TEXT and len(logged) == 2
+    mp._lobbies()                                         # it answers again: the words go
+    assert mp.view()['error'] == ''

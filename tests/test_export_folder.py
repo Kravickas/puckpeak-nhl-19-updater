@@ -141,3 +141,14 @@ def test_two_saves_in_one_second_say_so_instead_of_crashing(session, game, tmp_p
     out = install.run(*args, log=lambda *a: None, now=now)
     assert not out.ok and 'Nothing was written' in out.lines[0]
     assert sorted(os.listdir(saves)) == ['Profile0', 'RosterCustom0']
+
+
+def test_folder_export_for_the_european_game(session, game, tmp_path):
+    """CUSA11116 (Europe) keeps its saves under its own title id: the folder, PARAM.SFO and the how-to follow it."""
+    out = _folder(session, game, tmp_path, str(tmp_path / 'savedata' / 'CUSA11116'))
+    assert out.ok, out.lines
+    parts = howto.save_parts('CUSA11116')
+    assert parts[-1] == 'CUSA11116' and parts[:-1] == howto.SAVE_PARTS[:-1]
+    save = os.path.join(out.folder, howto.DATA_DIR, *parts, 'RosterCustom0')
+    assert sfo.values(open(os.path.join(save, 'sce_sys', 'param.sfo'), 'rb').read())['TITLE_ID'] == 'CUSA11116'
+    assert '/savedata/CUSA11116/RosterCustom0' in open(os.path.join(out.folder, howto.FILE), encoding='utf-8').read()

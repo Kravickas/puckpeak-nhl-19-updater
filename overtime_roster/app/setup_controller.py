@@ -388,8 +388,21 @@ class SetupController(Part):
             self._remember()
         if changed:
             self.ctl.host.log(f"Server: {server['host']}")
-            self.ctl.say('The Overtime server is set again. Patch the game again to use it.' if server == SERVER
-                         else f"Server set to {server['host']}. Patch the game again to use it.", 'good')
+            try:
+                put = patch_ctl.refresh_network(self)   # a patched game takes it now: no Patch (owner, 2026-11-03)
+            except (gamesetup.SetupError, OSError, ValueError) as err:
+                self.ctl.host.log(f'The server was not put into the game: {err}')
+                put = None
+            name = 'The Overtime server is set again.' if server == SERVER else f"Server set to {server['host']}."
+            if put:
+                then = 'NHL 19 uses it from its next start.'
+            elif gamesetup.load_manifest() is None:
+                then = 'Patch the game to use it.'
+            else:
+                then = 'Patch the game again to use it.'
+            self.ctl.say(f'{name} {then}', 'good')
+            if put == 'written':
+                self.ctl.changed('patch')
         self.ctl.changed('setup')
         return {'ok': True}
 

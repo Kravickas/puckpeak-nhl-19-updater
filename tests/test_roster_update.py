@@ -33,7 +33,8 @@ class Clock:
 
 ROSTER = {'forwards': [{'id': 8478402, 'firstName': {'default': 'Connor'}, 'lastName': {'default': 'McDavid'},
                         'birthDate': '1997-01-13', 'sweaterNumber': 97, 'positionCode': 'C', 'shootsCatches': 'L',
-                        'heightInCentimeters': 185, 'weightInKilograms': 88, 'birthCountry': 'CAN'}],
+                        'heightInCentimeters': 185, 'weightInKilograms': 88, 'birthCountry': 'CAN',
+                        'birthCity': {'default': 'Richmond Hill'}}],
           'defensemen': [], 'goalies': [{'id': 1, 'firstName': {'default': 'Stuart'},
                                          'lastName': {'default': 'Skinner'}, 'positionCode': 'G'}]}
 
@@ -91,7 +92,8 @@ def test_team_abbrevs_and_roster_players():
     assert [p['last'] for p in players] == ['McDavid', 'Skinner']
     assert players[0] == {'id': 8478402, 'first': 'Connor', 'last': 'McDavid', 'birth': '1997-01-13', 'number': 97,
                           'position': 'C', 'shoots': 'L', 'height': 185, 'weight': 88, 'country': 'CAN',
-                          'team': 'EDM'}
+                          'birthplace': 'Richmond Hill', 'team': 'EDM'}
+    assert players[1]['birthplace'] == ''
 
 
 def test_norm():

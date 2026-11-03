@@ -54,6 +54,9 @@ CHAT_SHOWN = 20
 EXT = re.compile(r'^\d{1,12}$')
 NAME_MAX = 24
 LOCAL = ('127.0.0.1', 'localhost', '::1')
+DOWN_TEXT = 'The lobby service did not answer. Check your internet, then press Check again.'
+CERT_TEXT = ("This PC could not check the server's certificate. Update Windows, then press Check again. If it stays, "
+             'send us the error log.')
 EXPECTED = (LC.LobbyError, gamesetup.SetupError, launch.LaunchError, overlay.PatchError)
 
 # the step list of the launch card (docs/ui/multiplayer.md)
@@ -111,6 +114,7 @@ class MultiplayerCtl(Part):
         self.make_hud = lambda: hud.Hud(hud.emulator_rect, on_hotkey=self._hotkey, hotkeys=hud.PHRASE_KEYS)
         self.hud_ok = hud.available
         self.service_down = False   # the last ask of the service got no answer
+        self.down_logged = ''       # the reason of the last "did not answer" written to the error log (once per reason)
         self.hist = {'raw': None, 'who': None, 'entering': None, 'form_error': '', 'error': '', 'supported': True,
                      'busy': False, 'review': None, 'seen': None, 'carded': None}   # the match history: the server's last answer, the
         # opened player, the open form, the opened review, and the newest confirmed match of mine already looked at
@@ -205,7 +209,12 @@ class MultiplayerCtl(Part):
                 eboot, st = None, None
                 c.host.log(f'Multiplayer: the patch could not be read ({err!r}).')
             layers = (st or {}).get('layers') or {}
-            if not eboot or not eboot.get('installed') or not eboot.get('intact'):
+            problems = list((eboot or {}).get('problems') or ())
+            keys_only = bool(eboot) and eboot.get('installed') and bool(problems) and all(
+                str(p).startswith('network switched off') for p in problems)
+            if keys_only and not eboot.get('intact'):
+                patch = ('caution', 'network switched off: the game start turns it on', None)
+            elif not eboot or not eboot.get('installed') or not eboot.get('intact'):
                 patch = ('bad', 'not patched', 'patch')
             elif not st or 'menus' not in layers:
                 patch = ('bad', 'online start missing', 'patch')
@@ -253,8 +262,8 @@ class MultiplayerCtl(Part):
     def _lobbies(self):
         try:
             rows = self.client().lobbies()
-        except LC.LobbyDown:
-            self._server_down(True)
+        except LC.LobbyDown as err:
+            self._server_down(True, err)
             return
         except LC.LobbyRefused as err:
             self._set_error(err.text)
@@ -268,13 +277,27 @@ class MultiplayerCtl(Part):
         self._lobbies()
         self._changed()
 
-    def _server_down(self, down):
+    def _server_down(self, down, err=None):
+        """The service answered or not. Why it did not goes to the error log once per reason (a tester's "SERVER not
+        reachable" left nothing to read, 2026-11-03); a certificate this PC cannot check gets its own words."""
         with self.mlock:
             self.service_down = down
             if down:
-                self.error = 'The lobby service did not answer. Check your internet, then press Check again.'
-            elif self.error.startswith('The lobby service did not answer'):
-                self.error = ''
+                self.error = CERT_TEXT if getattr(err, 'certificate', False) else DOWN_TEXT
+                log = err is not None and str(err) != self.down_logged
+                if log:
+                    self.down_logged = str(err)
+            else:
+                log = False
+                self.down_logged = ''
+                if _down_text(self.error):
+                    self.error = ''
+        if log:
+            try:
+                where = self.url()
+            except LC.LobbyError:
+                where = ''
+            jobs.log_block(err, f'Lobby service {where}'.rstrip())
 
     # --- lobby calls ---------------------------------------------------------------------------------------------
     def create(self, public=False):
@@ -567,7 +590,7 @@ class MultiplayerCtl(Part):
 
     def _lobby_error(self, err):
         if isinstance(err, LC.LobbyDown):
-            self._server_down(True)
+            self._server_down(True, err)
             return {'error': self.error}
         return self._fail(err.text if isinstance(err, LC.LobbyRefused) else str(err))
 
@@ -628,7 +651,7 @@ class MultiplayerCtl(Part):
             return
         with self.mlock:
             self.down = 0
-            if self.error.startswith('The lobby service did not answer'):
+            if _down_text(self.error):
                 self.error = ''
         self._apply(lobby)
 
@@ -730,6 +753,7 @@ class MultiplayerCtl(Part):
     def _launch(self):
         c = self.ctl
         emu, game_dir = c.setup.known_emulator(), c.game_dir
+        patch_ctl._refresh_before_start(c.setup)    # the server field and the network keys, no Patch needed
         checks = self.look()
         bad = next((k for k in checks if k['key'] == 'patch' and k['tone'] != 'good'), None)
         if bad:
@@ -973,6 +997,11 @@ class MultiplayerCtl(Part):
                 steps.append({'text': text, 'state': 'done' if i < now else 'now' if i == now else 'todo'})
         return {'phase': phase, 'note': game.get('note') or '', 'manual': bool(game.get('manual')), 'steps': steps,
                 'again': phase in ('failed', 'ended') and bool(lobby) and lobby['state'] in LAUNCHING}
+
+
+def _down_text(text):
+    """True for the words a service that did not answer left (cleared once it answers again)."""
+    return text == CERT_TEXT or text.startswith('The lobby service did not answer')
 
 
 def _age(seconds):

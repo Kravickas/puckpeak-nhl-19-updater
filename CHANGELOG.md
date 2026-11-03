@@ -2,6 +2,61 @@
 
 What changed in each version, for players.
 
+## 0.50.0 (2026-11-03)
+
+NHL 19 now gets what NHL Legacy gets from the same data: the same people on the same clubs, their lines, letters, numbers,
+contracts, attributes and photos.
+
+### What is new
+
+- **Same rosters as NHL Legacy.** The AHL, SHL, Liiga, DEL, Extraliga, NL, OHL, QMJHL and WHL now come from the leagues' own data. NHL 27
+  is used only where that data has nothing: the ECHL, ICE Hockey League, HockeyAllsvenskan and the other European clubs.
+- **Real numbers, letters and sizes.** A club's own list gives each player their number, height, weight, shot and C or A. Players nobody
+  rates get a rating from Legacy's rule.
+- **Real contracts.** Contract values follow the same list as NHL Legacy, and players without an NHL deal get a starter deal by league and rating.
+- **Real lines where they exist.** Clubs with published lines play them. Clubs without, and Columbus and Winnipeg's forward lines today, are
+  dealt by rating.
+- **National teams.** The eight smaller teams are built by Legacy's rule. Canada, the USA and the other big teams come from the IIHF
+  lists: NHL Legacy's own squads for those are not in the shared data, so those teams differ.
+- **Player photos of every league.** A new pack of about 200 MB gives some 6,000 players of every league their photo.
+- **Rink art from NHL 27.** A new switch on the Game patch tab: the IIHF emblem at centre ice and the IIHF puck in national team games, and NHL 27's pucks,
+  board ads and league logos. National team games keep NHL 19's board ads.
+- **Club logos and centre ice of every league.** Clubs that changed their logo since 2018 show their current one, made on your PC from a 43 MB pack.
+- **Jerseys of every league, much smaller downloads.** The extra jerseys (NHL alternates, national teams, and now the AHL, ECHL, junior and
+  European clubs) are made on your PC from small packs (13 to 169 MB instead of up to 1.2 GB each). The first Patch with them on takes longer
+  (about 15 minutes with all three on; the club jerseys alone about 11); after that it is quick. NHL teams whose pants changed colour since 2018 wear the new colour.
+- **The 2026 AHL.** Henderson Silver Knights, Abbotsford Canucks, Hamilton Hammers and Calgary Wranglers take the four slots of the clubs that
+  moved, with their names, arenas, colours and jerseys, and every NHL team has its 2026 farm club. Coachella Valley, Seattle's farm club,
+  gets its real players too and shows in the app's AHL list; in the game it plays in Season and Franchise only (NHL 19's Play Now has no
+  place for it).
+- **2026 arenas.** Every NHL team plays in its 2026 arena, and Buffalo, Columbus and the Islanders wear their current colours in the menus.
+- **New players' photos.** A player new since the photo pack gets his photo downloaded when you press Update.
+- **Changes by team.** The list of changes now starts with a section per team: who joined, left, was called up, signed or retired.
+
+### Fixed
+
+- **Players kept their NHL rights.** A prospect playing in junior or in Europe was cut from his NHL team's list. He stays on it now.
+- **Free agents retired too young.** Every free agent no list named retired, 25-year-olds too. Now only those of 30 and more do, and last
+  season's NHL players nobody signed are free agents you can sign.
+- **Small clubs signed NHL stars.** An ECHL club short of a player signed the best free agents. Clubs now sign players of their own level,
+  and junior clubs young players.
+- **Call-ups.** An NHL team that cannot dress a full line-up calls up from its farm club before it signs a free agent.
+- **Gear.** A goalie who changes team wears his new team's mask, a skater who comes to an NHL team gets a stick in its colours, and new
+  players no longer wear their look-alike's gear.
+- **Salaries without the 2026 cap.** With the 2026-27 salary cap switched off, contracts are scaled to NHL 19's own cap.
+
+- **The roster you saved must be the active one.** Update saves a new roster but does not change which one NHL 19 plays. If yours is
+  not active, the Update tab now says so in red, and tells you where: in NHL 19, Rosters > Active Rosters.
+- **Lines were wrong after Update then Patch.** The default roster the Patch makes after an Update dealt its lines by rating. It now plays the
+  real lines.
+- **Photos went missing after an Update.** A roster saved by Update lost its photo flags, so many players showed no photo.
+- **The European NHL 19 (CUSA11116).** Patch stopped with "eng_us-meta.xml not in ...". It now uses the English text file
+  your game has. A folder with only the game's update gets a plain message saying which folder to pick.
+- **"Server not reachable" on some PCs.** Overtime now also trusts the certificate list it carries, as NHL Legacy does, so a
+  PC without Windows' newest certificates can reach the server. If it still says not reachable, the error log says why.
+- **No Patch after changing network settings.** A new server address, or shadPS4's network switches turned off, is put
+  right when you press Play. Changing other shadPS4 settings no longer asks you to Patch again.
+
 ## 0.40.0 (2026-11-02)
 
 Update now takes the whole game: every league, player, calendar and national team.
@@ -18,14 +73,14 @@ Update now takes the whole game: every league, player, calendar and national tea
 
 ## 0.30.0 (2026-11-01)
 
-Rosters of every club league from NHL 27, centre ice for every league, national team jerseys, and many fixes.
+Rosters of every club league from NHL 27, centre ice for the clubs of every league (not national teams), national team jerseys, and many fixes.
 
 ### What is new
 
 - **Every club league from NHL 27.** The Update tab now rebuilds the SHL, Liiga, DEL, Extraliga, NL, ICE Hockey League, the
   European clubs, OHL, QMJHL, WHL, ECHL and HockeyAllsvenskan from NHL 27, as it did for the AHL. Clubs NHL 27 has under a new
   name take that name (Frolunda HC). Clubs it does not have keep their 2018 roster.
-- **More jerseys and ice** (new switches on the Game patch tab): centre ice for every league (45 MB), national team jerseys (149 MB)
+- **More jerseys and ice** (new switches on the Game patch tab): centre ice for the clubs of every league (45 MB), national team jerseys (149 MB)
   and NHL alternate jerseys (765 MB) from NHL 27. Switch one on and it downloads by itself, switch it off and it stays on your PC.
   Press Patch to put them in the game. Alternates take the place of a team's throwback jerseys.
 - **Boost performance** (new on Setup): one button puts NHL 19 on Kravickas's NHL 19 build of shadPS4, for better performance and

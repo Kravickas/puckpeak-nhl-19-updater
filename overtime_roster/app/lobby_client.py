@@ -1,6 +1,7 @@
 """The app's side of the lobby API (`docs/notes/lobby.md`): small JSON calls over HTTP with the standard library.
 
-`LobbyClient(base_url, opener)`: `opener(request, timeout)` is `urllib.request.urlopen` unless a test passes its own.
+`LobbyClient(base_url, opener)`: `opener(request, timeout)` is `net.urlopen` (Windows' certificates plus Mozilla's list)
+unless a test passes its own.
 A server answer that is an error becomes `LobbyRefused(status, text)` with the server's `{error}` text; no answer
 (refused connection, timeout, a page that is not JSON) is `LobbyDown`. Names and codes are sent as JSON, never put in a
 URL query; the secret `token` goes in the body of the POST that needs it.
@@ -11,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from overtime_core import net
+
 TIMEOUT = 8
 CODE = re.compile(r'^[A-Za-z0-9]{3,12}$')
 
@@ -20,7 +23,12 @@ class LobbyError(Exception):
 
 
 class LobbyDown(LobbyError):
-    """The lobby service did not answer (or did not speak JSON)."""
+    """The lobby service did not answer (or did not speak JSON). `certificate`: this PC could not check its certificate
+    (net.certificate_failed), so the internet is fine and the PC's list of trusted certificates is not."""
+
+    def __init__(self, text, certificate=False):
+        super().__init__(text)
+        self.certificate = certificate
 
 
 class LobbyRefused(LobbyError):
@@ -45,7 +53,7 @@ def _code(code):
 class LobbyClient:
     def __init__(self, base_url, opener=None, timeout=TIMEOUT):
         self.base = base_url.rstrip('/')
-        self._open = opener or urllib.request.urlopen
+        self._open = opener or net.urlopen
         self.timeout = timeout
 
     def _call(self, method, path, body=None):
@@ -58,7 +66,7 @@ class LobbyClient:
         except urllib.error.HTTPError as err:
             raise self._refused(err.code, err.read()) from None
         except (urllib.error.URLError, OSError, ValueError) as err:
-            raise LobbyDown(f'the lobby service did not answer ({err})') from None
+            raise LobbyDown(f'the lobby service did not answer ({err})', net.certificate_failed(err)) from None
         return self._json(raw)
 
     @staticmethod

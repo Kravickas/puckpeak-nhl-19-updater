@@ -520,6 +520,34 @@ def network_settings(user_dir):
     return values
 
 
+def network_on(user_dir):
+    """True when the game will start with Overtime's network keys on (network_settings)."""
+    values = network_settings(user_dir)
+    return all(values[k] == v for k, v in NETWORK.items())
+
+
+def _keys_on(path):
+    """True when the config at `path` holds Overtime's network keys in "General" (status: only those keys are ours)."""
+    try:
+        with open(path, encoding='utf-8') as f:
+            general = json.load(f).get('General') or {}
+        return all(general.get(k) == v for k, v in NETWORK.items())
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def installed_patch():
+    """The text of the patch file install() wrote (its line ends as written), or None when there is none."""
+    m = load_manifest()
+    if not m or not m.get('user_dir'):
+        return None
+    try:
+        with open(os.path.join(patch_dir(m['user_dir']), PATCH_FILE), encoding='utf-8', newline='') as f:
+            return f.read()
+    except (OSError, ValueError):
+        return None
+
+
 # ---- install / remove -------------------------------------------------------------------------------------------
 
 def manifest_path():
@@ -705,6 +733,11 @@ def status(emu_exe=None):
     for e in m.get('files', []):
         if not os.path.exists(e['path']):
             problems.append(f"missing: {e['path']}")
+        elif e.get('previous') is not None:
+            # the game's custom config: only our network keys are ours; any other setting there is the player's
+            # (a whole-file hash asked for Patch after every shadPS4 setting changed, 2026-11-03). Play puts them back.
+            if not _keys_on(e['path']):
+                problems.append(f"network switched off: {e['path']}")
         elif _sha(_read(e['path'])) != e.get('sha256'):
             problems.append(f"changed since setup: {e['path']}")
     return {'installed': True, 'intact': not problems, 'targets': m.get('targets'), 'problems': problems,

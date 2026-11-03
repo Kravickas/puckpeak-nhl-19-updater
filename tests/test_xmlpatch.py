@@ -284,3 +284,28 @@ def test_bap32_matches_the_stock_eboot(game_dir):
     for at, sha in BAP32_STOCK.items():
         assert hashlib.sha256(elf[off + at - va:off + at - va + len(p[at])]).hexdigest()[:16] == sha, hex(at)
     assert all(va + memsz <= at and at + len(v) <= page_end for at, v in p.items() if at not in BAP32_STOCK)
+
+
+def test_repoint_keeps_every_switch_and_the_line_ends():
+    nucleus = 'https://91.98.195.150/'
+    for newline in ('\r\n', '\n'):
+        full = xmlpatch.build('ot.puckpeak.com', nucleus, newline=newline)
+        for make in (lambda t: t, xmlpatch.bap32_off, xmlpatch.expansion32_off):
+            text = make(full)
+            moved = xmlpatch.repoint(text, '192.168.1.15')
+            assert moved == make(xmlpatch.build('192.168.1.15', newline=newline))
+            assert xmlpatch.targets(moved)['redirector'] == '192.168.1.15'
+            assert (xmlpatch.expansion32(moved), xmlpatch.bap32(moved)) == (xmlpatch.expansion32(text),
+                                                                           xmlpatch.bap32(text))
+            assert xmlpatch.repoint(moved, 'ot.puckpeak.com', nucleus) == text      # and back, byte for byte
+
+
+def test_repoint_refuses_a_file_this_version_did_not_write():
+    text = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
+    edited = text.replace('82104380', '82104381')               # a hand edit of one line
+    for bad in (edited, text.replace('isEnabled="true"', 'isEnabled="false"', 1),
+                xmlpatch.build('ot.puckpeak.com', features=xmlpatch.DEFAULT[:3])):
+        with pytest.raises(xmlpatch.PatchError):
+            xmlpatch.repoint(bad, '192.168.1.15')
+    with pytest.raises(xmlpatch.PatchError):
+        xmlpatch.repoint(xmlpatch.build('a', features=('eagain',)), 'b')    # names no server

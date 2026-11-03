@@ -79,7 +79,7 @@ def test_real_lines_go_in_group_by_group(game_db):
     rows = rows_of(db, TEAM)
     for s, nhl_id in wanted.items():
         pi = nhl_id - FAKE
-        if s.endswith(('ld', 'rd')):    # a pair may swap sides: the right shot on the right
+        if s in roster.ES_SLOTS and s.endswith(('ld', 'rd')):    # a pair may swap sides: the right shot on the right
             pair = {wanted[s[:-2] + 'ld'] - FAKE, wanted[s[:-2] + 'rd'] - FAKE}
             assert {got[s[:-2] + 'ld'], got[s[:-2] + 'rd']} == pair
             ld, rd = got[s[:-2] + 'ld'], got[s[:-2] + 'rd']
@@ -110,26 +110,55 @@ def test_a_second_run_writes_nothing(game_db):
 
 
 @pytest.mark.game
-def test_a_group_missing_a_player_stays_as_dealt(game_db):
+def test_a_group_missing_a_few_players_is_completed(game_db):
     db = fresh(game_db)
     before = holders(db, TEAM)
     wanted = shuffled(db, TEAM)
-    wanted['pp1c'] = 1          # nobody on the team: the first power play stays dealt
-    wanted['l2c'] = wanted['l1c']   # one player twice: the even-strength lines stay
-    assert RL.line_up(db, L.ROSTER, TEAM, wanted, pis_of(db)) == []
+    wanted['pp1c'] = 1              # nobody on the team: he who holds it now keeps it
+    wanted['l2c'] = wanted['l1c']   # one player twice: the first slot stands
+    gaps = []
+    assert RL.line_up(db, L.ROSTER, TEAM, wanted, pis_of(db), gaps=gaps) == []
     got = holders(db, TEAM)
-    assert all(got[s] == before[s] for s in RL.REAL_GROUPS['Lines'])
+    assert gaps == ['Lines (1 of 18 filled)', 'Power play (1 of 10 filled)']
+    assert all(got[s] == wanted[s] - FAKE for s in RL.REAL_GROUPS['Lines'] if s != 'l2c')
+    assert got['l2c'] not in {got[s] for s in RL.REAL_GROUPS['Lines'] if s != 'l2c'}
     assert got['g1'] == before['g2'] and got['g2'] == before['g1']         # the goalies are their own group
     assert L.check_lineup(db, TEAM) == []
 
 
 @pytest.mark.game
-def test_a_goalie_in_a_skaters_place_is_refused(game_db):
+def test_a_group_with_too_many_open_slots_stays_as_dealt(game_db):
+    db = fresh(game_db)
+    before = holders(db, TEAM)
+    wanted = shuffled(db, TEAM)
+    for s in RL.REAL_GROUPS['Lines'][:8]:
+        wanted[s] = 1
+    gaps = []
+    assert RL.line_up(db, L.ROSTER, TEAM, wanted, pis_of(db), gaps=gaps) == []
+    assert gaps == ['Lines dealt']
+    got = holders(db, TEAM)
+    assert all(got[s] == before[s] for s in RL.REAL_GROUPS['Lines'])
+    assert L.check_lineup(db, TEAM) == []
+
+
+@pytest.mark.game
+def test_a_goalie_in_a_skaters_place_is_an_open_slot(game_db):
     db = fresh(game_db)
     before = holders(db, TEAM)
     wanted = {s: FAKE + pi for s, pi in before.items() if s in RL.REAL_GROUPS['Lines'] + RL.GOALIE_PAIR}
     wanted['l1c'], wanted['g1'] = wanted['g1'], wanted['l1c']
-    assert RL.line_up(db, L.ROSTER, TEAM, wanted, pis_of(db)) == \
+    gaps = []
+    assert RL.line_up(db, L.ROSTER, TEAM, wanted, pis_of(db), gaps=gaps) == []
+    assert gaps[:2] == ['Lines (1 of 18 filled)', 'Goalies dealt']
+    got = holders(db, TEAM)
+    assert all(got[s] == before[s] for s in RL.REAL_GROUPS['Lines'] + RL.GOALIE_PAIR)
+
+
+@pytest.mark.game
+def test_nobody_of_the_real_lines_on_the_team_is_refused(game_db):
+    db = fresh(game_db)
+    before = holders(db, TEAM)
+    assert RL.line_up(db, L.ROSTER, TEAM, {s: 1 for s in RL.REAL_GROUPS['Lines']}, pis_of(db)) == \
         ['no group of the real lines has all its players on the team']
     assert holders(db, TEAM) == before
 

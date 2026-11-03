@@ -53,6 +53,12 @@ COLOUR_CHOICES = frozenset({'blade_tape', 'shaft_tape', 'tape'})
 # what the whole team may share (the editor's "same for the whole team")
 TEAM_WIDE = ('helmet', 'gloves', 'visor', 'visor_tint', 'jersey_tuck', 'sock_tuck', 'pant_length', 'blade_tape',
              'shaft_tape')
+# what a player the update makes wears instead of his donor's choices (Legacy's equipment.NEW_PLAYER): the value most of
+# NHL 19's own players have (a straight clear visor, no jersey tuck, socks Full, short pants, white tape; a goalie the
+# plain mask, no neck guard). The models stay the donor's; real gear (rosterupdate._real_gear, _pack_gear) comes on top.
+NEW_PLAYER = {'skater': {'visor': 0, 'visor_tint': 0, 'jersey_tuck': 0, 'sock_tuck': 0, 'pant_length': 0,
+                         'blade_tape': 0xDFDDD7, 'shaft_tape': 0xDFDDD7},
+              'goalie': {'mask': 120, 'neck': 0, 'jersey_tuck': 0, 'tape': 0}}
 
 CATEGORIES = {0: 'Goalie trapper', 1: 'Goalie blocker', 2: 'Goalie pads', 3: 'Goalie stick', 4: 'Gloves', 5: 'Socks',
               6: 'Pants', 7: 'Helmet', 8: 'Jersey', 9: 'Font', 10: 'Logo', 11: 'Logo 2', 12: 'Logo 3'}

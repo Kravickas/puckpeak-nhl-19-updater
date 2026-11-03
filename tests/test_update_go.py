@@ -126,10 +126,10 @@ class Fakes:
         return Plan()
 
     def run(self, session, game, gathered, todo, per32=None, names=None, log=None, nhl27=True, schedule=True,
-            retire=True, expansion=False, lines=False):
+            retire=True, expansion=False, lines=False, portraits=None, served=True):
         assert not lock_free(self.c.lock), 'the roster changes under ctl.lock'
         self.ran.append({'per32': per32, 'nhl27': nhl27, 'schedule': schedule, 'retire': retire,
-                         'expansion': expansion, 'lines': lines})
+                         'expansion': expansion, 'lines': lines, 'served': served})
         session.history.append(Change("Update to today's NHL (2026-27)", kept=()))
         return report(self.problems)
 
@@ -156,6 +156,9 @@ class Fakes:
         return install.Outcome(True, 'Saved', [], [], folder, os.path.join(out_root, 'report.html'), '5E1A93C4')
 
 
+NOT_ACTIVE = UC.not_active
+
+
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv('OVERTIME_ROSTER_HOME', str(tmp_path / 'home'))
@@ -178,6 +181,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(update, 'retirees', lambda db, gathered, nhl27=True: 3)
     monkeypatch.setattr(update, 'team_count', lambda db: 32)
     monkeypatch.setattr(install, 'run', fakes.install)
+    monkeypatch.setattr(UC, 'not_active', lambda c, folder: None)
     host.ctl = c
     return c, host, fakes
 
@@ -376,7 +380,7 @@ def test_switches_reach_the_update(app):
     c.calls['update_go']()
     assert fakes.gathered[-1][2] is False       # no calendar needed
     assert fakes.ran[-1] == {'per32': 82, 'nhl27': False, 'schedule': False, 'retire': False, 'expansion': True,
-                             'lines': False}
+                             'lines': False, 'served': False}     # no patch record: NHL 19's own salary cap
     lines = {l['part']: l['text'] for l in view(host)['result']['lines']}
     assert lines['NHL 27 ratings'] == 'Left as they were.' and lines['Calendar'] == 'Left as it was.'
     assert lines['Retirements'] == 'Nobody retired.' and lines['Real lines'] == 'Off: lines by rating.'
@@ -394,9 +398,9 @@ def test_real_lines_show_in_the_result(app, monkeypatch):
         return g
     monkeypatch.setattr(update, 'gather', with_lines)
     real = report()
-    real.real = {'lined': ['SEA', 'TOR'], 'refused': {'UTA': ['no group of the real lines has all its players on the '
-                                                              'team']}, 'lettered': ['SEA', 'TOR', 'UTA'],
-                 'date': '2026-10-24'}
+    real.real = {'lined': ['SEA', 'TOR'], 'full': ['TOR'], 'partly': {'SEA': ['Lines (1 of 18 filled)']},
+                 'refused': {'UTA': ['no group of the real lines has all its players on the team']},
+                 'lettered': ['SEA', 'TOR', 'UTA'], 'date': '2026-10-24'}
     monkeypatch.setattr(fakes, 'run', lambda *a, **k: (fakes.ran.append(k), a[0].history.append(
         Change("Update to today's NHL (2026-27)", kept=())), real)[-1])
     monkeypatch.setattr(update, 'run', fakes.run)
@@ -405,8 +409,9 @@ def test_real_lines_show_in_the_result(app, monkeypatch):
     assert lines['Real lines'] == '2 teams would play their real lines and captains (games to 2026-10-24).'
     c.calls['update_go']()
     lines = {l['part']: l['text'] for l in view(host)['result']['lines']}
-    assert lines['Real lines'] == ('2 teams play their real lines (games to 2026-10-24), 3 have their real captains. '
-                                   '1 kept lines by rating: Details lists why.')
+    assert lines['Real lines'] == ('1 teams play their real lines (games to 2026-10-24), 3 have their real captains. '
+                                   '1 in part: a player left, or the source has no lines. 1 kept lines by rating. '
+                                   'Details lists them.')
     assert fakes.ran[-1]['lines'] is True
 
 
@@ -689,3 +694,46 @@ def test_patch_bar_gone_when_this_version_patched(app, by):
     open_roster(c, fakes)
     _patched(c, by=by)
     assert view(host)['patch'] is None
+
+
+def test_patch_bar_when_the_salary_cap_switch_changed_after_the_update(app, monkeypatch):
+    """Go remembers which cap the deals were written for; when the league layer changes after, the bar says so (the
+    deals no longer fit the cap the game plays) until the roster is updated again."""
+    c, host, fakes = app
+    open_roster(c, fakes, 'RosterCustom2')
+    monkeypatch.setattr(savegame, 'active_roster', lambda save_dir: 'RosterCustom2')
+    _patched(c, by=UC.VERSION)
+    c.calls['update_go']()
+    assert fakes.ran[-1]['served'] is False and c.prefs['update_saved']['RosterCustom2']['cap'] == '2018'
+    assert view(host)['patch'] is None
+    c.patch_status['layers'] = {'league': {}}           # the 2026-27 cap switched on in Game patch
+    p = view(host)['patch']
+    assert p['kind'] == 'money' and p['tone'] == 'caution' and 'salary cap' in p['text']
+    c.calls['update_go']()
+    assert fakes.ran[-1]['served'] is True and view(host)['patch'] is None
+
+
+def test_go_says_when_the_game_is_not_set_to_the_saved_roster(app, monkeypatch):
+    c, host, fakes = app
+    open_roster(c, fakes, 'RosterCustom2')
+    monkeypatch.setattr(UC, 'not_active', NOT_ACTIVE)
+    monkeypatch.setattr(savegame, 'active_roster', lambda save_dir: None)
+    c.calls['update_go']()
+    r = view(host)['result']
+    assert r['lines'][0]['part'] == 'Not active yet' and r['lines'][0]['tone'] == 'bad'
+    assert "the game's own roster" in r['lines'][0]['text'] and 'Rosters > Active Rosters' in r['say']
+    assert ['Active in NHL 19', 'No: pick it in the game'] in r['items']
+    monkeypatch.setattr(savegame, 'active_roster', lambda save_dir: 'RosterCustom2')
+    r = view(host)['result']
+    assert r['lines'][0]['part'] != 'Not active yet' and ['Active in NHL 19', 'Yes'] in r['items']
+
+
+def test_the_active_roster_comes_from_the_profile(tmp_path, monkeypatch):
+    profile = b'{"Roster":\n{\n"ActiveRosterSaveSlot":2,\n"ActiveRosterType":"Download"\n}\n}'
+    monkeypatch.setattr(savefile, 'read_folder', lambda path: [types.SimpleNamespace(payload=profile)])
+    assert savegame.active_roster(str(tmp_path)) == 'RosterDownload2'
+    profile = b'{"Roster":\n{\n"ActiveRosterSaveSlot":-1,\n"ActiveRosterType":""\n}\n}'
+    assert savegame.active_roster(str(tmp_path)) is None
+    assert savegame.roster_label('RosterCustom0') == 'Custom Roster 1'
+    assert savegame.roster_label('RosterDownload2') == 'Online Roster 3'
+    assert savegame.roster_label(None) == "the game's own roster"

@@ -31,6 +31,8 @@ The pack (format 1):
                   'gear': {GEAR_SKATER / GEAR_GOALIE field: NHL 27's value} (only the values that are his, see gear_of)}],
      'contracts': [{'first', 'last', 'birth', 'pos', 'org': club code, 'cap': dollars, 'years', 'two_way',
                     'ext': [seasons, dollars, two_way] (an extension from next season, when there is one)}],
+     'rights': [{'first', 'last', 'birth', 'pos', 'org': club code}] (NHL rights without a deal: unsigned picks; a pack
+               made before 2026-11-03 has none, and then a club player keeps no rights),
      'money': {'floor': $100,000, 'cap': $100,000, 'rows': [floor rise, cap rise, lowest salary, highest
                entry-level salary: 12 values in $1,000 each, one per league year from 2026-27]}}
 
@@ -79,8 +81,8 @@ STYLE_CLASS = {'F': range(5, 11), 'D': range(1, 5), 'G': range(0, 3)}
 # $1,000 at 41, the layout of NHL 19's capdefs.brk (overlay.CAP_AT / ROWS_AT)
 MONEY_AT = 37
 # 2026-27 under the CBA: lowest salary and highest entry-level salary (the money rows' year 0; overlay.ROWS_2026)
-LOWEST_2026, ELC_MAX_2026 = 850_000, 1_025_000
-ELC_AGE = 22  # younger than this at the season's start: a player with no deal gets 3 seasons at the ELC maximum
+LOWEST_2026, ELC_MAX_2026 = 850_000, 975_000  # as Legacy's default deal (contracts.default_terms)
+ELC_AGE = 23  # younger than this at the season's start: a player with no deal gets 3 seasons at the ELC maximum
 CONTRACT_FIELDS = ('contractdollars', 'contractlength', 'contractis2way', 'contractismultiyear', 'extensionlength',
                    'extensiondollars', 'extensionis2way')
 # the equipment numbers NHL 19 and NHL 27 share (sock tuck, pants, tape colours, the goalie's neck guard); models, visor and
@@ -91,6 +93,11 @@ GEAR_GOALIE = ('neckprotector',)
 DEFAULT_TAPE = 0xDFDDD7   # the colour of a default row's tape
 
 NO_CONTRACT = dict({f: 0 for f in CONTRACT_FIELDS}, proteam=-1, contractstatus=-1)
+STARTER = {'ahl': (75_000, 125_000, 200_000, 300_000), 'nl': (250_000, 400_000, 600_000, 900_000),
+           'shl': (150_000, 225_000, 325_000, 450_000), 'liiga': (100_000, 150_000, 250_000, 350_000),
+           'chl': (10_000, 10_000, 15_000, 20_000), 'other': (50_000, 75_000, 100_000, 150_000)}
+STARTER_ROW = {1: 'ahl', 2: 'shl', 3: 'liiga', 4: 'shl', 5: 'liiga', 6: 'nl', 11: 'chl', 12: 'chl', 13: 'chl'}  # by league
+STARTER_AGE = 27
 
 
 class Nhl27Error(ValueError):
@@ -252,6 +259,25 @@ def contracts_part(db):
     return out
 
 
+def rights_part(db):
+    """[right] of every player whose NHL rights a club holds with no deal (an unsigned pick in junior, college, Europe or
+    the AHL), sorted by club and name: {'first', 'last', 'birth', 'pos', 'org': club code}. NHL 27 keeps 303 such players
+    (contractstatus 0, no money), as NHL 19's own roster keeps its unsigned picks; a player on the club itself is left out."""
+    out = []
+    for b in db[BIOS].rows():
+        org = b['proteam']
+        first, last = b['firstname'].strip(), b['lastname'].strip()
+        if not (0 <= org < NHL_CLUBS and first and last and b['position'] < len(POSITIONS)) or b['team'] == org:
+            continue
+        if (b['contractdollars'] and b['contractlength']) or b.get('islegend') or b.get('gender') \
+                or b.get('playerclassid', -1) != -1:
+            continue
+        out.append({'first': first, 'last': last, 'birth': _birth(b), 'pos': POSITIONS[b['position']],
+                    'org': calendar.CODES[org]})
+    out.sort(key=lambda r: (r['org'], r['last'], r['first'], r['birth']))
+    return out
+
+
 def money(raw):
     """{'floor', 'cap', 'rows'} of the league kernel's money table (MONEY_AT), after checking it reads as one."""
     if len(raw) < MONEY_AT + 4 + 96:
@@ -269,7 +295,7 @@ def build(db, money_raw=None, source=None, generated=''):
     """The pack (see the module's docstring) from NHL 27's database and money table."""
     fields, players = players_part(db)
     pack = {'format': FORMAT, 'generated': generated, 'source': dict(source or {}), 'fields': fields,
-            'players': players, 'contracts': contracts_part(db)}
+            'players': players, 'contracts': contracts_part(db), 'rights': rights_part(db)}
     if money_raw is not None:
         pack['money'] = money(money_raw)
     return pack
@@ -321,6 +347,9 @@ def report(pack, log=print):
         caps = sorted(d['cap'] for d in deals)
         log(f"   contracts: {len(deals)} NHL deals, ${caps[0] / 1e6:.3f}M - ${caps[-1] / 1e6:.3f}M, "
             f"{sum(1 for d in deals if d.get('ext'))} with an extension, {len({d['org'] for d in deals})} clubs")
+    rights = pack.get('rights') or []
+    if rights:
+        log(f"   rights: {len(rights)} players' NHL rights without a deal, {len({r['org'] for r in rights})} clubs")
     m = pack.get('money')
     if m:
         log(f"   money: floor ${m['floor'] / 10:.1f}M, cap ${m['cap'] / 10:.1f}M, rows {m['rows']}")
@@ -407,17 +436,19 @@ def terms(deal):
             'extensionis2way': int(bool(two)) if years else 0}
 
 
-def season_money(pack):
-    """(lowest salary, highest entry-level salary) in dollars of 2026-27: the pack's money rows, else the CBA's."""
-    rows = ((pack or {}).get('money') or {}).get('rows')
-    if rows and len(rows) == 4:
-        return rows[2][0] * 1000, rows[3][0] * 1000
-    return LOWEST_2026, ELC_MAX_2026
+def starter(row, overall, age):
+    """The deal of a club player with none and no NHL team's rights (Legacy's starter deal, the owner's choice of
+    2026-10-22): real dollars a season by his league's STARTER row and his overall, one-way, one season from STARTER_AGE
+    on, else two."""
+    band = 0 if overall < 70 else 1 if overall < 75 else 2 if overall < 80 else 3
+    years = 1 if age >= STARTER_AGE else 2
+    return {'contractdollars': units(STARTER[row][band]), 'contractlength': years, 'contractis2way': 0,
+            'contractismultiyear': int(years >= 2), 'extensionlength': 0, 'extensiondollars': 0, 'extensionis2way': 0}
 
 
-def estimate(age, lowest=LOWEST_2026, elc_max=ELC_MAX_2026):
+def estimate(age):
     """The deal of a club player NHL 27 has none for: three seasons at the entry-level maximum for a young player
     (younger than ELC_AGE), else one season at the lowest salary (Legacy contracts.default_terms)."""
-    years, dollars = (3, elc_max) if age < ELC_AGE else (1, lowest)
+    years, dollars = (3, ELC_MAX_2026) if age < ELC_AGE else (1, LOWEST_2026)
     return {'contractdollars': units(dollars), 'contractlength': years, 'contractis2way': 0,
             'contractismultiyear': int(years >= 2), 'extensionlength': 0, 'extensiondollars': 0, 'extensionis2way': 0}

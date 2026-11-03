@@ -11,7 +11,8 @@ overlay's copies of the game's own archives are never touched.
 - A new texture (Seattle's t10499) goes into the family that holds its folder's other files.
 
 An art pack is a zip, built on the owner's PC from their own NHL 27 dump and from NHL.com (tools/build_looks.py,
-tools/build_photopack.py). Packs are never committed.
+tools/build_photopack.py, tools/build_people.py). Packs are never committed. One pack is made on the player's PC:
+the photos the people pack lacks, drawn at Update (overtime_core.photos, people_local.zip in the app's cache).
 
     pack.json   {"format": 1, "name", "built", "source", "files": {game path: sha256}}
     <path>      each texture as a ready GNF file, stored at its game path (nhl/...)
@@ -23,8 +24,9 @@ A delta pack (format 2, the all-team 3D kits: most of a kit's normal / coeff map
 and is read with the game folder (load_pack(path, game_dir)): each delta is laid on the game's winning copy of its
 path, and a pack whose base does not match that copy (another game version, a modded file) is refused.
 
-Stdlib only: the textures are made when the pack is built, never here.
+Stdlib only: the textures are made when the pack is built, never here (overtime_core.photos draws with Pillow).
 """
+import collections
 import hashlib
 import json
 import os
@@ -33,7 +35,7 @@ import shutil
 import zipfile
 from functools import partial
 
-from . import eb, gamefiles
+from . import clubdata, eb, gamefiles
 
 FORMAT = 1
 DELTA_FORMAT = 2
@@ -48,7 +50,10 @@ _ARCHIVE = re.compile(r'^(patch_)?([a-z]+)_(\d+)\.big$')
 # NHL 19 draws a player's portrait from p<artid> (the bio's artid, not its game_id: ws8 run pk), when his bio has
 # hasportrait set
 PORTRAIT = 'nhl/ui/kettle_assets/playerportraits/p{}.gnf'
+YEAR_BASE = 1900
 BIOS = 'exhibitionplayerbiotable'
+PEOPLE_ARTIDS = range(40000, 65536)     # the art ids of the people pack's players the game does not have (below: stock
+                                        # art ids, then rosterupdate.NEW_ARTIDS)
 
 
 class ArtError(Exception):
@@ -406,6 +411,41 @@ def alternate_rows(db, packs):
             t.set(i, 'locstring', loc)
             changed += 1
     return changed
+
+
+def player_portraits(db, people, shift=0):
+    """Give each bio in `db` the art id of its photo in the people pack (tools/build_people.py). `people` is the pack's
+    `people` list, [name key (clubdata._key), year, month, day, artid]: a bio is that person by name and birth date, else
+    by name and day when a feed's year is off, else by last name and birth date (Mitch and Mitchell Marner), else by a
+    name only one bio and one person have. `shift` is
+    teams.year_shift: an updated roster's birth years sit that far behind. Returns how many bios have a photo."""
+    if BIOS not in db:
+        return 0
+    exact, by_day, by_name, by_date = {}, collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
+    for name, y, m, d, artid in people:
+        exact[name, y, m, d] = artid
+        by_day[name, m, d].add(artid)
+        by_name[name].add(artid)
+        by_date[y, m, d].append((name, artid))
+    t = db[BIOS]
+    rows = [(i, clubdata._key(t.get(i, 'firstname'), t.get(i, 'lastname'))) for i in range(t.count)]
+    names = collections.Counter(name for _i, name in rows)
+    found = 0
+    for i, name in rows:
+        y, m, d = YEAR_BASE + t.get(i, 'year') + shift, t.get(i, 'month') + 1, t.get(i, 'day') + 1
+        artid = exact.get((name, y, m, d))
+        if artid is None and len(by_day[name, m, d]) == 1:
+            artid = next(iter(by_day[name, m, d]))
+        if artid is None:
+            last = clubdata._key(t.get(i, 'lastname'))
+            same = {a for n, a in by_date[y, m, d] if last and n.endswith(last)}
+            artid = same.pop() if len(same) == 1 else None
+        if artid is None and names[name] == 1 and len(by_name[name]) == 1:
+            artid = next(iter(by_name[name]))
+        if artid is not None:
+            t.set(i, 'artid', artid)
+            found += 1
+    return found
 
 
 def portrait_flags(db, stock, files):
