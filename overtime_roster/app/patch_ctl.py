@@ -15,7 +15,7 @@ import time
 from overtime_core import gamefiles, nhlcom, overlay, rosterupdate, tdb, teams as T, textpack, xmlpatch
 
 from .. import VERSION
-from . import gamesetup, jobs, launch, packdownload, patch, paths, selfupdate, update
+from . import gamesetup, jobs, launch, packdownload, patch, paths, savegame, selfupdate, update
 from .packdownload import PackError
 from .registry import Part
 from .shell import friendly_date
@@ -385,6 +385,79 @@ def offer_update(ctl):
     return True
 
 
+SHIPPED_LOGOS = ('Club logos: made for the default roster this version ships, which has the 2018 club names. The clubs '
+                 'that moved keep their old logos until you run Update and then Patch.')
+
+
+def clubart_roster(ctl, database, came):
+    """(team rows, origin, save folder) of the roster the club logos are made for, or (None, None, None). There is one
+    club logo pack for the game, so it follows the roster NHL 19 plays (v0.50.1: Patch made it of the shipped default,
+    whose AHL clubs carry their 2018 names, and the clubs Update moved lost their logos):
+    1. the active roster's save (savegame.active_roster), as Update or the player left it ('save');
+    2. the default Patch serves, when it was rebuilt by an Update ('default': defaultdb.pick's 'update' / 'cache' /
+       'fresh');
+    3. the default Patch serves, when the profile says NHL 19 plays its own roster ('shipped' when that is the
+       default this version ships: its names are the ones the game shows);
+    4. the save the last Update wrote (prefs 'update_saved'), when no profile says which roster is played;
+    5. the shipped default ('shipped'). The saves are only read."""
+    schema = ctl.game.schema()
+    save_dir = getattr(ctl, 'save_dir', None)
+    say = ctl.host.log
+
+    def rows(raw):
+        try:
+            return tdb.Database.parse(raw, schema)[T.TEAMS].rows()
+        except Exception as err:  # noqa: BLE001 - a logo never stops a patch
+            say(f'club logos: the roster does not read ({err})')
+            return None
+
+    def of_save(folder):
+        path = os.path.join(save_dir, folder) if save_dir and folder else None
+        if not path or not os.path.isdir(path):
+            return None
+        try:
+            return rows(savegame.read(path).db_bytes)
+        except (OSError, ValueError, savegame.SaveError) as err:
+            say(f'club logos: {folder} does not read ({err})')
+            return None
+    default = 'shipped' if came == 'embedded' else 'default'
+    active = savegame.active_roster(save_dir) if save_dir else None
+    if active and (got := of_save(active)) is not None:
+        return got, 'save', active
+    if database is not None and default == 'default' and (got := rows(database)) is not None:
+        return got, 'default', None
+    profile = bool(save_dir) and os.path.isdir(os.path.join(save_dir, 'Profile0'))
+    if not (active is None and profile):
+        saved = ctl.prefs.get('update_saved') or {}
+        for folder in sorted(saved, key=lambda k: str((saved[k] or {}).get('when') or ''), reverse=True):
+            if (got := of_save(folder)) is not None:
+                return got, 'save', folder
+    if database is not None and (got := rows(database)) is not None:
+        return got, default, None
+    return None, None, None
+
+
+def clubart_text(clubs, log=None):
+    """The Patch result's words about the club logos it made (clubart.compose's counts with clubart_roster's origin),
+    or ''. Logged in full; said only when a club slot has no logo or the logos follow the shipped default."""
+    if not clubs:
+        return ''
+    missing = clubs.get('missing') or []
+    where = {'save': f"roster {clubs.get('where')}", 'default': 'the updated default roster',
+             'shipped': 'the shipped default roster'}.get(clubs.get('origin'), 'the roster')
+    if log:
+        log(f"club logos of {where}: {clubs['clubs']} clubs matched, {clubs['files']} files "
+            f"({'as before' if clubs.get('kept') else 'made'}), {len(missing)} club slots without one"
+            + (f": {', '.join(missing[:12])}" if missing else ''))
+    words = []
+    if clubs.get('origin') == 'shipped':
+        words.append(SHIPPED_LOGOS)
+    elif missing:
+        words.append(f"Club logos: {clubs['clubs']} clubs matched, {len(missing)} slot"
+                     f"{'s' if len(missing) != 1 else ''} without a club.")
+    return ' '.join(words)
+
+
 def one_click(setup, then=None):
     """Patch (Setup's setup_patch; patch_apply is beta1's name): checks, the clean-game record (the first time), the
     data overlay with exactly the switches that are on (one that is off is off: its served layer goes), the eboot
@@ -430,10 +503,14 @@ def one_click(setup, then=None):
         now = overlay.status(game_dir)
         if on['art'] and 'art' in (now.get('layers') or {}):
             layers.append('art')  # with no pack here the served art stays (patch.art_layer)
-        if on['art'] and database is not None and patch.clubart_source(cache):
-            step('making the club logos of that roster...', 0.6)    # as Update does after a save; unchanged: kept
-            patch.make_clubart(tdb.Database.parse(database, ctl.game.schema())[T.TEAMS].rows(), game_dir, cache,
-                               log=ctl.host.log)
+        clubs = None
+        if on['art'] and patch.clubart_source(cache):
+            step('making the club logos of the roster you play...', 0.6)    # as Update does after a save; unchanged: kept
+            teams, origin, where = clubart_roster(ctl, database, getattr(setup, 'default_came', None))
+            if teams is not None:
+                clubs = patch.make_clubart(teams, game_dir, cache, log=ctl.host.log)
+                if clubs is not None:
+                    clubs = dict(clubs, origin=origin, where=where)
         if on['art']:       # the jerseys of the layer packs on this PC's game files; unchanged: kept
             patch.make_kits(on, game_dir, cache, log=ctl.host.log, step=lambda text: step(text, 0.62))
         art = patch.art_layer(on, layers, cache, log=ctl.host.log, game_dir=game_dir)
@@ -454,7 +531,7 @@ def one_click(setup, then=None):
         manifest = gamesetup.install(emu, xml)
         step('checking the patch files...', 0.92)
         return {'layers': list((applied or {}).get('layers') or []), 'targets': manifest['targets'],
-                'teams32': teams32, 'lang': lang, 'left_out': left_out}
+                'teams32': teams32, 'lang': lang, 'left_out': left_out, 'clubs': clubs}
 
     def said(out):
         layers = ', '.join(out['layers']) or 'none'
@@ -466,6 +543,9 @@ def one_click(setup, then=None):
         if out['left_out']:
             ctl.host.log(f"Text file {out['lang'] or 'none'}: left out {', '.join(out['left_out'])}")
             text += ' ' + left_out_text(out['lang'], out['left_out'])
+        words = clubart_text(out.get('clubs'), log=ctl.host.log)
+        if words:
+            text += ' ' + words
         if out['teams32'] and then is None:
             offer_update(ctl)
         return text, 'good'

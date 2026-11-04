@@ -2,6 +2,16 @@
 
 What changed in each version, for players.
 
+## 0.50.1 (2026-11-04)
+
+### Fixed
+
+- **Club logos of the AHL clubs that moved.** Abbotsford, Henderson, Hamilton and Calgary kept their 2018 logos when the club logo pack
+  arrived after Update, or when Patch ran in a later session of the app. Patch now makes the logos of the roster you play.
+- **Update says when it skips the club logos.** It downloads the club logo pack first when it is missing, and the result says when it
+  could not.
+- **The result says when a club has no logo**, and Update says when new players got no photo because the photo pack is not in the game.
+
 ## 0.50.0 (2026-11-03)
 
 NHL 19 now gets what NHL Legacy gets from the same data: the same people on the same clubs, their lines, letters, numbers,

@@ -737,3 +737,15 @@ def test_the_active_roster_comes_from_the_profile(tmp_path, monkeypatch):
     assert savegame.roster_label('RosterCustom0') == 'Custom Roster 1'
     assert savegame.roster_label('RosterDownload2') == 'Online Roster 3'
     assert savegame.roster_label(None) == "the game's own roster"
+
+
+def test_the_card_says_the_club_logos_were_skipped(app, monkeypatch, tmp_path):
+    """v0.50.1: an Update with no club logo pack says so on the result card (v0.50.0 skipped without a word)."""
+    from overtime_roster.app import patch
+    monkeypatch.setenv(patch.ART_ENV, str(tmp_path / 'packs-without-clubart'))
+    c, host, fakes = app
+    open_roster(c, fakes, 'RosterCustom0')
+    assert c.calls['update_go']() is None
+    lines = {l['part']: l['text'] for l in view(host)['result']['lines']}
+    assert lines['Club logos'] == 'Club logos skipped: the club logo pack is not downloaded. Press Update again.'
+    assert any(line.startswith('club logos: skipped (') for line in host.lines)

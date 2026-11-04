@@ -522,7 +522,10 @@ class UpdateCtl(Part):
             if rec['out'] is not None and rec['out'].ok:
                 if not rec.get('offline'):
                     rec['photos'] = self._draw_photos(gathered, portraits)
+                    # the people pack is not served yet: the new players get no photo, and the card says so (v0.50.1)
+                    rec['photos_skipped'] = bool(gathered.photos) and not portraits[1]
                 cache = paths.app_dir('cache')
+                self._clubart_pack(cache, rec)          # v0.50.1: no pack is no silent skip
                 if patch.clubart_source(cache):         # the club logos of the roster as saved (overtime_core.clubart)
                     with c.lock:
                         teams = session.db[T.TEAMS].rows()
@@ -530,7 +533,10 @@ class UpdateCtl(Part):
                 if rec.get('clubart'):
                     k = rec['clubart']
                     c.host.log(f"club logos: {k['clubs']} clubs, {k['files']} files "
-                               f"({'as before' if k['kept'] else 'made'}), {len(k['missing'])} club slots without one")
+                               f"({'as before' if k['kept'] else 'made'}), {len(k['missing'])} club slots without one"
+                               + (f": {', '.join(k['missing'][:12])}" if k['missing'] else ''))
+                elif rec.get('clubart_skipped'):
+                    c.host.log(f"club logos: skipped ({rec['clubart_skipped']})")
             return rec
 
         def done(rec):
@@ -590,6 +596,31 @@ class UpdateCtl(Part):
         if 'served' in rec and rec['opts'].get('nhl27'):
             done[folder]['cap'] = '2026' if rec['served'] else '2018'   # the money its deals were written in
         c.remember(update_saved=done)
+
+    def _clubart_pack(self, cache, rec):
+        """The club logo pack (patch.CLUBART_PACK, a core download) before the logos are made: downloaded now when it is
+        not here and the update ran online; else rec['clubart_skipped'] says why (the result card shows it). v0.50.0
+        skipped the logos without a word, and a later Patch made them of the shipped default's 2018 names."""
+        if patch.clubart_source(cache):
+            return
+        env = os.environ.get(patch.ART_ENV)
+        if env == 'off':                        # no art at all: nothing to say
+            return
+        if env:                                 # the packs come from that folder alone: never downloaded into it
+            rec['clubart_skipped'] = 'the club logo pack is not in the packs folder'
+            return
+        if rec.get('offline'):
+            rec['clubart_skipped'] = 'the club logo pack is not downloaded and the update ran offline'
+            return
+        from . import packdownload
+        self.ctl.say('Downloading the club logo pack...', 'info')
+        try:
+            (_name, ok, message), = packdownload.download([patch.CLUBART_PACK], cache, game_dir=self.ctl.game_dir)
+        except Exception as err:  # noqa: BLE001 - the roster is saved already: a logo never stops it
+            ok, message = False, str(err)
+        self.ctl.host.log(f'club logo pack: {message}')
+        if not ok or not patch.clubart_source(cache):
+            rec['clubart_skipped'] = f'the club logo pack is not downloaded ({message})'
 
     def _draw_photos(self, gathered, portraits):
         """Draw the photos the people pack lacks on this PC (overtime_core.photos) into the cache's local pack, which
@@ -978,10 +1009,23 @@ class UpdateCtl(Part):
         if drawn:
             out.append({'part': 'Player photos', 'text': f"{drawn} new player photo{'s' if drawn != 1 else ''} made "
                                                          'on this PC. They show after your next Patch and Update.'})
+        elif rec.get('photos_skipped'):
+            out.append({'part': 'Player photos', 'text': 'New players got no photo: the player photo pack is not in '
+                                                         'the game yet. Download it in Game patch, Patch, then press '
+                                                         'Update again.'})
         clubs = rec.get('clubart') or {}
+        missing = len(clubs.get('missing') or [])
+        text = ''
         if clubs.get('clubs') and not clubs.get('kept'):
-            out.append({'part': 'Club logos', 'text': f"This season's logos of {clubs['clubs']} clubs made on this PC. "
-                                                      'They show after your next Patch.'})
+            text = f"This season's logos of {clubs['clubs']} clubs made on this PC. They show after your next Patch."
+        if missing:
+            text += (' ' if text else '') + (f"{clubs['clubs']} clubs matched, {missing} slot"
+                                             f"{'s' if missing != 1 else ''} without a club.")
+        if text:
+            out.append({'part': 'Club logos', 'text': text})
+        elif rec.get('clubart_skipped'):
+            out.append({'part': 'Club logos', 'text': 'Club logos skipped: the club logo pack is not downloaded. '
+                                                      'Press Update again.'})
         return out
 
     def result_view(self):

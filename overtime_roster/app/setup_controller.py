@@ -447,6 +447,7 @@ class SetupController(Part):
         g = gathered if gathered is not None and gathered.season == season else None
         rebuild = (lambda: patch.updated_default(ctl.game, g, per32, log=ctl.host.log)[0]) if g is not None else None
         database, came = defaultdb.pick(paths.app_dir('cache'), rebuild, season)
+        self.default_came = came        # Patch's club logos ask where it came from (patch_ctl.clubart_roster)
         if database is not None:
             ctl.host.log({'update': 'Default roster: rebuilt from the Update tab\'s data (kept for later patches).',
                           'cache': 'Default roster: the one rebuilt after your last Update.',

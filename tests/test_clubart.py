@@ -252,3 +252,32 @@ def test_make_clubart_never_stops_an_update(places, world):
     (places / patch.CLUBART_PACK).write_bytes(b'PK broken')
     assert patch.make_clubart(world['teams'], world['game'], str(places), log=said.append) is None
     assert said and said[-1].startswith('club logos: not made')
+
+
+# --- v0.50.1: Update never skips the logos without a word --------------------------------------------------------------
+def test_update_downloads_the_missing_club_logo_pack_or_says_it_skipped(places, monkeypatch):
+    import types
+    from overtime_roster.app import packdownload, update_ctl
+    said, logs, got = [], [], []
+    me = types.SimpleNamespace(ctl=types.SimpleNamespace(say=lambda t, tone='info': said.append(t),
+                                                         host=types.SimpleNamespace(log=logs.append), game_dir='G'))
+    run = lambda rec: update_ctl.UpdateCtl._clubart_pack(me, str(places), rec) or rec   # noqa: E731
+
+    def download(names, cache, game_dir=None, **kw):
+        got.append(names)
+        (places / patch.CLUBART_PACK).write_bytes(b'PK')
+        return [(names[0], True, 'Downloaded.')]
+    monkeypatch.setattr(packdownload, 'download', download)
+    assert run({'offline': True}) == {'offline': True, 'clubart_skipped': 'the club logo pack is not downloaded and '
+                                                                          'the update ran offline'} and not got
+    assert 'clubart_skipped' not in run({}) and got == [[patch.CLUBART_PACK]]            # online: downloaded first
+    assert said == ['Downloading the club logo pack...'] and logs == ['club logo pack: Downloaded.']
+    assert run({}) == {} and len(got) == 1                                              # here: no download
+    (places / patch.CLUBART_PACK).unlink()
+    monkeypatch.setattr(packdownload, 'download', lambda names, cache, game_dir=None, **kw: [
+        (names[0], False, packdownload.OFFLINE)])
+    assert run({})['clubart_skipped'] == f'the club logo pack is not downloaded ({packdownload.OFFLINE})'
+    monkeypatch.setenv(patch.ART_ENV, str(places / 'elsewhere'))                       # the packs of that folder alone
+    assert run({})['clubart_skipped'] == 'the club logo pack is not in the packs folder'
+    monkeypatch.setenv(patch.ART_ENV, 'off')                                            # no art: nothing to say
+    assert run({}) == {}

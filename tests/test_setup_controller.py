@@ -773,3 +773,116 @@ def test_an_update_folder_alone_is_refused_in_plain_words(tmp_path):
     said = []
     assert patch_ctl.game_text(str(tmp_path), log=said.append) == 'eng_us'
     assert said == ['Text files: eng_us; metas: ger_de. The patch edits eng_us (read with the ger_de meta).']
+
+
+# --- v0.50.1: Patch makes the club logos of the roster NHL 19 plays, never the shipped default's 2018 names ----------
+def _moved_save(raw, schema):
+    """The shipped default as Update leaves its AHL: the four clubs that moved under their 2026 names."""
+    from overtime_core import rosterupdate as R, tdb, teams as T
+    db = tdb.Database.parse(raw, schema)
+    rows = db[T.TEAMS]
+    for i, r in enumerate(rows.rows()):
+        if r['teamname'].rstrip('\x00 ') in R.AHL_MOVED and r['league'] == R.AHL_LEAGUE:
+            rows.set(i, 'teamname', R.AHL_MOVED[r['teamname'].rstrip('\x00 ')])
+    return db.to_bytes()
+
+
+def _logo_clubs():
+    from overtime_core import rosterupdate as R
+    return [{'key': R._team_key(n), 'name': n, 'league': R.AHL_LEAGUE, 'art': 900 + i, 'logos': {'large': 'x'},
+             'ice': None} for i, n in enumerate(sorted(R.AHL_MOVED.values()))]
+
+
+def _patch_with_logos(sc, monkeypatch, tmp_path, database, came, schema):
+    from overtime_roster.app import patch_ctl
+    made = []
+    monkeypatch.setattr(patch_ctl, 'cache_dir', lambda: str(tmp_path / 'cache'))
+    monkeypatch.setattr(patch, '_test_found', patch.ART_PACKS, raising=False)
+    monkeypatch.setattr(patch, 'clubart_source', lambda cache_dir=None: str(tmp_path / 'clubart.zip'))
+    monkeypatch.setattr(patch, 'make_kits', lambda *a, **kw: {})
+    monkeypatch.setattr(patch, 'make_clubart', lambda teams, game_dir, cache, log=None: made.append(teams) or {
+        'clubs': 4, 'files': 8, 'drawn': 0, 'missing': ['Somebody'], 'kept': False})
+
+    def default(self):
+        self.default_came = came
+        return database
+    monkeypatch.setattr(SC.SetupController, '_default_roster', default)
+    sc.ctl.game = types.SimpleNamespace(schema=lambda: schema, ok=True)
+    sc.ctl.patch_want.update(art=True, roster=True)
+    sc.setup_refresh()
+    sc.setup_patch()
+    return made
+
+
+@pytest.mark.game
+def test_patch_without_update_makes_the_logos_of_the_active_save(sc, monkeypatch, tmp_path, game_db):
+    """The owner's v0.50.0 game: Update saved RosterCustom0 (the active roster) before clubart.zip was here; a Patch in
+    a later app session (no default_roster.db: the shipped default, 2018 AHL names) made the logos of that default, so
+    Abbotsford, Henderson, Hamilton and Calgary kept their 2018 logos. Fails on v0.50.0."""
+    from overtime_core import clubart
+    from overtime_roster.app import savegame
+    raw, schema = game_db
+    saves = tmp_path / 'saves'
+    (saves / 'RosterCustom0').mkdir(parents=True)
+    (saves / 'Profile0').mkdir()
+    sc.ctl.save_dir = str(saves)
+    moved = _moved_save(raw, schema)
+    monkeypatch.setattr(savegame, 'active_roster', lambda save_dir: 'RosterCustom0')
+    monkeypatch.setattr(savegame, 'read', lambda folder: types.SimpleNamespace(db_bytes=moved))
+    made = _patch_with_logos(sc, monkeypatch, tmp_path, raw, 'embedded', schema)
+    assert len(made) == 1
+    found, _missing = clubart.matches(made[0], _logo_clubs())
+    assert sorted(c['name'] for c in found.values()) == ['Abbotsford Canucks', 'Calgary Wranglers',
+                                                         'Hamilton Hammers', 'Henderson Silver Knights']
+    text, _tone = next((t, tone) for t, tone in reversed(sc.ctl.said) if t.startswith('Patched'))
+    assert 'Club logos: 4 clubs matched, 1 slot without a club.' in text
+    assert any('club logos of roster RosterCustom0: 4 clubs matched' in line for line in sc.ctl.host.logs)
+
+
+@pytest.mark.game
+def test_patch_on_the_shipped_default_says_so(sc, monkeypatch, tmp_path, game_db):
+    """No save and no Update: the logos follow the shipped default, and the result says the moved clubs keep their
+    2018 logos until an Update."""
+    from overtime_roster.app import patch_ctl
+    raw, schema = game_db
+    sc.ctl.save_dir = str(tmp_path / 'no-saves')
+    made = _patch_with_logos(sc, monkeypatch, tmp_path, raw, 'embedded', schema)
+    assert len(made) == 1
+    text, _tone = next((t, tone) for t, tone in reversed(sc.ctl.said) if t.startswith('Patched'))
+    assert patch_ctl.SHIPPED_LOGOS in text
+
+
+def test_clubart_roster_order(monkeypatch, tmp_path):
+    """Which roster the club logos follow: the active save, the rebuilt default, the default NHL 19 plays (the profile
+    says its own roster), the last Update's save, the shipped default."""
+    from overtime_core import tdb
+    from overtime_roster.app import patch_ctl, savegame
+    monkeypatch.setattr(tdb.Database, 'parse', classmethod(lambda cls, raw, schema=None, verify=True: {
+        'teams': types.SimpleNamespace(rows=lambda: [raw])}))
+    monkeypatch.setattr(patch_ctl.T, 'TEAMS', 'teams')
+    monkeypatch.setattr(savegame, 'read', lambda folder: types.SimpleNamespace(db_bytes=os.path.basename(folder)))
+    active = [None]
+    monkeypatch.setattr(savegame, 'active_roster', lambda save_dir: active[0])
+    saves = tmp_path / 'saves'
+    for name in ('RosterCustom0', 'RosterCustom1'):
+        (saves / name).mkdir(parents=True)
+    ctl = types.SimpleNamespace(game=types.SimpleNamespace(schema=lambda: None), save_dir=str(saves),
+                                host=FakeHost(), prefs={'update_saved': {
+                                    'RosterCustom0': {'when': '2026-11-03 20:44'},
+                                    'RosterCustom1': {'when': '2026-11-01 10:00'},
+                                    'RosterCustom2': {'when': '2026-11-04 09:00'}}})   # gone: skipped
+
+    def pick(database, came):
+        rows, origin, where = patch_ctl.clubart_roster(ctl, database, came)
+        return rows and rows[0], origin, where
+    active[0] = 'RosterCustom1'
+    assert pick('DB', 'cache') == ('RosterCustom1', 'save', 'RosterCustom1')
+    active[0] = None
+    assert pick('DB', 'cache') == ('DB', 'default', None)
+    assert pick('DB', 'update') == ('DB', 'default', None)
+    assert pick('DB', 'embedded') == ('RosterCustom0', 'save', 'RosterCustom0')      # no profile: the last Update's
+    assert pick(None, None) == ('RosterCustom0', 'save', 'RosterCustom0')
+    (saves / 'Profile0').mkdir()                                                    # NHL 19 plays its own roster
+    assert pick('DB', 'embedded') == ('DB', 'shipped', None)
+    ctl.save_dir = None
+    assert pick(None, None) == (None, None, None)
