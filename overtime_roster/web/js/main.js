@@ -15,8 +15,8 @@ const R = window.React;
 
 export const TABS = [
   { id: 'setup', label: 'Setup' },
-  { id: 'patch', label: 'Game patch' },
   { id: 'update', label: 'Update' },
+  { id: 'patch', label: 'Game patch' },
   { id: 'roster', label: 'Roster', team: true },
   { id: 'lines', label: 'Lines', team: true },
   { id: 'strategy', label: 'Strategy', team: true },

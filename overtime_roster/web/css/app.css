@@ -459,3 +459,14 @@ select.field option { background: var(--panel); color: var(--text-soft); }
   .savebar .name { height: 28px; }
   .tbl-row { height: 28px; }
 }
+
+/* the order Update > Game patch > Active Roster (ui.js Order), on both tabs */
+.order { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 12px; border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); font-size: 13px; color: var(--text-2); background: rgba(255, 255, 255, .02); }
+.order-step { display: inline-flex; align-items: baseline; gap: 6px; padding: 0; border: 0; background: none; font: inherit; color: var(--text-2); }
+button.order-step { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+button.order-step:hover { color: var(--text); }
+.order-step b { display: inline-block; min-width: 18px; text-align: center; font-weight: 700; color: var(--text-3); }
+.order-step.here { color: var(--text); font-weight: 700; }
+.order-step.here b { color: var(--accent); }
+.order-arrow { color: var(--text-3); }

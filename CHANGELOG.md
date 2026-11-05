@@ -2,6 +2,14 @@
 
 What changed in each version, for players.
 
+## 0.60.1 (2026-11-05)
+
+### Changed
+
+- **Update comes first.** The tabs now read Setup, Update, Game patch, and a strip on both tabs shows the order: Update, then
+  Game patch, then in NHL 19 pick the new roster in Rosters > Active Rosters. Patch makes the club logos and jerseys for the
+  roster NHL 19 plays, so patching before updating gave the old roster's logos.
+
 ## 0.60.0 (2026-11-05)
 
 ### New

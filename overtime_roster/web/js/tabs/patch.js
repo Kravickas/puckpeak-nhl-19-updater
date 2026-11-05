@@ -4,7 +4,7 @@
 import { html, cls, useState } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, Switch, Info, Tag, Modal, TextField, Field, ProgressBar } from '../ui.js';
+import { Card, Button, Switch, Info, Tag, Modal, TextField, Field, ProgressBar, Order } from '../ui.js';
 
 export const tip = 'Patch the game once. Unpatch puts every game file back.';
 
@@ -27,6 +27,7 @@ function PatchCard({ s, go }) {
           title="Looks at the game and shadPS4 again">Check again<//>`}>
     <div class="card-body gp-top">
       <div class=${cls('gp-state', s.state.tone)} role="status"><span class="gp-mark"></span><span>${s.state.text}</span></div>
+      <${Order} here="patch" go=${go}/>
       <div class="gp-buttons">
         <${Button} kind="featured" big className="gp-patch" disabled=${!b.patch.enabled} onClick=${() => call('setup_patch')}>${b.patch.text}<//>
         <${Info} title="What the game patch does" sections=${patchInfo(s)} label="What the game patch does"/>

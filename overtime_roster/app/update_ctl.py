@@ -81,11 +81,11 @@ def season_label(year):
 
 
 PATCH_FIRST = {
-    'none': 'NHL 19 is not patched. Patch it first: without the patch the game has no Seattle or Utah and cannot go '
-            'online.',
+    'none': 'NHL 19 is not patched. Run Update first, then Game patch: without the patch the game has no Seattle or '
+            'Utah and cannot go online.',
     'problem': 'The game patch has a problem. Open Game patch and press Patch again.',
-    'older': "NHL 19 was patched by an older Overtime. Press Patch again so the game gets this version's default "
-             'roster and calendars.',
+    'older': "NHL 19 was patched by an older Overtime. Run Update, then press Patch again so the game gets this "
+             "version's default roster and calendars.",
     'money': "The 2026-27 salary cap switch in Game patch changed after this roster was updated, so its contracts "
              'no longer fit the cap the game plays. Press Go to update it again, or set the switch back.',
 }

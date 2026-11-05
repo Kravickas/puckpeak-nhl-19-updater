@@ -103,6 +103,19 @@ export function Tag({ tone, title, children }) {
   return html`<span class=${cls('chip', tone)} title=${title}>${children}</span>`;
 }
 
+// the order the program is used in, shown on Update and Game patch (v0.60.1): Update makes the roster, Game patch
+// puts the game files, club logos and kits of that roster in, then NHL 19 must be set to the roster in Rosters > Active Rosters
+export function Order({ here, go }) {
+  const step = (id, n, text) => here === id
+    ? html`<span class="order-step here" aria-current="step"><b>${n}</b>${text}</span>`
+    : html`<button type="button" class="order-step" onClick=${() => go(id)}><b>${n}</b>${text}</button>`;
+  return html`<div class="order" role="note" aria-label="The order: Update, then Game patch, then the Active Roster in the game">
+    ${step('update', 1, 'Update')}<span class="order-arrow" aria-hidden="true">›</span>
+    ${step('patch', 2, 'Game patch')}<span class="order-arrow" aria-hidden="true">›</span>
+    <span class="order-step last"><b>3</b>In NHL 19: Rosters > Active Rosters, pick the new roster</span>
+  </div>`;
+}
+
 // a tab with nothing to show yet (no roster, a team it cannot show, the roster still being read): one centred block.
 // mark: a node over the text (a team chip); busy: a small spinner; children: buttons under the text
 export function Why({ mark, text, busy, className, children }) {

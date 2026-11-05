@@ -5,7 +5,7 @@
 import { html, cls } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, Switch, Segmented, Select, TextField, Field, Info, Tag, Modal, Why } from '../ui.js';
+import { Card, Button, Switch, Segmented, Select, TextField, Field, Info, Tag, Modal, Why, Order } from '../ui.js';
 
 export const tip = 'Pick what to update and how to save it, then press Go.';
 
@@ -188,6 +188,7 @@ export default function Update({ go }) {
   }
   return html`<div class=${cls('up', s.result && 'has-result')}>
     <${FromBar} f=${s.from} go=${go}/>
+    <${Order} here="update" go=${go}/>
     ${s.patch && html`<${PatchBar} p=${s.patch} go=${go}/>`}
     ${s.active && html`<div class="card up-patch bad" role="status"><span class="up-patch-text">${s.active.text}</span></div>`}
     <${StepsCard} s=${s}/>
