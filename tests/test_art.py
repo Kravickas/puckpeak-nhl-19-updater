@@ -397,3 +397,19 @@ class _Sized:
 
     def __len__(self):
         return self.n
+
+
+def test_cached_alternates_read_the_jersey_layer_packs_pack_json(tmp_path):
+    import json
+    import zipfile
+    alt = {'teamid': 0, 'style': 1, 'variant': 4, 'locstring': 2}
+    for name, info in (('kitlayers_nhl.zip', {'alternates': [alt]}), ('kitlayers_intl.zip', {'alternates': []}),
+                       ('other.zip', {'alternates': [alt]})):
+        with zipfile.ZipFile(tmp_path / name, 'w') as z:
+            z.writestr(art.MANIFEST, json.dumps(info))
+    (tmp_path / 'kitlayers_bad.zip').write_bytes(b'not a zip')
+    packs = art.cached_alternates(str(tmp_path))
+    assert [p.name for p in packs] == ['kitlayers_nhl']
+    db = {art.STOCK_JERSEYS: _Bios([{'teamid': 0, 'style': 1, 'variant': 4, 'locstring': 6}])}
+    assert art.alternate_rows(db, packs) == 1
+    assert art.cached_alternates(str(tmp_path / 'nothing')) == []

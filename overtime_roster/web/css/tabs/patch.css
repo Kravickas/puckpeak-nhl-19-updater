@@ -69,15 +69,6 @@
 .tab-patch .gp-tool { display: flex; flex-direction: column; gap: 4px; padding-top: 9px; border-top: 1px solid var(--line); }
 .tab-patch .gp-tool-row { display: flex; align-items: center; gap: 8px; }
 
-/* --- 4 What the game patch does ---------------------------------------------------------------------------------------- */
-.tab-patch .gp-about-body { display: flex; flex-direction: column; gap: 12px; }
-.tab-patch .gp-part-head { font-size: 13.5px; letter-spacing: .08em; color: var(--accent); margin-bottom: 3px; }
-.tab-patch .gp-part ul { margin: 0; padding-left: 18px; color: var(--text-soft); font-size: 13.5px; line-height: 1.5; }
-.tab-patch .gp-part li::marker { color: var(--text-3); }
-.tab-patch .gp-names { display: grid; grid-template-columns: auto auto auto auto; justify-content: start; gap: 2px 12px; font-size: 13.5px; }
-.tab-patch .gp-name { display: contents; }
-.tab-patch .gp-arrow { color: var(--text-3); }
-
 .tab-patch .gp-empty { align-items: center; justify-content: center; gap: 14px; text-align: center; color: var(--text-2); }
 .tab-patch .gp-empty p { margin: 0; font-size: 15px; max-width: 420px; }
 
@@ -102,7 +93,5 @@
   .tab-patch .gp-now-body { gap: 7px; }
   .tab-patch .gp-tool { padding-top: 6px; }
   .tab-patch .gp-facts { gap: 3px; font-size: 13px; }
-  .tab-patch .gp-about-body { gap: 8px; }
-  .tab-patch .gp-part ul { font-size: 13px; line-height: 1.4; }
   .tab-patch .gp-tool .field { height: 30px; }
 }

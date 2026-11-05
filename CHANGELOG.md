@@ -2,6 +2,22 @@
 
 What changed in each version, for players.
 
+## 0.60.0 (2026-11-05)
+
+### New
+
+- **Penticton Vees in the WHL** for 2026-27 (Play Now and Roster Management, like NHL Legacy), with their name, logo and roster.
+- **Patch tab:** the patch explanation is a "?" next to the Patch button.
+- **New app icon** (the app, its window and the splash).
+
+### Fixed
+
+- **Versus:** Stats Central no longer loads forever and Recent Games answers with a message instead of an empty reply (server update).
+- **Logos:** the six clubs NHL 27 lacks keep their NHL 19 logos, the result says so, and all 32 AHL logos were checked in game.
+- **Jerseys:** throwback rows read ALTERNATE instead of a stale "2016-17 HOME" (press Update again).
+- **Utah:** helmets stay black with a roster made by this version (press Update again, then pick it in Rosters > Active Roster).
+- **"Server not reachable":** the game gets the network settings it needs on more PCs.
+
 ## 0.50.1 (2026-11-04)
 
 ### Fixed

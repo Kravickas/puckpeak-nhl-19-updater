@@ -447,14 +447,15 @@ def clubart_text(clubs, log=None):
              'shipped': 'the shipped default roster'}.get(clubs.get('origin'), 'the roster')
     if log:
         log(f"club logos of {where}: {clubs['clubs']} clubs matched, {clubs['files']} files "
-            f"({'as before' if clubs.get('kept') else 'made'}), {len(missing)} club slots without one"
+            f"({'as before' if clubs.get('kept') else 'made'}), {len(missing)} club slots keep NHL 19's own logo"
             + (f": {', '.join(missing[:12])}" if missing else ''))
     words = []
     if clubs.get('origin') == 'shipped':
         words.append(SHIPPED_LOGOS)
     elif missing:
         words.append(f"Club logos: {clubs['clubs']} clubs matched, {len(missing)} slot"
-                     f"{'s' if len(missing) != 1 else ''} without a club.")
+                     f"{'s' if len(missing) != 1 else ''} kept NHL 19's own logo (NHL 27 has no club for "
+                     f"{'it' if len(missing) == 1 else 'them'}).")
     return ' '.join(words)
 
 

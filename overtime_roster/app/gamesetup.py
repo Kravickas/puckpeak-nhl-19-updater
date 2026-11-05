@@ -507,16 +507,27 @@ def custom_config_path(user_dir):
     return os.path.join(user_dir, 'custom_configs', active_title() + '.json')
 
 
+def _net_value(cfg, key):
+    """What shadPS4 reads for a network key in one config file: newer builds keep it in "Network" and take it from
+    there when it is present; "General" is the older home and still read when "Network" lacks the key."""
+    network = cfg.get('Network')
+    if isinstance(network, dict) and key in network:
+        return network[key]
+    general = cfg.get('General')
+    return general.get(key) if isinstance(general, dict) else None
+
+
 def network_settings(user_dir):
     """The network keys as the game will see them (its custom config over config.json): {key: value or None}."""
     values = {k: None for k in NETWORK}
     for path in (os.path.join(user_dir, 'config.json'), custom_config_path(user_dir)):
         try:
             with open(path, encoding='utf-8') as f:
-                general = json.load(f).get('General') or {}
+                cfg = json.load(f)
+            found = {k: _net_value(cfg, k) for k in NETWORK}
         except (OSError, ValueError, AttributeError):
             continue
-        values.update({k: general[k] for k in NETWORK if k in general})
+        values.update({k: v for k, v in found.items() if v is not None})
     return values
 
 
@@ -527,11 +538,11 @@ def network_on(user_dir):
 
 
 def _keys_on(path):
-    """True when the config at `path` holds Overtime's network keys in "General" (status: only those keys are ours)."""
+    """True when the config at `path` gives Overtime's network keys the values we need (status: only those keys are ours)."""
     try:
         with open(path, encoding='utf-8') as f:
-            general = json.load(f).get('General') or {}
-        return all(general.get(k) == v for k, v in NETWORK.items())
+            cfg = json.load(f)
+        return all(_net_value(cfg, k) == v for k, v in NETWORK.items())
     except (OSError, ValueError, AttributeError):
         return False
 
@@ -625,7 +636,7 @@ def install(emu_exe, xml_text, running=None):
         m['files'] = list(entries.values())
         _save_manifest(m)
 
-    def put(path, data, previous_keys=None):
+    def put(path, data, previous_keys=None, previous_network=None):
         before = _read(path) if os.path.exists(path) else None
         e = entries.get(path)
         if e is None:
@@ -639,6 +650,7 @@ def install(emu_exe, xml_text, running=None):
                 e['backup'] = backup
             if previous_keys is not None:
                 e['previous'] = previous_keys
+                e['previous_network'] = previous_network or {}
             entries[path] = e
         elif before is not None and _sha(before) != e.get('sha256') and e.get('previous') is not None:
             # changed since we wrote it (the user's own edit): from now on remove() only puts our keys back
@@ -653,10 +665,15 @@ def install(emu_exe, xml_text, running=None):
     put(os.path.join(folder, PATCH_FILE), xml_text.encode('utf-8'))
     put(os.path.join(folder, 'files.json'), json.dumps({PATCH_FILE: [active_title()]}, indent=4).encode('utf-8'))
     general = cfg.setdefault('General', {})
-    if any(general.get(k) != v for k, v in NETWORK.items()) or cfg_path in entries:
+    section = cfg.get('Network') if isinstance(cfg.get('Network'), dict) else {}   # shadPS4 reads it before "General"
+    if any(_net_value(cfg, k) != v for k, v in NETWORK.items()) or cfg_path in entries:
         previous = (entries.get(cfg_path) or {}).get('previous') or {k: general.get(k) for k in NETWORK}
+        previous_network = (entries.get(cfg_path) or {}).get('previous_network') or {
+            k: section[k] for k in NETWORK if k in section}
         general.update(NETWORK)
-        put(cfg_path, json.dumps(cfg, indent=4).encode('utf-8'), previous_keys=previous)
+        section.update({k: v for k, v in NETWORK.items() if k in section})
+        put(cfg_path, json.dumps(cfg, indent=4).encode('utf-8'), previous_keys=previous,
+            previous_network=previous_network)
     record()
     return m
 
@@ -690,6 +707,9 @@ def remove(running=None):
                     general.pop(k, None)
                 else:
                     general[k] = v
+            if isinstance(cfg.get('Network'), dict):
+                for k, v in (e.get('previous_network') or {}).items():
+                    cfg['Network'][k] = v
             _write(path, json.dumps(cfg, indent=4).encode('utf-8'))
             said.append(f'put back the network settings in {path}')
         elif e['action'] == 'created':

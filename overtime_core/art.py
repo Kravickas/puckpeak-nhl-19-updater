@@ -413,6 +413,25 @@ def alternate_rows(db, packs):
     return changed
 
 
+def cached_alternates(cache_dir):
+    """The jersey layer packs in `cache_dir` (kitlayers_<family>.zip, read for their pack.json only) as Packs that carry
+    `alternates`, for alternate_rows: the roster a save holds takes the labels too (v0.60.0). []: none downloaded."""
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(cache_dir) if n.startswith('kitlayers_') and n.endswith('.zip'))
+    except OSError:
+        return out
+    for name in names:
+        try:
+            with zipfile.ZipFile(os.path.join(cache_dir, name)) as z:
+                info = json.loads(z.read(MANIFEST).decode('utf-8'))
+        except (zipfile.BadZipFile, KeyError, OSError, ValueError):
+            continue
+        if info.get('alternates'):
+            out.append(Pack(name[:-4], {'alternates': info['alternates']}, {}))
+    return out
+
+
 def player_portraits(db, people, shift=0):
     """Give each bio in `db` the art id of its photo in the people pack (tools/build_people.py). `people` is the pack's
     `people` list, [name key (clubdata._key), year, month, day, artid]: a bio is that person by name and birth date, else

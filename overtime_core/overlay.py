@@ -104,6 +104,12 @@ NAMES = {
     'NHLCityName_VIK': ('Västervik', 'Visby'), 'NHLTEAMNAME_VIK': ('Västerviks IK', 'Visby/Roma HK'),
     'NHLTEAMNAME_Abbr3_VIK': ('VVIK', 'VIS'), 'TEAMLINE2_VIK': ('Västerviks IK', 'Visby/Roma HK'),
     'TXT_NICKNAME_VIK': ('Västervik', 'Visby'), 'TXT_NICKNAME_ALT_VIK': ('Västervik', 'Visby'),
+    # The Penticton Vees (overtime_core/vees.py): the loc texts of the Plymouth Whalers, an OHL club no slot has, which the
+    # Vees' slot takes as its artabbr.
+    'NHLCityName_PLYM': ('Plymouth', 'Penticton'), 'NHLTeamName_PLYM': ('Plymouth Whalers', 'Penticton Vees'),
+    'NHLTeamName_Abbr3_PLYM': ('PLY', 'PEN'), 'TEAMLINE1_PLYM': ('Plymouth', 'Penticton'),
+    'TEAMLINE2_PLYM': ('Whalers', 'Vees'), 'TXT_NICKNAME_PLYM': ('Whalers', 'Vees'),
+    'TXT_NICKNAME_ALT_PLYM': ('Whalers', 'Vees'), 'X_XLA_TEAM_PLYM': ('PLY', 'PEN'),
     'NHLCityName_VITA': ('Vita Hästen', 'Mora'), 'NHLTEAMNAME_VITA': ('HC Vita Hästen', 'Mora IK'),
     'NHLTEAMNAME_Abbr3_VITA': ('VIT', 'MORA'), 'TEAMLINE2_VITA': ('HC Vita Hästen', 'Mora IK'),
     'TXT_NICKNAME_VITA': ('Vita Hästen', 'Mora'), 'TXT_NICKNAME_ALT_VITA': ('Vita Hästen', 'Mora'),

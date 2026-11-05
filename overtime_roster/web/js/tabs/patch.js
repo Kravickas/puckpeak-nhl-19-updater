@@ -1,6 +1,6 @@
 // Game patch: Legacy's Game patch tab in NHL 19's look. Left: the patch (state, Patch / Unpatch / Play, one switch
-// per layer with its "?"). Right: the Photos, logos pack (v0.10.0), what is in the game now (layers, files, Quick check, a full copy) and what the game
-// patch does. Slices `patch`, `patch_files`; calls in docs/ui/patch.md.
+// per layer with its "?"). Right: the Photos, logos pack (v0.10.0) and what is in the game now (layers, files, Quick check, a full copy). What the game
+// patch does is the "?" beside the Patch button. Slices `patch`, `patch_files`; calls in docs/ui/patch.md.
 import { html, cls, useState } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
@@ -29,6 +29,7 @@ function PatchCard({ s, go }) {
       <div class=${cls('gp-state', s.state.tone)} role="status"><span class="gp-mark"></span><span>${s.state.text}</span></div>
       <div class="gp-buttons">
         <${Button} kind="featured" big className="gp-patch" disabled=${!b.patch.enabled} onClick=${() => call('setup_patch')}>${b.patch.text}<//>
+        <${Info} title="What the game patch does" sections=${patchInfo(s)} label="What the game patch does"/>
         <${Button} kind="gold-line" className="gp-unpatch" disabled=${!b.unpatch.enabled} onClick=${() => call('setup_unpatch')}>Unpatch<//>
         <span class="sp"></span>
         <${Button} className="gp-play" disabled=${!b.play.enabled} onClick=${() => call('setup_play')}>
@@ -133,21 +134,10 @@ function NowCard({ s }) {
   <//>`;
 }
 
-function AboutCard({ s, n = 5 }) {
-  return html`<${Card} n=${n} title="What the game patch does" grow className="gp-about">
-    <div class="card-body scroll gp-about-body">
-      ${s.about.map((part) => html`<section key=${part.head} class="gp-part">
-        <div class="gp-part-head caps">${part.head}</div>
-        <ul>${part.items.map((t, k) => html`<li key=${k}>${t}</li>`)}</ul>
-      </section>`)}
-      ${s.names.length > 0 && html`<section class="gp-part">
-        <div class="gp-part-head caps">The names it changes</div>
-        <div class="gp-names">${s.names.map((x) => html`<div key=${x.what} class="gp-name">
-          <span class="faint">${x.what}</span><span>${x.from}</span><span class="gp-arrow">→</span><b>${x.to}</b>
-        </div>`)}</div>
-      </section>`}
-    </div>
-  <//>`;
+// what the patch does: the "?" beside the Patch button (the text is patch_ctl.ABOUT and NAMES)
+function patchInfo(s) {
+  const names = s.names.map((x) => `${x.what}: ${x.from} → ${x.to}`);
+  return names.length ? [...s.about, { head: 'The names it changes', items: names }] : s.about;
 }
 
 export default function Patch({ go }) {
@@ -156,19 +146,19 @@ export default function Patch({ go }) {
   if (!s.ready) {
     return html`<div class="columns gp">
       <div class="col">
-        <${Card} n="1" title="Overtime game patch" grow>
+        <${Card} n="1" title="Overtime game patch" grow
+            aside=${html`<${Info} title="What the game patch does" sections=${patchInfo(s)} label="What the game patch does"/>`}>
           <div class="card-body fill gp-empty">
             <p>NHL 19 is not set up yet. Show the program where shadPS4 is: it finds the game from there.</p>
             <${Button} kind="primary" onClick=${() => go('setup')}>Go to Setup<//>
           </div>
         <//>
       </div>
-      <div class="col"><${AboutCard} s=${s} n=${2}/></div>
     </div>`;
   }
   return html`<div class="columns gp">
     <div class="col"><${PatchCard} s=${s} go=${go}/></div>
-    <div class="col"><${PackCard} s=${s}/><${ExtraCard} s=${s}/><${NowCard} s=${s}/><${AboutCard} s=${s}/></div>
+    <div class="col"><${PackCard} s=${s}/><${ExtraCard} s=${s}/><${NowCard} s=${s}/></div>
   </div>`;
 }
 

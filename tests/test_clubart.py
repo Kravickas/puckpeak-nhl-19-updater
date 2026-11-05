@@ -281,3 +281,14 @@ def test_update_downloads_the_missing_club_logo_pack_or_says_it_skipped(places, 
     assert run({})['clubart_skipped'] == 'the club logo pack is not in the packs folder'
     monkeypatch.setenv(patch.ART_ENV, 'off')                                            # no art: nothing to say
     assert run({}) == {}
+
+
+def test_audit_tells_name_matches_from_fallbacks_and_slots_that_keep_the_game_logo():
+    pytest.importorskip('tools.audit_clubart')    # not in the public tree
+    from tools import audit_clubart
+    clubs = [club('Djurgården Hockey', 71), club('HC Lugano', 326)]
+    slots = [team(1, 71, 'Djurgårdens IF'), team(2, 326, 'HC Lugano'), team(3, 191, 'Cardiff Devils')]
+    done, lost = audit_clubart.audit(slots, clubs)
+    assert [(r['teamname'], c['name'], how) for r, c, how in done] == [
+        ('Djurgårdens IF', 'Djurgården Hockey', 'fallback'), ('HC Lugano', 'HC Lugano', 'name')]
+    assert [r['teamname'] for r in lost] == ['Cardiff Devils']

@@ -502,3 +502,39 @@ def test_a_launcher_with_no_version_is_not_taken(tmp_path, monkeypatch):
     (tmp_path / 'emu' / 'shadPS4QtLauncher.exe').write_bytes(b'MZ')
     assert gamesetup.resolve_emulator(str(tmp_path / 'emu')) == ''
     assert gamesetup.resolve_emulator(str(tmp_path / 'emu' / 'shadPS4QtLauncher.exe')) == ''
+
+
+def test_network_section_of_a_newer_shadps4_is_switched_too(world):
+    """Newer shadPS4 builds read connected_to_network from "Network" before "General": a custom config (or the
+    config.json copy it starts as) with that section kept the game OFFLINE although "General" said on (tester log)."""
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    raw = json.dumps({'General': {'volume_slider': 50},
+                      'Network': {'connected_to_network': False, 'shad_net_enabled': True, 'upnp': 1}}).encode()
+    path.write_bytes(raw)
+    assert not gamesetup.network_on(str(world['user']))
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    cfg = json.loads(path.read_text())
+    assert cfg['Network'] == {'connected_to_network': True, 'shad_net_enabled': True, 'upnp': 1}
+    assert cfg['General']['connected_to_network'] is True
+    assert gamesetup.network_on(str(world['user']))
+    st = gamesetup.status(str(world['emu']))
+    assert st['intact'], st['problems']
+    cfg['Network']['connected_to_network'] = False      # switched off in the launcher afterwards: said
+    path.write_text(json.dumps(cfg))
+    assert gamesetup.status(str(world['emu']))['problems'] == [f'network switched off: {path}']
+    cfg['Network']['connected_to_network'] = True
+    path.write_text(json.dumps(cfg))
+    gamesetup.remove(running=lambda: False)
+    assert json.loads(path.read_text())['Network'] == {'connected_to_network': False, 'shad_net_enabled': True,
+                                                       'upnp': 1}
+
+
+def test_config_json_copy_with_network_section(world):
+    cfg_path = world['user'] / 'config.json'
+    cfg = json.loads(cfg_path.read_text())
+    cfg['Network'] = {'connected_to_network': False, 'shad_net_enabled': False}
+    cfg_path.write_text(json.dumps(cfg))
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    assert gamesetup.network_on(str(world['user']))
+    made = json.loads((world['user'] / 'custom_configs' / 'CUSA11126.json').read_text())
+    assert made['Network'] == {'connected_to_network': True, 'shad_net_enabled': True}

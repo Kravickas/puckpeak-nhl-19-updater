@@ -26,7 +26,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-from . import art, calendar, careerstats, equipment as EQ, estimate, leaguecal, lines, nhl27 as N, ratings as R, reallines, teams as T
+from . import art, calendar, careerstats, equipment as EQ, estimate, leaguecal, lines, nhl27 as N, ratings as R, reallines, teams as T, vees
 from .roster import ALTERNATE, CAPTAIN
 from .matching import Matcher, Person
 
@@ -804,6 +804,7 @@ def apply(db, schema, todo, rating_rows=None, games=None, start_year=None, draft
     others = {}
     if nhl27 and nhl27.get('players'):  # every other club league, the clubs NHL 27 and NHL 19 share (LEAGUE_PLAN)
         frozen = {AHL_LEAGUE, ALLSVENSKAN}
+        others['vees_slot'] = int(vees.wanted((clubs or nhl27).get('players')) and vees.make_room(db))
         for league, (tag, size) in LEAGUE_PLAN.items():
             got, teams_of = rebuild_league(db, clubs or nhl27, shift, league, tag, {}, tag, size, True, frozen, False,
                                            tag != 'europe', club_feed, keeping)

@@ -1,11 +1,14 @@
-"""Draw the start-up splash (standard library only): the app's clock and "OVERTIME ROSTER / STARTING" on its
+"""Draw the start-up splash (Pillow, through make_icon): the app's icon and "OVERTIME ROSTER / STARTING" on its
 near-black. PyInstaller's bootloader shows it while the onefile exe unpacks; the app closes it once its window shows.
 
     python packaging/make_splash.py <out.png>
 """
+import io
 import struct
 import sys
 import zlib
+
+from PIL import Image
 
 import make_icon
 
@@ -41,13 +44,11 @@ def text(pixels, s, x, y, scale, colour):
 
 def main(out):
     pixels = [[make_icon.BG] * W for _ in range(H)]
-    logo = make_icon.render(LOGO)      # an RGBA PNG: take its rows back out
-    raw = zlib.decompress(logo[logo.index(b'IDAT') + 4:logo.index(b'IEND') - 8])
-    stride = 1 + LOGO * 4
+    logo = Image.open(io.BytesIO(make_icon.render(LOGO))).convert('RGBA')
     top = (H - LOGO) // 2
     for j in range(LOGO):
         for i in range(LOGO):
-            r, g, b, a = raw[j * stride + 1 + i * 4:j * stride + 5 + i * 4]
+            r, g, b, a = logo.getpixel((i, j))
             bg = make_icon.BG
             pixels[top + j][24 + i] = tuple(round((c * a + k * (255 - a)) / 255) for c, k in zip((r, g, b), bg))
     text(pixels, 'OVERTIME ROSTER', 156, 50, 3, make_icon.WHITE)

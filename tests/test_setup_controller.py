@@ -835,7 +835,7 @@ def test_patch_without_update_makes_the_logos_of_the_active_save(sc, monkeypatch
     assert sorted(c['name'] for c in found.values()) == ['Abbotsford Canucks', 'Calgary Wranglers',
                                                          'Hamilton Hammers', 'Henderson Silver Knights']
     text, _tone = next((t, tone) for t, tone in reversed(sc.ctl.said) if t.startswith('Patched'))
-    assert 'Club logos: 4 clubs matched, 1 slot without a club.' in text
+    assert "Club logos: 4 clubs matched, 1 slot kept NHL 19's own logo (NHL 27 has no club for it)." in text
     assert any('club logos of roster RosterCustom0: 4 clubs matched' in line for line in sc.ctl.host.logs)
 
 

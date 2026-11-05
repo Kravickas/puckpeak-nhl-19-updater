@@ -16,7 +16,7 @@ import datetime
 import os
 import time
 
-from overtime_core import gamefiles, nhlcom, photos, rosterupdate as U, sfo, teams as T
+from overtime_core import art, gamefiles, nhlcom, photos, rosterupdate as U, sfo, teams as T
 
 from .. import VERSION
 from . import install, jobs, myedits, office, patch, paths, roster_card as RC, savegame, selfupdate, update
@@ -516,6 +516,12 @@ class UpdateCtl(Part):
             with c.lock:
                 if c.session is not session:
                     raise update.UpdateError('Another roster was opened: nothing was saved.')
+                # a roster the game loads from a save keeps the stock throwback label ("2016-17 HOME") on a row the jersey
+                # layer drew as an NHL 27 alternate: it gets ALTERNATE like the default roster does (overlay)
+                layers = art.cached_alternates(paths.app_dir('cache'))
+                n = art.alternate_rows(session.db, layers) if layers else 0
+                if n:
+                    c.host.log(f'jersey labels: {n} throwback rows relabelled ALTERNATE')
                 rec['out'] = install.run(session, c.game, target, name, c.save_dir, paths.app_dir('exports'),
                                          step=istep, log=c.host.log, overwrite=slot, folder_slot=fslot)
                 rec['written'] = list(session.history)
@@ -533,7 +539,7 @@ class UpdateCtl(Part):
                 if rec.get('clubart'):
                     k = rec['clubart']
                     c.host.log(f"club logos: {k['clubs']} clubs, {k['files']} files "
-                               f"({'as before' if k['kept'] else 'made'}), {len(k['missing'])} club slots without one"
+                               f"({'as before' if k['kept'] else 'made'}), {len(k['missing'])} club slots keep NHL 19's own logo"
                                + (f": {', '.join(k['missing'][:12])}" if k['missing'] else ''))
                 elif rec.get('clubart_skipped'):
                     c.host.log(f"club logos: skipped ({rec['clubart_skipped']})")
@@ -1020,7 +1026,8 @@ class UpdateCtl(Part):
             text = f"This season's logos of {clubs['clubs']} clubs made on this PC. They show after your next Patch."
         if missing:
             text += (' ' if text else '') + (f"{clubs['clubs']} clubs matched, {missing} slot"
-                                             f"{'s' if missing != 1 else ''} without a club.")
+                                             f"{'s' if missing != 1 else ''} kept NHL 19's own logo "
+                                             f"(NHL 27 has no club for {'it' if missing == 1 else 'them'}).")
         if text:
             out.append({'part': 'Club logos', 'text': text})
         elif rec.get('clubart_skipped'):
