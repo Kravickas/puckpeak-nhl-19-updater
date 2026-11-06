@@ -105,7 +105,7 @@ function You({ s, go }) {
 
 function Pick({ s }) {
   const [code, setCode] = useState('');
-  const [pub, setPub] = useState(false);
+  const [pub, setPub] = useState(true);   // public by default (owner, 2026-11-06)
   const idle = !s.busy;
   return html`<div class="mp-body">
     <div class="mp-row">

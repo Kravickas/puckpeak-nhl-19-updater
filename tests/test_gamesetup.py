@@ -75,6 +75,17 @@ def test_shadnet_secrets_never_read_out(world):
     assert 'hunter2' not in repr(users) and 'tok' not in repr(users) and 'a@b.c' not in repr(users)
 
 
+def test_emulator_files_with_a_byte_order_mark_are_read(world):
+    # PowerShell and older Notepad save UTF-8 with a BOM; shadPS4 reads such files, so Overtime must too
+    plain = gamesetup.network_settings(str(world['user']))
+    assert any(v is not None for v in plain.values())
+    for name in ('users.json', 'config.json'):
+        path = world['user'] / name
+        path.write_text(path.read_text(encoding='utf-8'), encoding='utf-8-sig')
+    assert [u['npid'] for u in gamesetup.shadnet_users(str(world['user']))] == ['skater']
+    assert gamesetup.network_settings(str(world['user'])) == plain
+
+
 def test_install_and_remove_leave_nothing_behind(world):
     before = _tree(world['user'])
     text = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')

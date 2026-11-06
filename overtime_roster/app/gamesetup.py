@@ -121,7 +121,7 @@ def _read_launcher(data):
     with open(os.path.join(data, 'qt_ui.ini'), encoding='utf-8', newline='') as f:
         ini = f.read()
     try:
-        with open(os.path.join(data, 'versions.json'), encoding='utf-8') as f:
+        with open(os.path.join(data, 'versions.json'), encoding='utf-8-sig') as f:
             versions = json.load(f)
     except FileNotFoundError:
         versions = []
@@ -205,7 +205,7 @@ def launcher_emulators():
         return os.path.normpath(m.group(1).replace('\\\\', '\\')) if m and m.group(1) else ''
     paths = [setting('versionSelected')]
     try:
-        with open(os.path.join(data, 'versions.json'), encoding='utf-8') as f:
+        with open(os.path.join(data, 'versions.json'), encoding='utf-8-sig') as f:
             paths += [os.path.normpath(v['path']) for v in json.load(f) if isinstance(v, dict) and v.get('path')]
     except (OSError, ValueError):
         pass
@@ -278,7 +278,7 @@ def _walk(root, depth):
 def install_dirs(user_dir):
     """The game folders shadPS4 is set up to look in (config.json, General.install_dirs, enabled ones)."""
     try:
-        with open(os.path.join(user_dir, 'config.json'), encoding='utf-8') as f:
+        with open(os.path.join(user_dir, 'config.json'), encoding='utf-8-sig') as f:
             cfg = json.load(f)
     except (OSError, ValueError):
         return []
@@ -344,7 +344,7 @@ def shadnet_users(user_dir):
     Only these fields are read out of users.json ('password': whether one is filled in); e-mail, password and token
     never leave it."""
     try:
-        with open(os.path.join(user_dir, 'users.json'), encoding='utf-8') as f:
+        with open(os.path.join(user_dir, 'users.json'), encoding='utf-8-sig') as f:
             users = (json.load(f).get('Users') or {}).get('user') or []
     except (OSError, ValueError, AttributeError):
         return []
@@ -522,7 +522,7 @@ def network_settings(user_dir):
     values = {k: None for k in NETWORK}
     for path in (os.path.join(user_dir, 'config.json'), custom_config_path(user_dir)):
         try:
-            with open(path, encoding='utf-8') as f:
+            with open(path, encoding='utf-8-sig') as f:
                 cfg = json.load(f)
             found = {k: _net_value(cfg, k) for k in NETWORK}
         except (OSError, ValueError, AttributeError):
@@ -540,7 +540,7 @@ def network_on(user_dir):
 def _keys_on(path):
     """True when the config at `path` gives Overtime's network keys the values we need (status: only those keys are ours)."""
     try:
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding='utf-8-sig') as f:
             cfg = json.load(f)
         return all(_net_value(cfg, k) == v for k, v in NETWORK.items())
     except (OSError, ValueError, AttributeError):
@@ -594,13 +594,13 @@ def _game_config(cfg_path, user):
     launcher makes it. Refuses a file it could not put back (bad JSON, not an object)."""
     if os.path.exists(cfg_path):
         try:
-            with open(cfg_path, encoding='utf-8') as f:
+            with open(cfg_path, encoding='utf-8-sig') as f:
                 cfg = json.load(f)
         except ValueError as e:
             raise SetupError(f'{cfg_path} is not valid JSON ({e}); fix or delete it first')
     else:
         try:
-            with open(os.path.join(user, 'config.json'), encoding='utf-8') as f:
+            with open(os.path.join(user, 'config.json'), encoding='utf-8-sig') as f:
                 cfg = json.load(f)
         except (OSError, ValueError):
             cfg = {}
@@ -699,7 +699,7 @@ def remove(running=None):
             _write(path, _read(e['backup']))
             said.append(f'restored {path}')
         elif e.get('previous') is not None:
-            with open(path, encoding='utf-8') as f:
+            with open(path, encoding='utf-8-sig') as f:
                 cfg = json.load(f)
             general = cfg.setdefault('General', {})
             for k, v in e['previous'].items():

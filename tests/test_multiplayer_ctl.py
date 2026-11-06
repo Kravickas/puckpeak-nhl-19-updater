@@ -177,6 +177,13 @@ def test_create_shows_the_lobby_and_never_the_token(mp):
     assert 'Leave' in mp.create()['error']      # one lobby at a time
 
 
+def test_a_new_lobby_is_public_unless_asked_otherwise(mp):
+    mp.set_name('iksperial')
+    mp.set_ext('16349')
+    assert mp.create() == {'ok': True}
+    assert mp.service.calls[0] == ('create', 'iksperial', 16349, True)
+
+
 def test_join_validates_the_code_before_asking(mp):
     mp.set_name('Me')
     mp.set_ext('5')

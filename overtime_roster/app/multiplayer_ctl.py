@@ -300,7 +300,7 @@ class MultiplayerCtl(Part):
             jobs.log_block(err, f'Lobby service {where}'.rstrip())
 
     # --- lobby calls ---------------------------------------------------------------------------------------------
-    def create(self, public=False):
+    def create(self, public=True):
         return self._enter('create', lambda ext, name: self.client().create(name, ext, bool(public)))
 
     def join(self, code):

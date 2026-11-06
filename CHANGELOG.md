@@ -2,6 +2,23 @@
 
 What changed in each version, for players.
 
+## 0.60.2 (2026-11-07)
+
+### Fixed
+
+- **Online Versus: a player quitting no longer freezes the other game.** When your opponent leaves mid-match, your game
+  shows "Lost connection" and takes you out of the match instead of freezing on the ice. The match is not counted.
+  (Server update: works on every app version.)
+- **ShadNet showed as off** on PCs where shadPS4's settings files start with a byte-order mark (some editors save them
+  that way).
+
+### New
+
+- **Online Versus: pick your team.** Both players can change their team on the Online Versus setup screen; before, each
+  played their favourite team. (Server update.)
+- **Multiplayer: a new lobby is in the public list by default.** Untick "Show it in the public list" for a private lobby.
+- **Clean sheet:** the match history and standings start fresh with this release.
+
 ## 0.60.1 (2026-11-05)
 
 ### Changed
