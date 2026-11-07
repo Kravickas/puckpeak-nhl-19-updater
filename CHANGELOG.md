@@ -2,6 +2,25 @@
 
 What changed in each version, for players.
 
+## 0.70.2 (2026-11-07)
+
+### Added
+
+- **Hometown Remix jerseys (BETA).** A new switch in Game patch, Updated assets. Each NHL team gets its Hometown Remix
+  jersey in place of one of its other jerseys (Vegas: the away jersey, Utah: the third, Seattle: the alternate). Made on
+  your PC at Patch from retail photos, so colours, crest and stripes are close but not exact. Switch it off and Patch
+  again, and the normal jerseys are back. Not finished: expect rough edges.
+
+### Also in 0.70.1 (no more silent SIGN IN REQUIRED)
+
+- **Game patch** writes shadPS4's two network switches into the game's "Network" section too, and fills empty ShadNet
+  server fields there. Unpatch takes out what it added.
+- **Lobby start** is refused, with words, when shadPS4 has no ShadNet sign-in for NHL 19; after the game boots, the card
+  says so when the network is off or ShadNet refused the sign-in, instead of pressing through.
+- **Setup:** one "Find game..." button (shadPS4QtLauncher.exe, shadPS4.exe or NHL 19's eboot.bin).
+- **Game patch, "What's in your game now"** is a short verdict plus what is patched in and the Online row; less red in
+  the app (card numbers and markers are metal).
+
 ## 0.70.0 (2026-11-07)
 
 ### Changed

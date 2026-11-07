@@ -57,6 +57,11 @@
   --bad: #E60041;            /* RED_NEGATIVE */
   --gold: #FFEA8A;           /* GOLD */
   --glow: rgba(255, 93, 84, .22);
+  /* Puck Peak's metal (puckpeak.com --btnon/--bar): for labels that are not controls (card numbers, FEATURED); red is
+     kept for what can be pressed or switched (owner 2026-11-07: "too much red") */
+  --metal: linear-gradient(180deg, #FFFFFF 0%, #E3E8EE 45%, #9EA9B6 100%);
+  --metal-flat: #A3ADB8;
+  --metal-ink: #121A25;
 
   /* type */
   --font: 'Titillium Web', 'Segoe UI', system-ui, sans-serif;

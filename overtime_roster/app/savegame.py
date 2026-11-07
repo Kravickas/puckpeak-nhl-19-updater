@@ -354,7 +354,7 @@ def backup(save_dir, dest):
     os.makedirs(dest, exist_ok=False)
     for n in sorted(os.listdir(save_dir)):
         src = os.path.join(save_dir, n)
-        if os.path.isdir(src) and not n.startswith(('.overtime-tmp-', '.overtime-old-')):
+        if os.path.isdir(src) and not n.startswith(('.overtime-tmp-', '.overtime-old-', 'sce_')):   # sce_bu_*: shadPS4's
             shutil.copytree(src, os.path.join(dest, n))
             copied.append(n)
     return copied

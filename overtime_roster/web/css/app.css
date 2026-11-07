@@ -132,7 +132,7 @@ a:hover { color: var(--accent-hi); text-decoration: underline; }
     linear-gradient(90deg, #424852, var(--strip) 40%, #33373f);
   clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%); }
 .card-head .num { display: inline-grid; place-items: center; flex: none; min-width: 22px; height: 20px; padding: 0 5px;
-  background: var(--accent); color: #fff; font: 700 13px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style);
+  background: var(--metal); color: var(--metal-ink); font: 700 13px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style);
   clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
 .card-head .title { font-size: 15px; letter-spacing: .06em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-head .aside { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
@@ -140,16 +140,16 @@ a:hover { color: var(--accent-hi); text-decoration: underline; }
 .card-body.fill { flex: 1; display: flex; flex-direction: column; }
 .card-body.scroll { flex: 1; overflow-y: auto; }
 .card-foot { padding: 10px 12px; border-top: 1px solid var(--line); display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex: none; }
-.card.featured { box-shadow: inset 0 calc(-1 * var(--focus-bar)) 0 var(--accent), 0 10px 30px rgba(0,0,0,.35); }
+.card.featured { box-shadow: inset 0 calc(-1 * var(--focus-bar)) 0 var(--metal-flat), 0 10px 30px rgba(0,0,0,.35); }
 .scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .list { display: flex; flex-direction: column; gap: 4px; padding-right: 4px; }
 .sp { flex: 1; }
 
 /* --- FEATURED: NHL 19's tag, accent with stripes ---------------------------------------------------------------------- */
 .featured-tag { position: relative; display: inline-flex; align-items: center; height: 18px; padding: 0 8px 0 7px; margin-right: 40px;
-  background: var(--accent); color: #fff; font-size: 12px; letter-spacing: .04em; line-height: 1; white-space: nowrap; }
+  background: var(--metal); color: var(--metal-ink); font-size: 12px; letter-spacing: .04em; line-height: 1; white-space: nowrap; }
 .featured-tag::after { content: ''; position: absolute; left: 100%; top: 0; bottom: 0; width: 38px;
-  background: repeating-linear-gradient(118deg, var(--accent) 0 3px, transparent 3px 7px);
+  background: repeating-linear-gradient(118deg, var(--metal-flat) 0 3px, transparent 3px 7px);
   -webkit-mask-image: linear-gradient(90deg, #000, rgba(0,0,0,.2)); }
 
 /* --- buttons: tiles with caps; focus and hover light the tile and draw the red bar --------------------------------- */
@@ -272,7 +272,7 @@ select.field option { background: var(--panel); color: var(--text-soft); }
 .item.sel, .item:focus-visible { background: var(--tile-hi); outline: none; box-shadow: inset 0 calc(-1 * var(--focus-bar)) 0 var(--accent); }
 .item.off { cursor: default; opacity: .7; }
 .item.off:hover { background: var(--tile); }
-.item.featured { box-shadow: inset 3px 0 0 var(--accent); }
+.item.featured { box-shadow: inset 3px 0 0 var(--metal-flat); }
 .item.featured.sel { box-shadow: inset 3px 0 0 var(--accent), inset 0 calc(-1 * var(--focus-bar)) 0 var(--accent); }
 .item .main { flex: 1; min-width: 0; }
 .item .title { font-size: 14.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -317,7 +317,7 @@ select.field option { background: var(--panel); color: var(--text-soft); }
 .info-pop .i-parts > .i-part:first-child .i-head { margin-top: 6px; }
 .info-pop ul { margin: 0; padding-left: 17px; }
 .info-pop li { margin: 3px 0; font-size: 13px; line-height: 1.42; break-inside: avoid; }
-.info-pop li::marker { color: var(--accent); }
+.info-pop li::marker { color: var(--metal-flat); }
 .info-pop p { margin: 6px 0 0; font-size: 13px; line-height: 1.42; }
 
 /* --- the team rail --------------------------------------------------------------------------------------------------- */
@@ -414,7 +414,7 @@ select.field option { background: var(--panel); color: var(--text-soft); }
 .modal.full { width: calc(100% - 16px); height: calc(100% - 16px); max-height: none; }
 .modal.full .m-body { flex: 1; }
 .modal .m-head { flex: none; padding: 16px 22px 8px; font-size: 24px; letter-spacing: .03em; color: var(--text); }
-.modal .m-head::after { content: ''; display: block; width: 34px; height: 3px; margin-top: 7px; background: var(--accent);
+.modal .m-head::after { content: ''; display: block; width: 34px; height: 3px; margin-top: 7px; background: var(--metal-flat);
   transform: skewX(var(--slant)); }
 .modal.bad .m-head::after { background: var(--bad); }
 .modal.bad .m-head { color: #ff4f7b; }
@@ -462,11 +462,11 @@ select.field option { background: var(--panel); color: var(--text-soft); }
 
 /* the order Update > Game patch > Active Roster (ui.js Order), on both tabs */
 .order { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 12px; border: 1px solid var(--line);
-  border-left: 3px solid var(--accent); font-size: 13px; color: var(--text-2); background: rgba(255, 255, 255, .02); }
+  border-left: 3px solid var(--metal-flat); font-size: 13px; color: var(--text-2); background: rgba(255, 255, 255, .02); }
 .order-step { display: inline-flex; align-items: baseline; gap: 6px; padding: 0; border: 0; background: none; font: inherit; color: var(--text-2); }
 button.order-step { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 button.order-step:hover { color: var(--text); }
 .order-step b { display: inline-block; min-width: 18px; text-align: center; font-weight: 700; color: var(--text-3); }
 .order-step.here { color: var(--text); font-weight: 700; }
-.order-step.here b { color: var(--accent); }
+.order-step.here b { color: var(--metal-flat); }
 .order-arrow { color: var(--text-3); }

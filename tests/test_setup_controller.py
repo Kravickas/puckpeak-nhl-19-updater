@@ -147,6 +147,26 @@ def test_emulator_pick(sc, tmp_path):
     assert sc.ctl.prefs['setup']['emulator'] == str(sc.world['emu'])
 
 
+def test_find_game_takes_the_games_eboot(sc, tmp_path, monkeypatch):
+    """Find game (owner 2026-11-07): NHL 19's eboot.bin sets the game folder and the shadPS4 the player runs."""
+    game = sc.world['game']                         # a game read_game accepts (a broken one is not kept)
+    sc.ctl.game_dir = ''
+    monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2: [str(sc.world['emu'])])
+    assert sc.setup_set_emulator(str(game / 'eboot.bin')) == {'ok': True}
+    assert sc.ctl.game_dir == str(game) and sc.ctl.prefs['setup']['emulator'] == str(sc.world['emu'])
+    monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2: [])
+    out = sc.setup_set_emulator(str(game))          # the folder works too; no shadPS4 found: says what to pick
+    assert 'shadPS4QtLauncher.exe' in out['error'] and sc.ctl.game_dir == str(game)
+
+
+def test_assets_store_says_the_total_and_the_wait(sc):
+    sc.packs = [{'name': 'people.zip', 'size': 2 * 2**30, 'local_size': 300 * 2**20, 'removable': True},
+                {'name': 'photos.zip', 'size': 2**29, 'local_size': 0},
+                {'name': SC.BOOST_PACK, 'size': 2**30, 'local_size': 0}]
+    st = sc.assets_store()
+    assert st['size'] == '300 MB' and st['total'] == 'about 2.5 GB' and '65%' in st['wait'] and st['can_remove']
+
+
 def test_play_refusal_is_reported(sc, monkeypatch):
     def refuse(*a, **kw):
         raise launch.LaunchError('shadPS4 is already running.')

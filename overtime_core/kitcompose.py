@@ -33,7 +33,9 @@ from . import art, eb, gamefiles, gnf
 
 KIND, FORMAT = 'kitlayers', 1
 # family: the source pack (a download with its own switch), the switch (patch_ctl), the pack served (its name)
-FAMILIES = ('nhl', 'intl', 'clubs')
+# hometown (the owner's Hometown Remix photos, tools/build_hometown.py) comes last: where it and NHL 27's alternate
+# take the same row it wins, and the patch serves it after looks.zip too (patch.art_packs)
+FAMILIES = ('nhl', 'intl', 'clubs', 'hometown')
 SOURCE = "NHL 27's jerseys, made on this PC"
 DRAWING = '1'                   # bump when a step draws differently: every composed pack is made again
 HEAD = 0x100                    # a GNF's header: all gnf.make needs of its template
@@ -80,9 +82,9 @@ class Source:
         self.files = info.get('files') or {}
         self.members = info.get('members') or {}
         for p, step in self.files.items():
-            member = step.get('picture') or step.get('mask')
-            if member is not None and member not in self.members:
-                raise art.ArtError(f'{path}: {p} names {member}, which the pack lacks')
+            for member in (step.get('picture') or step.get('mask'), step.get('plain_mask')):
+                if member is not None and member not in self.members:
+                    raise art.ArtError(f'{path}: {p} names {member}, which the pack lacks')
         h = hashlib.sha256()
         with open(path, 'rb') as f:
             for block in iter(lambda: f.read(1 << 20), b''):
@@ -116,16 +118,21 @@ def make(template, img):
     return gnf.make(template, img)
 
 
-def cover(raw, mask):
+def cover(raw, mask, plain_mask=None, plain=None):
     """The GNF `raw` with the blocks under `mask` (an L picture, SIZE x SIZE, not 0 = cover) copied from plain fabric:
     below MIRROR_Y from the mirrored row (SIZE - 1 - y, the back), above it from LIFT rows higher. Every mip of 8 blocks
-    across or more; blocks are copied as stored (a SNORM normal map is never re-encoded)."""
+    across or more; blocks are copied as stored (a SNORM normal map is never re-encoded). `plain_mask` (same kind) with
+    `plain` = (front row, back row): the blocks under it come from those rows of the same column instead (the old kit's
+    stripes, whose mirrored row is another stripe), `mask` first."""
     g = gnf.Gnf(raw)
     t = g.texture
     bpe, blk = gnf.FMT_BPE[t.fmt]
     px = mask.convert('L').tobytes()
     if len(px) != SIZE * SIZE:
         raise gnf.GnfError(f'a cover mask is {SIZE} x {SIZE}')
+    if plain_mask is not None:
+        flat_px = plain_mask.convert('L').tobytes()
+        px = bytes(a if a else (2 if b else 0) for a, b in zip(px, flat_px))     # 2 = from the plain rows
     out = []
     for lvl, data in enumerate(gnf.detile(t, g.data())):
         w, h = max(1, t.width >> lvl), max(1, t.height >> lvl)
@@ -144,8 +151,12 @@ def cover(raw, mask):
                 continue
             sy = SIZE - 1 - yy if yy >= MIRROR_Y else yy - LIFT
             src = min(bh - 1, max(0, int(sy * bh / SIZE))) * row
+            if plain_mask is not None:
+                py = plain[0] if yy >= MIRROR_Y else plain[1]
+                src_plain = min(bh - 1, max(0, int(py * bh / SIZE))) * row
             for bx in hits:
-                o, s = by * row + bx * bpe, src + bx * bpe
+                from_plain = plain_mask is not None and px[line + cols[bx]] == 2
+                o, s = by * row + bx * bpe, (src_plain if from_plain else src) + bx * bpe
                 arr[o:o + bpe] = arr[s:s + bpe]
         out.append(bytes(arr))
     return gnf.from_mips(raw, out)
@@ -218,22 +229,136 @@ def pants(raw, main, trim=None):
     return gnf.make(raw, out)
 
 
-def run(step, raw, picture):
+FONT_GAP = 60                   # font: a colour this far (sum of the channels) from the sheet's three inks is none of them
+
+
+def _inks(img, alpha):
+    """The number sheet's (fill, middle, edge) colours: the commonest colour, the commonest on the glyphs' rim, and the
+    commonest of the rest far from both (the rim's when the sheet has only two). Each the median of its pixels."""
+    from PIL import Image, ImageChops, ImageFilter
+    opaque = alpha.point(lambda v: 255 if v > 200 else 0)
+    inner = opaque.filter(ImageFilter.MinFilter(5))
+    rim = ImageChops.subtract(opaque, inner)
+
+    def bins(mask):
+        ground = Image.new('RGB', img.size, (255, 0, 255))
+        small = Image.composite(img, ground, mask).resize((256, 256), Image.NEAREST)
+        got = [(n, c) for n, c in (small.point(lambda v: v & 0xF0)).getcolors(256 * 256) if c != (240, 0, 240)]
+        return sorted(got, reverse=True)
+    body, edge_bins = bins(opaque), bins(rim)
+    fill, edge = body[0][1], edge_bins[0][1]
+    mid = next((c for _n, c in body if sum(abs(a - b) for a, b in zip(c, fill)) > FONT_GAP
+                and sum(abs(a - b) for a, b in zip(c, edge)) > FONT_GAP), edge)
+    return fill, mid, edge
+
+
+def _sub(u, v):
+    return [x - y for x, y in zip(u, v)]
+
+
+def _cross(u, v):
+    return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+
+
+def _len(u):
+    return sum(x * x for x in u) ** 0.5
+
+
+def _mix_matrix(ink, target):
+    """The 12 numbers of the RGB -> RGB map (3 x 3 and an offset) that sends ink[i] to target[i] (i = 0..2) and every
+    mixture of the inks to the same mixture of the targets: the plane through the inks onto the plane through the
+    targets, the direction across it kept as it is. None when two inks are alike (no plane)."""
+    i0, i1, i2 = ([float(v) for v in c] for c in ink)
+    t0, t1, t2 = ([float(v) for v in c] for c in target)
+    d1, d2 = _sub(i1, i0), _sub(i2, i0)
+    n = _cross(d1, d2)
+    if _len(n) < 0.05 * _len(d1) * _len(d2) or _len(d1) < 1 or _len(d2) < 1:
+        return None
+    e1, e2 = _sub(t1, t0), _sub(t2, t0)
+    m = _cross(e1, e2)
+    across = [x * _len(n) / _len(m) for x in m] if _len(m) > 1e-6 else n
+    cols_i, cols_t = (d1, d2, n), (e1, e2, across)          # as columns of P and Q: B = Q P^-1
+    cof = [[0.0] * 3 for _ in range(3)]
+    for r in range(3):
+        for c in range(3):
+            cof[r][c] = (cols_i[(c + 1) % 3][(r + 1) % 3] * cols_i[(c + 2) % 3][(r + 2) % 3]
+                         - cols_i[(c + 1) % 3][(r + 2) % 3] * cols_i[(c + 2) % 3][(r + 1) % 3])
+    det = sum(cols_i[0][r] * cof[r][0] for r in range(3))
+    inv = [[cof[r][c] / det for r in range(3)] for c in range(3)]     # P^-1 (row c, column r), P[r][c] = cols_i[c][r]
+    b = [[sum(cols_t[k][r] * inv[k][c] for k in range(3)) for c in range(3)] for r in range(3)]
+    off = [t0[r] - sum(b[r][c] * i0[c] for c in range(3)) for r in range(3)]
+    return tuple(v for r in range(3) for v in (*b[r], off[r]))
+
+
+def _font_image(raw, fill, edge, mid=None):
+    """`font`'s RGBA image."""
+    from PIL import Image, ImageChops
+    img = gnf.to_image(raw).convert('RGBA')
+    rgb, alpha = img.convert('RGB'), img.getchannel('A')
+    ink = _inks(rgb, alpha)
+    target = (tuple(fill), tuple(mid or edge), tuple(edge))
+    matrix = _mix_matrix(ink, target)
+    if matrix:     # the soft edges between the inks are mixtures: a linear map keeps them mixtures of the new inks
+        out = rgb.convert('RGB', matrix)
+        out.putalpha(alpha)
+        return out
+    gaps = [ImageChops.add(ImageChops.difference(rgb, Image.new('RGB', rgb.size, c)).convert('L', (1, 1, 1, 0)),
+            Image.new('L', rgb.size, k)) for k, c in enumerate(ink)]      # a tie goes to the earlier ink
+    out = Image.new('RGB', rgb.size, target[0])
+    for k in (1, 2):
+        # this ink where it is nearer than every earlier one
+        nearer = ImageChops.subtract(gaps[0], gaps[k], 1, 0)
+        better = nearer
+        for j in range(1, 3):
+            if j != k:
+                better = ImageChops.darker(better, ImageChops.subtract(gaps[j], gaps[k], 1, 0))
+        out.paste(Image.new('RGB', rgb.size, target[k]), mask=better.point(lambda v: 255 if v > 0 else 0))
+    out.putalpha(alpha)
+    return out
+
+
+SHAPE_FROM = 215        # the sheet's rows from here down hold the digits; above are the letters (on a 1024 sheet)
+SHAPE_C_A = (840, 160)  # the captain's C and A stand right of the letters, from this x and y down
+
+
+def font(raw, fill, edge, mid=None, shape=None):
+    """The game's number sheet `raw` in other colours: its three inks (the glyph's body, its inner outline, its outer
+    outline; found from the sheet itself, `_inks`) become `fill`, `mid` (`edge` when None) and `edge`; the shape and the
+    soft edge (alpha) are the game's. `shape`: another sheet (same layout) whose digits replace this one's, in the same
+    colours (a font whose digits carry flares the kit's own number does not)."""
+    out = _font_image(raw, fill, edge, mid)
+    if shape is not None:
+        other = _font_image(shape, fill, edge, mid)
+        if other.size != out.size:
+            other = other.resize(out.size)
+        cut = SHAPE_FROM * out.size[1] // 1024
+        out.paste(other.crop((0, cut, out.size[0], out.size[1])), (0, cut))
+        x0, y0 = SHAPE_C_A[0] * out.size[0] // 1024, SHAPE_C_A[1] * out.size[1] // 1024
+        out.paste(other.crop((x0, y0, out.size[0], cut)), (x0, y0))
+    return gnf.make(raw, out)
+
+
+def run(step, raw, picture, read=None):
     """The GNF of one step on the game's file `raw` (its header is enough for make / flat); `picture(member)` reads the
-    source's pictures."""
+    source's pictures, `read(path)` another of the game's files."""
     op = step.get('op')
     if op == 'make':
         return make(raw, picture(step['picture']))
     if op == 'cover':
+        if step.get('plain_mask'):
+            return cover(raw, picture(step['mask']), picture(step['plain_mask']), step['plain'])
         return cover(raw, picture(step['mask']))
     if op == 'flat':
         return flat(raw)
     if op == 'pants':
         return pants(raw, step['main'], step.get('trim'))
+    if op == 'font':
+        shape = read(step['shape']) if step.get('shape') and read else None
+        return font(raw, step['fill'], step['edge'], step.get('mid'), shape)
     raise art.ArtError(f'unknown step {op!r}')
 
 
-WHOLE = ('cover', 'pants')      # the steps that read the game's whole file
+WHOLE = ('cover', 'pants', 'font')      # the steps that read the game's whole file
 
 
 # --- the NHL teams' own pants -------------------------------------------------------------------------------------------
@@ -341,7 +466,7 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
     tmp = out_path + '.tmp'
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     try:
-        _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today)
+        _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where)
     finally:
         source.close()
     if not shas:
@@ -354,7 +479,7 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
     return counts
 
 
-def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today):
+def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where):
     done = 0
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
         for big, ps in sorted(by_arc.items()):
@@ -365,7 +490,7 @@ def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, 
                         raw = arc.read(p) if step.get('op') in WHOLE else arc.head(p, HEAD)
                         if gnf.Gnf(raw).data_off > len(raw):
                             raw = arc.read(p)
-                        data = run(step, raw, picture)
+                        data = run(step, raw, picture, lambda q: _read_other(where, q, big, arc))
                         art.check_file(p, data)
                     except (art.ArtError, gnf.GnfError, OSError, ValueError, KeyError) as err:
                         say(f'jerseys: {p} not made ({err})')
@@ -382,6 +507,16 @@ def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, 
                 'source': SOURCE, 'files': dict(sorted(shas.items())), 'made': key,
                 'alternates': [a for a in source.info.get('alternates') or [] if _rows_made(a, source, shas)]}
         z.writestr(zipfile.ZipInfo(art.MANIFEST, STAMP), json.dumps(info, indent=1, sort_keys=True))
+
+
+def _read_other(where, path, big, arc):
+    """The game's whole file `path` (from the archive being read, or the one that has it)."""
+    if path not in where:
+        raise KeyError(path)
+    if where[path] == big:
+        return arc.read(path)
+    with eb.EbArchive(where[path]) as other:
+        return other.read(path)
 
 
 def _rows_made(row, source, shas):

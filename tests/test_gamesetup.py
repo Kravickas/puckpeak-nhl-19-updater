@@ -173,7 +173,46 @@ def test_changed_custom_config_gets_only_our_keys_back(world):
     cfg['General']['shad_net_enabled'] = True
     path.write_text(json.dumps(cfg))
     gamesetup.remove(running=lambda: False)
-    assert json.loads(path.read_text())['General'] == {'connected_to_network': False, 'volume_slider': 80}
+    back = json.loads(path.read_text())
+    assert back['General'] == {'connected_to_network': False, 'volume_slider': 80} and 'Network' not in back
+
+
+def test_install_writes_the_network_section_too_and_remove_puts_it_back(world):
+    """Live 2026-11-07: the launcher's game-specific Network tab was blank with the keys in "General" only."""
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    path.write_text(json.dumps({'General': dict(gamesetup.NETWORK), 'Network': {'enable_upnp': True,
+                                                                                'shad_net_enabled': False}}))
+    assert not gamesetup.network_written(str(world['user']))
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    cfg = json.loads(path.read_text())
+    assert cfg['Network'] == {'enable_upnp': True, **gamesetup.NETWORK, **gamesetup.SERVERS}
+    assert gamesetup.network_written(str(world['user']))
+    cfg['General']['volume_slider'] = 70                # the user's own edit: remove() then puts back only our keys
+    path.write_text(json.dumps(cfg))
+    gamesetup.remove(running=lambda: False)
+    assert json.loads(path.read_text())['Network'] == {'enable_upnp': True, 'shad_net_enabled': False}
+
+
+def test_empty_servers_are_filled_from_the_shared_config(world):
+    """Live 2026-11-07: the tester's game-specific Network tab had empty servers until he typed them."""
+    (world['user'] / 'config.json').write_text(json.dumps({'Network': {'shadnet_server': 'my.host:1',
+                                                                       'shadnet_webapi_server': ''}}))
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    path.write_text(json.dumps({'General': {}, 'Network': {'shadnet_server': '', 'p2p_port': 3658}}))
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    net = json.loads(path.read_text())['Network']
+    assert net['shadnet_server'] == 'my.host:1' and net['p2p_port'] == 3658
+    assert net['shadnet_webapi_server'] == gamesetup.SERVERS['shadnet_webapi_server']
+
+
+def test_a_key_off_in_the_network_section_is_a_problem(world):
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    cfg = json.loads(path.read_text())
+    cfg['Network']['connected_to_network'] = False      # the launcher saved its blank tab
+    path.write_text(json.dumps(cfg))
+    assert gamesetup.status(str(world['emu']))['problems'] == [f'network switched off: {path}']
+    assert not gamesetup.network_written(str(world['user']))
 
 
 def test_failed_install_is_still_undone(world, monkeypatch):
@@ -223,7 +262,8 @@ def test_repatch_after_user_edit_keeps_the_edit(world):
     path.write_text(json.dumps(cfg))
     gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)  # "Patch again"
     gamesetup.remove(running=lambda: False)
-    assert json.loads(path.read_text())['General'] == {'connected_to_network': False, 'volume_slider': 80}
+    back = json.loads(path.read_text())
+    assert back['General'] == {'connected_to_network': False, 'volume_slider': 80} and 'Network' not in back
 
 
 def test_created_config_changed_by_user_gets_our_keys_back(world):
@@ -240,7 +280,8 @@ def test_created_config_changed_by_user_gets_our_keys_back(world):
 
 def test_config_already_right_is_not_touched(world):
     path = world['user'] / 'custom_configs' / 'CUSA11126.json'
-    raw = json.dumps({'General': dict(gamesetup.NETWORK)}).encode()
+    raw = json.dumps({'General': dict(gamesetup.NETWORK),
+                      'Network': dict(gamesetup.NETWORK, **gamesetup.SERVERS)}).encode()
     path.write_bytes(raw)
     m = gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     assert path.as_posix() not in [p.replace('\\', '/') for p in (e['path'] for e in m['files'])]
@@ -269,18 +310,6 @@ def test_snapshot_and_compare(world):
     (world['game'] / 'extra.txt').write_text('x')
     assert gamesetup.compare(full, gamesetup.snapshot(str(world['game']), full=True)) == [
         ('eboot.bin', 'content'), ('extra.txt', 'added')]
-
-
-def test_copy_game(world):
-    dst = world['tmp'] / 'copy' / 'NHL 19'
-    gamesetup.copy_game(str(world['game']), str(dst))
-    assert _tree(dst) == _tree(world['game'])
-    with pytest.raises(gamesetup.SetupError):
-        gamesetup.copy_game(str(world['game']), str(dst))  # not empty
-    with pytest.raises(gamesetup.SetupError):
-        gamesetup.copy_game(str(world['game']), str(world['game'] / 'inside'))
-    with pytest.raises(gamesetup.SetupError):
-        gamesetup.copy_game(str(world['game']), str(world['tmp'] / 'other'), margin=1 << 60)
 
 
 def test_launch_command_and_refusals(world):
@@ -525,7 +554,7 @@ def test_network_section_of_a_newer_shadps4_is_switched_too(world):
     assert not gamesetup.network_on(str(world['user']))
     gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     cfg = json.loads(path.read_text())
-    assert cfg['Network'] == {'connected_to_network': True, 'shad_net_enabled': True, 'upnp': 1}
+    assert cfg['Network'] == {'connected_to_network': True, 'shad_net_enabled': True, 'upnp': 1, **gamesetup.SERVERS}
     assert cfg['General']['connected_to_network'] is True
     assert gamesetup.network_on(str(world['user']))
     st = gamesetup.status(str(world['emu']))
@@ -548,4 +577,4 @@ def test_config_json_copy_with_network_section(world):
     gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     assert gamesetup.network_on(str(world['user']))
     made = json.loads((world['user'] / 'custom_configs' / 'CUSA11126.json').read_text())
-    assert made['Network'] == {'connected_to_network': True, 'shad_net_enabled': True}
+    assert made['Network'] == {'connected_to_network': True, 'shad_net_enabled': True, **gamesetup.SERVERS}

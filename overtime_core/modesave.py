@@ -105,10 +105,12 @@ def read(folder, schema=None):
 
 
 def list_saves(save_dir):
-    """Folder names in a title's save dir that hold a SaveLoad container."""
+    """Folder names in a title's save dir that hold a SaveLoad container. sce_* folders are shadPS4's own (newer
+    builds keep save backups next to the saves as sce_bu_<name>), never a save."""
     if not os.path.isdir(save_dir):
         return []
-    return sorted(n for n in os.listdir(save_dir) if os.path.isfile(os.path.join(save_dir, n, 'INDEX')))
+    return sorted(n for n in os.listdir(save_dir)
+                  if not n.startswith('sce_') and os.path.isfile(os.path.join(save_dir, n, 'INDEX')))
 
 
 def summary(folder, schema=None):

@@ -8,7 +8,7 @@
 
 /* --- the From bar: the open roster, its date and version ------------------------------------------------------------ */
 .tab-update .up-from { flex-direction: row; align-items: center; gap: 10px; min-height: 40px; padding: 5px 8px 5px 14px;
-  box-shadow: inset 3px 0 0 var(--accent), 0 10px 30px rgba(0, 0, 0, .35); }
+  box-shadow: inset 3px 0 0 var(--metal-flat), 0 10px 30px rgba(0, 0, 0, .35); }
 .tab-update .up-from-label { flex: none; font-size: 13px; color: var(--text-3); letter-spacing: .1em; }
 .tab-update .up-from-name { flex: none; font-size: 16px; font-weight: 700; color: var(--text); white-space: nowrap; }
 .tab-update .up-from-date { flex: none; font-size: 13px; color: var(--text-2); white-space: nowrap; }
@@ -43,7 +43,7 @@
 .tab-update .up-step.locked:not(.on) .up-step-sub { color: var(--text-3); }
 /* the choices: the calendar's season and length, where the data comes from */
 .tab-update .up-bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; padding: 7px 10px 7px 14px;
-  background: var(--tile); box-shadow: inset 3px 0 0 var(--accent); }
+  background: var(--tile); box-shadow: inset 3px 0 0 var(--metal-flat); }
 .tab-update .up-opt { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
 .tab-update .up-opt-label { font-size: 13px; letter-spacing: .1em; color: var(--text-3); margin-right: 2px; }
 .tab-update .up-opt.off .up-opt-label { opacity: .6; }
@@ -110,7 +110,7 @@
 .modal.up-changes .up-l-sum { margin: 0 0 10px; color: var(--text-2); }
 .modal.up-changes .up-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .modal.up-changes .up-l-head { display: flex; align-items: center; gap: 8px; padding-bottom: 5px; margin-bottom: 4px;
-  border-bottom: 1px solid var(--line-hi); font-size: 14px; color: var(--accent); }
+  border-bottom: 1px solid var(--line-hi); font-size: 14px; color: var(--metal-flat); }
 .modal.up-changes .up-l-count { color: var(--text-3); }
 .modal.up-changes .up-l-rows { margin: 0; padding: 0; list-style: none; }
 .modal.up-changes .up-l-rows li { display: grid; grid-template-columns: minmax(0, 1fr) 28px 92px; gap: 8px; align-items: baseline;

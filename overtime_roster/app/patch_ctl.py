@@ -77,8 +77,16 @@ EXTRA_TITLES = {'ice_all': ('Centre ice of every league', 'The centre ice of eve
                 'alts_nhl': ('NHL alternate jerseys', "The NHL teams' updated alternate jerseys, made on this PC at Patch."),
                 'alts_intl': ('National team jerseys', 'Updated main and alternate jerseys of the national teams, made on '
                               'this PC at Patch.'),
+                'alts_hometown': ('Hometown Remix jerseys (BETA)', "Each team's Hometown Remix jersey, in place of one of its "
+                                  'other jerseys. Switched off, they all come back.'),
                 'alts_clubs': ('Club jerseys of every league', 'Updated jerseys of the AHL, ECHL, junior and European '
                                'clubs, made on this PC at Patch (a few minutes the first time, about 3 GB on the disk).')}
+# the "?" text of the Hometown Remix switch: which jersey it takes the place of (tools/build_hometown.py picks the rows)
+EXTRA_INFOS = {'alts_hometown': (
+    "Beta, not finished: the photos are approximate. Adds each team's Hometown Remix jersey as an alternate, made on this PC at Patch. It takes the place of one jersey "
+    'per team. Vegas: the away jersey. Utah: the third jersey. Seattle: the alternate. Winnipeg, Calgary, Columbus, '
+    'Dallas, Edmonton, Montreal, New Jersey and Ottawa: one of the alternates. The other 21 teams: one of their old '
+    'throwback jerseys. Switch it off and Patch again, and every one of them is back as it was.')}
 # every asset switch and the packs it downloads when switched on (v0.70.0: one switch, one download, no bundle)
 ASSET_PACKS = {'art': (*PACK_FILES['art'], patch.CLUBART_PACK), 'photos': PACK_FILES['photos'],
                'kits': PACK_FILES['kits'], **{key: (name,) for key, name in EXTRA_KEYS.items()}}
@@ -91,7 +99,7 @@ GROUPS = (
     ('menus', 'Menus and server texts', 'The hub without the closed modes; Overtime in the messages.',
      ('text', 'menus', 'chel'), ('text', 'menus')),
     ('assets', 'Updated assets', 'Logos, jerseys, centre ice and player photos. Each downloads when you switch it on.',
-     ('art', 'kits', 'photos', 'alts_nhl', 'alts_intl', 'alts_clubs', 'ice_all', 'rink'), ('art', 'kits', 'photos')),
+     ('art', 'kits', 'photos', 'alts_nhl', 'alts_intl', 'alts_clubs', 'alts_hometown', 'ice_all', 'rink'), ('art', 'kits', 'photos')),
 )
 COMING = {'title': '32 teams in every mode',
           'sub': 'Classic Franchise and NHL Season with both Seattle and Utah. Today a 32 Team Expansion Draft Franchise '
@@ -644,37 +652,29 @@ def verify_text(v, files=None):
         return {'text': text, 'tone': 'good', 'date': date}
     first = str(diff[0][0] if isinstance(diff[0], (list, tuple)) else diff[0])
     if len(diff) == 1:
-        text = f'{first} is not as it came. Put it back from your spare copy, or install NHL 19 again in shadPS4.'
+        text = f'{first} is not as it came. Install NHL 19 again in shadPS4.'
     else:
-        text = (f'{len(diff)} game files are not as they came, {first} first. Put them back from your spare copy, or '
-                'install NHL 19 again in shadPS4.')
+        text = (f'{len(diff)} game files are not as they came, {first} first. Install NHL 19 '
+                'again in shadPS4.')
     return {'text': text, 'tone': 'bad', 'date': date}
 
 
-def copy(setup, dst):
-    """A full copy of the clean game to a folder (a spare for when the game folder breaks)."""
-    ctl = setup.ctl
-    game_dir = ctl.game_dir
-    to = (dst or '').strip().strip('"')
-    if not to:
-        ctl.say('Type where the copy goes first, for example D:\\Games\\NHL 19 copy.', 'caution')
-        return None
-
-    def work(step):
-        def progress(done, total):
-            step(f'{done / 2**30:.1f} of {total / 2**30:.1f} GB', done / total if total else -1)
-        return gamesetup.copy_game(game_dir, to, progress=progress)
-
-    def said(out):
-        setup.copy_result = {'path': out, 'when': time.strftime('%Y-%m-%d %H:%M')}
-        return f'Copied NHL 19 to {out}. Keep it as a spare.', 'good'
-    return run_job(setup, 'Copying NHL 19...', work, said, 'The copy stopped')
-
-
-def copy_text(copied):
-    """{path, text, date} of the last full copy (setup.copy_result)."""
-    date = friendly_date(copied.get('when'))
-    return {'path': copied['path'], 'date': date, 'text': f"Copied to {copied['path']} {date}".strip() + '.'}
+def online_facts(setup):
+    """What "What's in your game now" says about playing online: the server the patch points at, whether shadPS4's
+    network switches are on for NHL 19 (both config sections, gamesetup.network_written), and who NHL 19 signs in to
+    ShadNet as. {'server', 'network': True/False/None, 'shadnet': Online ID or ''} (None/'': shadPS4 not set up)."""
+    emu = setup.known_emulator()
+    user = gamesetup.emu_user_dir(emu) if emu else ''
+    out = {'server': (setup.server or {}).get('host') or '', 'network': None, 'shadnet': ''}
+    if not user:
+        return out
+    try:
+        out['network'] = gamesetup.network_on(user) and gamesetup.network_written(user)
+        one = gamesetup.shadnet_player(user) or {}
+        out['shadnet'] = (one.get('npid') or '') if one.get('shadnet') else ''
+    except (OSError, ValueError, gamesetup.SetupError):
+        pass
+    return out
 
 
 def play(setup):
@@ -718,7 +718,7 @@ def refresh_network(setup):
         setup.ctl.host.log(f'The server was not put into the patch file: {err}')
         return None
     user = gamesetup.emu_user_dir(emu)
-    if new == text and gamesetup.network_on(user):
+    if new == text and gamesetup.network_on(user) and gamesetup.network_written(user):
         return 'same'
     if overlay.emulator_running():
         return 'later'
@@ -1098,6 +1098,7 @@ class PatchCtl(Part):
     def view(self):
         c = self.ctl
         found = packs_here(cache_dir())
+        online = online_facts(c.setup)      # files only: read before the lock
         with c.lock:
             f = self.facts(found=found)
             st, want, picked, now, patched = f['st'], f['want'], f['picked'], f['served'], f['patched']
@@ -1106,7 +1107,6 @@ class PatchCtl(Part):
             files = self.file_list(st)
             setup = c.setup
             verify = getattr(setup, 'verify_result', None)
-            copied = getattr(setup, 'copy_result', None)
             emulator = setup.known_emulator()
             _folder, size, count = self.size
             rows = []
@@ -1152,8 +1152,8 @@ class PatchCtl(Part):
                               'list': files},
                     'problems': f['problems'],
                     'verify': verify_text(verify, count) if verify else None,
-                    'copy': copy_text(copied) if copied else None,
                     'size': size_text(size),
+                    'online': online,
                 },
                 'about': [{'head': h, 'items': list(items)} for h, items in ABOUT],
                 'names': [{'what': w, 'from': a, 'to': b} for w, a, b in NAMES],

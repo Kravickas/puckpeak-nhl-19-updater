@@ -413,3 +413,17 @@ def test_cached_alternates_read_the_jersey_layer_packs_pack_json(tmp_path):
     db = {art.STOCK_JERSEYS: _Bios([{'teamid': 0, 'style': 1, 'variant': 4, 'locstring': 6}])}
     assert art.alternate_rows(db, packs) == 1
     assert art.cached_alternates(str(tmp_path / 'nothing')) == []
+
+
+def test_cached_alternates_only_count_the_families_switched_on(tmp_path):
+    import json
+    import zipfile
+    for fam, variant in (('nhl', 4), ('hometown', 3)):
+        with zipfile.ZipFile(tmp_path / f'kitlayers_{fam}.zip', 'w') as z:
+            z.writestr(art.MANIFEST, json.dumps({'alternates': [
+                {'teamid': 0, 'style': 1, 'variant': variant, 'locstring': 2}]}))
+    assert [p.name for p in art.cached_alternates(str(tmp_path))] == ['kitlayers_hometown', 'kitlayers_nhl']
+    assert [p.name for p in art.cached_alternates(str(tmp_path), ['nhl'])] == ['kitlayers_nhl']
+    assert [p.name for p in art.cached_alternates(str(tmp_path), ['nhl', 'hometown'])] == [
+        'kitlayers_nhl', 'kitlayers_hometown']                  # the family order: the last wins a row
+    assert art.cached_alternates(str(tmp_path), []) == []

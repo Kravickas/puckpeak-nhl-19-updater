@@ -60,6 +60,8 @@ LOCAL = ('127.0.0.1', 'localhost', '::1')
 DOWN_TEXT = 'The lobby service did not answer. Check your internet, then press Check again.'
 CERT_TEXT = ("This PC could not check the server's certificate. Update Windows, then press Check again. If it stays, "
              'send us the error log.')
+SIGNIN_MISSING = ('shadPS4 has no ShadNet sign-in for NHL 19. Sign in to ShadNet on the Multiplayer tab (with shadPS4 '
+                  'and its launcher closed), then Ready again.')
 EXPECTED = (LC.LobbyError, gamesetup.SetupError, launch.LaunchError, overlay.PatchError)
 
 # the step list of the launch card (docs/ui/multiplayer.md)
@@ -197,6 +199,9 @@ class MultiplayerCtl(Part):
         npid, password = gamesetup.shadnet_check(npid, password)
         if overlay.emulator_running():
             raise gamesetup.SetupError('shadPS4 is running. Close the game first, then try again.')
+        if overlay.launcher_running():
+            raise gamesetup.SetupError("shadPS4's launcher is open: it keeps its own copy of the users and can write "
+                                       'over the sign-in. Close it, then try again.')
         return npid, password
 
     def _save_signin(self, npid, password, account, why):
@@ -916,6 +921,8 @@ class MultiplayerCtl(Part):
         bad = next((k for k in checks if k['key'] == 'patch' and k['tone'] != 'good'), None)
         if bad:
             raise gamesetup.SetupError(f'Patch the game first ({bad["text"]}): open Game patch and press Patch.')
+        user = gamesetup.emu_user_dir(emu)
+        self._signin_ready(user)
         rules = self._launch_rules()
         if self.running():
             note = 'NHL 19 is already running. Press PLAY in Online Versus to meet your friend.'
@@ -928,10 +935,11 @@ class MultiplayerCtl(Part):
         until = int(self.now()) + HOOK_SECONDS
         self._phase('hook')
         overlay.set_menus(game_dir, dict({'until': until}, **({'rules': rules} if rules else {})))
+        before = (gamesetup.shadnet_log(user) or {}).get('when')
         try:
             self._phase('starting')
             launch.start(emu, game_dir)
-            self._titles(emu)
+            self._titles(emu, lambda: self._signed_in(user, before))
             self._ready(emu)
             self._watch(emu, hooked=True)
         finally:
@@ -951,14 +959,38 @@ class MultiplayerCtl(Part):
             return None             # a server speaking other rules than this app knows: the game's own
         return picked if picked != RU.DEFAULTS else None
 
-    def _titles(self, emu):
-        """The two title presses (the first only focuses the window); without them the card says what to press."""
+    @staticmethod
+    def _signin_ready(user):
+        """Before a start: the user NHL 19 plays as has a ShadNet sign-in in users.json (else the game stops at SIGN IN
+        REQUIRED while the friend waits, live 2026-11-07)."""
+        one = gamesetup.shadnet_player(user) or {}
+        if not (one.get('shadnet') and one.get('npid') and one.get('password')):
+            raise gamesetup.SetupError(SIGNIN_MISSING)
+
+    @staticmethod
+    def _signed_in(user, before):
+        """After the boot wait: shadPS4's log of this start (newer than `before`) says ShadNet signed in, or SetupError
+        with the reason. A log that says nothing yet passes (an early look proves nothing)."""
+        log = gamesetup.shadnet_log(user)
+        if not log or (before is not None and log.get('when', 0) <= before):
+            return
+        off = log.get('shadnet_on') is False or log.get('network_on') is False or log.get('disabled_globally')
+        if off or log.get('state') in ('signed_out', 'rejected'):
+            why = gamesetup.shadnet_why(log) or SIGNIN_MISSING
+            raise gamesetup.SetupError(f'NHL 19 did not sign in to ShadNet, so it stops at SIGN IN REQUIRED. {why} '
+                                       'Close NHL 19 first.')
+
+    def _titles(self, emu, signed_in=None):
+        """The two title presses (the first only focuses the window); without them the card says what to press.
+        `signed_in` runs after the boot wait and raises when the game did not sign in to ShadNet."""
         if not self.press_title:
             self._phase('title', manual=True)
             return
         key = keypress.cross_key(emu)
         self._phase('title')
         self.sleep(BOOT_WAIT)
+        if signed_in:
+            signed_in()
         sent = self.press(key)
         self.sleep(TITLE_GAP)
         sent = self.press(key) and sent

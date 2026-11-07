@@ -65,8 +65,33 @@ def patch_cache():
     return paths.app_dir('cache')
 
 
+# Find game's picker: the launcher, the emulator or the game itself
+FIND_KINDS = 'shadPS4 or NHL 19 (*.exe;eboot.bin)'
+
+
+def _game_of(path):
+    """The NHL 19 folder when `path` is its eboot.bin (or a folder holding one), else ''."""
+    if not path:
+        return ''
+    if os.path.isfile(path) and os.path.basename(path).lower() == 'eboot.bin':
+        return os.path.dirname(os.path.abspath(path))
+    if os.path.isdir(path) and os.path.isfile(os.path.join(path, 'eboot.bin')):
+        return os.path.abspath(path)
+    return ''
+
+
 def _megabytes(n):
     return f'{n / 2**20:.0f} MB' if n else ''
+
+
+def _gigabytes(n):
+    return f'about {n / 2**30:.1f} GB' if n >= 2**30 else _megabytes(n)
+
+
+BOOST_PACK = 'shadps4_nhl19.zip'
+# the blue "!" beside the Updated assets size (owner 2026-11-07: testers thought it hung at 65%)
+ASSETS_WAIT = ('Switching on every asset takes 20 to 40 minutes. The bar can stay on one number (often 65%) for a '
+               'long time: it is still working. Keep Overtime open and wait for it to finish.')
 
 
 def local_packs(cache_dir):
@@ -121,7 +146,7 @@ class SetupController(Part):
              'setup_packs_get': 'packs_get', 'setup_packs_drop': 'packs_drop', 'setup_pack_switch': 'pack_switch',
              'setup_check_updates': 'check_updates', 'setup_check_updates_now': 'check_now',
              'setup_patch': 'setup_patch', 'setup_unpatch': 'setup_unpatch', 'setup_verify': 'setup_verify',
-             'setup_copy': 'setup_copy', 'setup_play': 'setup_play', 'setup_boost': 'setup_boost',
+             'setup_play': 'setup_play', 'setup_boost': 'setup_boost',
              'setup_boost_source': 'setup_boost_source'}
     TAB = 'setup'
 
@@ -134,7 +159,6 @@ class SetupController(Part):
         self.server_error = None    # why the typed server address was refused
         self.found = None  # the last look: emulators, build, games, status, network, users, firewall, server, ...
         self.verify_result = None
-        self.copy_result = None     # the last full copy of the clean game (patch_ctl.copy)
         self.play = None  # {'state', 'pid', 'log'} while / after Play
         self._launching = False  # a Play click is starting the emulator (a second click must not start another)
         self.checking = False   # a look (_scan) runs
@@ -349,11 +373,24 @@ class SetupController(Part):
 
     def setup_set_emulator(self, path):
         picked = (path or '').strip().strip('"')
+        game = _game_of(picked)
+        if game:
+            # NHL 19 itself: the game folder is that one, and shadPS4 is the one the player runs (QtLauncher's
+            # selected version, else the newest found where the emulator keeps its games)
+            self.ctl.set_game_dir(game)
+            found = gamesetup.find_emulators()
+            if not found:
+                text = ('Found NHL 19. Now point Find game at shadPS4QtLauncher.exe or shadPS4.exe, so the program '
+                        'knows which emulator starts it.')
+                self.ctl.say(text, 'caution')
+                self._scan()
+                return {'error': text}
+            picked = found[0]
         path = gamesetup.resolve_emulator(picked) if picked else ''
         if picked and not path:
             name = os.path.basename(picked.rstrip('\\/')) or picked
-            text = (f'No shadPS4 found in {name}. Pick your emulator folder or shadPS4.exe. With QtLauncher, download '
-                    'a version in it first.')
+            text = (f'No shadPS4 found in {name}. Point Find game at shadPS4QtLauncher.exe, shadPS4.exe or NHL 19\'s '
+                    'eboot.bin. With QtLauncher, download a version in it first.')
             self.ctl.say(text, 'bad')
             return {'error': text}
         with self.ctl.lock:
@@ -467,9 +504,6 @@ class SetupController(Part):
         """Compare the game folder with the clean record (made at the first patch, or now)."""
         return patch_ctl.verify(self, full)
 
-    def setup_copy(self, dst):
-        return patch_ctl.copy(self, dst)
-
     def setup_play(self):
         """Play (patch_ctl.play): not patched, the Question first."""
         return patch_ctl.play(self)
@@ -532,13 +566,14 @@ class SetupController(Part):
         return self.emulator if self.emulator and os.path.isfile(self.emulator) else ''
 
     def pick_emulator(self, folder=False):
-        """Windows' picker for the emulator folder or shadPS4.exe, then as setup_set_emulator. {type: true} in browser
-        mode (no window to show it in: the page asks for the path instead)."""
+        """Find game: Windows' picker for shadPS4QtLauncher.exe, shadPS4.exe or NHL 19's eboot.bin (one button, owner
+        2026-11-07), then as setup_set_emulator. `folder` picks a folder instead (kept for old pages). {type: true}
+        in browser mode (no window to show it in: the page asks for the path instead)."""
         if self._wait():
             return None
         pick = getattr(self.ctl.host, 'pick', None)
         start = os.path.dirname(self.emulator) if self.emulator else ''
-        path = (pick(True, start) if folder else pick(False, start, ('shadPS4 (*.exe)',))) if pick else None
+        path = (pick(True, start) if folder else pick(False, start, (FIND_KINDS,))) if pick else None
         if path is None:
             return {'type': True}
         if not path:
@@ -885,7 +920,7 @@ class SetupController(Part):
             state, wanted = r['state'], bool(want.get(key))
             row = {'key': key, 'name': names[0], 'title': title, 'sub': sub, 'size': size, 'on': wanted,
                    'progress': None, 'tag': None, 'tone': '', 'quiet': False,
-                   'info': {'title': title, 'text': infos.get(key) or sub},
+                   'info': {'title': title, 'text': infos.get(key) or patch_ctl.EXTRA_INFOS.get(key) or sub},
                    'can_remove': bool(r.get('removable')) and not c.busy, 'can_update': False}
             if dl is not None and c.busy and dl['name'] in names:
                 row.update(tone='info', progress=dl['part'], text=f"Downloading... {round(dl['part'] * 100)} %"
@@ -922,10 +957,13 @@ class SetupController(Part):
                 'sub': 'Switch on what you want: it downloads by itself, and Patch puts it in the game.'}
 
     def assets_store(self):
-        """The Updated assets group's corner: how much is on this PC, and Delete for all of it."""
-        rows = [r for r in (self.packs if self.packs is not None else local_packs(patch_cache())) if r.get('removable')]
-        return {'size': _megabytes(sum(r.get('local_size') or 0 for r in rows)),
-                'can_remove': bool(rows) and not self.ctl.busy}
+        """The Updated assets group's corner: how much is on this PC, how much all of them are (the server's sizes,
+        not the emulator pack), the wait hint, and Delete for all of it."""
+        every = self.packs if self.packs is not None else local_packs(patch_cache())
+        rows = [r for r in every if r.get('removable')]
+        total = sum(r.get('size') or 0 for r in every if r['name'] != BOOST_PACK)
+        return {'size': _megabytes(sum(r.get('local_size') or 0 for r in rows)), 'total': _gigabytes(total),
+                'wait': ASSETS_WAIT, 'can_remove': bool(rows) and not self.ctl.busy}
 
     # --- The Photos, logos pack (v0.10.0): the four picture packs as one card on Game patch ---------------------------
     def _pack_rows(self):

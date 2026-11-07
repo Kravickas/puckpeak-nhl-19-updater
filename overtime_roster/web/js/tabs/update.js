@@ -32,12 +32,10 @@ function FromBar({ f, go }) {
   </div>`;
 }
 
-// the game patch is missing, broken or from an older Overtime: say so over the switches, with the way to Game patch
-function PatchBar({ p, go }) {
+// the game patch is missing, broken or from an older Overtime: say so over the switches (no button: owner 2026-11-07)
+function PatchBar({ p }) {
   return html`<div class=${cls('card up-patch', p.tone)} role="status">
     <span class="up-patch-text">${p.text}</span>
-    <span class="sp"></span>
-    <${Button} small kind="primary" onClick=${() => go('patch')}>Go to Game patch<//>
   </div>`;
 }
 

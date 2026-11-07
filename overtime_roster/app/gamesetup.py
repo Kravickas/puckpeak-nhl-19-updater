@@ -35,6 +35,9 @@ LAUNCHER_DATA = 'shadPS4QtLauncher'     # QtLauncher's folder in %APPDATA%: qt_u
 LOCAL_VERSION = 2                       # versions.json: a version added by hand (0 stable, 1 Pre-release)
 PATCH_FOLDER, PATCH_FILE = 'Overtime', 'overtime.xml'
 NETWORK = {'connected_to_network': True, 'shad_net_enabled': True}  # custom_configs\CUSA11126.json, "General"
+# the ShadNet servers the game's "Network" section needs filled (live 2026-11-07: a tester's game-specific Network tab
+# was empty and the game stopped at SIGN IN REQUIRED until he typed them); the shared config.json's are used if set
+SERVERS = {'shadnet_server': 'srv.shadps4.net:31313', 'shadnet_webapi_server': 'http://srv.shadps4.net:31315'}
 MANIFEST = 'gamesetup.json'
 FIREWALL_RULE = 'Overtime NHL 19 (shadPS4)'
 
@@ -494,8 +497,9 @@ def shadnet_why(log):
     if log.get('account'):
         return ''
     if log.get('state') == 'rejected':
-        return (f'ShadNet refused the sign-in (code {log.get("code")}): the Online ID or the password is wrong, or '
-                'the Online ID has other capitals. Fix it under ShadNet on the Multiplayer tab, then start the game again.')
+        return (f'ShadNet refused the sign-in (code {log.get("code")}): the Online ID or the password is wrong, the '
+                "Online ID has other capitals, or a new account's e-mail is not confirmed yet. Fix it under ShadNet on "
+                'the Multiplayer tab, then start the game again.')
     if log.get('shadnet_on') is False or log.get('disabled_globally'):
         own = ' (no game settings were used, so the shared ones applied)' if log.get('own_config') is False else ''
         net = ' and the network' if log.get('network_on') is False else ''
@@ -619,12 +623,42 @@ def network_on(user_dir):
     return all(values[k] == v for k, v in NETWORK.items())
 
 
+def _both_on(cfg):
+    """True when the config carries Overtime's network keys in "General" and in "Network", and "Network" names the
+    ShadNet servers (install writes all of it)."""
+    return (all(isinstance(cfg.get(s), dict) and cfg[s].get(k) == v for s in ('General', 'Network')
+                for k, v in NETWORK.items())
+            and all(isinstance(cfg['Network'].get(k), str) and cfg['Network'][k].strip() for k in SERVERS))
+
+
+def _servers(user):
+    """The ShadNet servers for a game config: the shared config.json's where it names them, else SERVERS."""
+    try:
+        with open(os.path.join(user, 'config.json'), encoding='utf-8-sig') as f:
+            shared = json.load(f).get('Network')
+    except (OSError, ValueError, AttributeError):
+        shared = None
+    shared = shared if isinstance(shared, dict) else {}
+    return {k: shared[k] if isinstance(shared.get(k), str) and shared[k].strip() else v for k, v in SERVERS.items()}
+
+
+def network_written(user_dir):
+    """True when the game's own config carries the network keys in both sections (else the next start writes them)."""
+    try:
+        with open(custom_config_path(user_dir), encoding='utf-8-sig') as f:
+            return _both_on(json.load(f))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def _keys_on(path):
     """True when the config at `path` gives Overtime's network keys the values we need (status: only those keys are ours)."""
     try:
         with open(path, encoding='utf-8-sig') as f:
             cfg = json.load(f)
-        return all(_net_value(cfg, k) == v for k, v in NETWORK.items())
+        # off in either section counts as off (builds differ in which one they read)
+        sections = [cfg[s] for s in ('General', 'Network') if isinstance(cfg.get(s), dict)]
+        return all(_net_value(cfg, k) == v and all(s.get(k, v) == v for s in sections) for k, v in NETWORK.items())
     except (OSError, ValueError, AttributeError):
         return False
 
@@ -733,7 +767,7 @@ def install(emu_exe, xml_text, running=None):
         m['files'] = list(entries.values())
         _save_manifest(m)
 
-    def put(path, data, previous_keys=None, previous_network=None):
+    def put(path, data, previous_keys=None, previous_network=None, added=()):
         before = _read(path) if os.path.exists(path) else None
         e = entries.get(path)
         if e is None:
@@ -753,6 +787,8 @@ def install(emu_exe, xml_text, running=None):
             # changed since we wrote it (the user's own edit): from now on remove() only puts our keys back
             e.pop('backup', None)
             e['action'] = 'replaced'
+        if added:
+            e['network_added'] = sorted(set(e.get('network_added') or ()) | set(added))
         record()  # before the write: a failure in between still leaves the file on record
         if before != data:
             _write(path, data)
@@ -762,15 +798,21 @@ def install(emu_exe, xml_text, running=None):
     put(os.path.join(folder, PATCH_FILE), xml_text.encode('utf-8'))
     put(os.path.join(folder, 'files.json'), json.dumps({PATCH_FILE: [active_title()]}, indent=4).encode('utf-8'))
     general = cfg.setdefault('General', {})
-    section = cfg.get('Network') if isinstance(cfg.get('Network'), dict) else {}   # shadPS4 reads it before "General"
-    if any(_net_value(cfg, k) != v for k, v in NETWORK.items()) or cfg_path in entries:
+    if not isinstance(cfg.get('Network'), dict):
+        cfg.pop('Network', None)
+    section = cfg.get('Network') or {}   # shadPS4 reads it before "General"
+    if not _both_on(cfg) or cfg_path in entries:
         previous = (entries.get(cfg_path) or {}).get('previous') or {k: general.get(k) for k in NETWORK}
         previous_network = (entries.get(cfg_path) or {}).get('previous_network') or {
             k: section[k] for k in NETWORK if k in section}
         general.update(NETWORK)
-        section.update({k: v for k, v in NETWORK.items() if k in section})
+        # both homes (live 2026-11-07: the launcher's game-specific Network tab showed blank with "General" only, and
+        # a build that reads "Network" over a shared config.json with them off would start the game offline)
+        filled = {k: v for k, v in _servers(user).items()
+                  if not (isinstance(section.get(k), str) and section[k].strip())}
+        cfg['Network'] = dict(section, **filled, **NETWORK)
         put(cfg_path, json.dumps(cfg, indent=4).encode('utf-8'), previous_keys=previous,
-            previous_network=previous_network)
+            previous_network=previous_network, added=[k for k in filled if k not in section])
     record()
     return m
 
@@ -805,8 +847,16 @@ def remove(running=None):
                 else:
                     general[k] = v
             if isinstance(cfg.get('Network'), dict):
-                for k, v in (e.get('previous_network') or {}).items():
-                    cfg['Network'][k] = v
+                was = e.get('previous_network') or {}
+                for k in NETWORK:
+                    if k in was:
+                        cfg['Network'][k] = was[k]
+                    else:
+                        cfg['Network'].pop(k, None)     # a key install() added
+                for k in e.get('network_added') or ():
+                    cfg['Network'].pop(k, None)
+                if not cfg['Network']:
+                    del cfg['Network']
             _write(path, json.dumps(cfg, indent=4).encode('utf-8'))
             said.append(f'put back the network settings in {path}')
         elif e['action'] == 'created':
@@ -938,38 +988,6 @@ def compare(before, now):
         elif a[rel][1] and b[rel][1] and a[rel][1] != b[rel][1]:
             out.append((rel, 'content'))
     return out
-
-
-def copy_game(src, dst, progress=None, margin=1 << 30):
-    """A full copy of the clean game (optional; the patch never needs it). Refuses without room or into a folder
-    that already holds files. `progress(done_bytes, total_bytes)`."""
-    src, dst = os.path.abspath(src), os.path.abspath(dst)
-    if os.path.normcase(dst).startswith(os.path.normcase(src) + os.sep) or os.path.normcase(dst) == os.path.normcase(src):
-        raise SetupError('the copy must go outside the game folder')
-    if os.path.isdir(dst) and os.listdir(dst):
-        raise SetupError(f'{dst} is not empty')
-    snap = snapshot(src, pair=False)
-    total = sum(s for s, _ in snap['files'].values())
-    probe = dst
-    while not os.path.isdir(probe):
-        parent = os.path.dirname(probe)
-        if parent == probe:
-            break
-        probe = parent
-    free = shutil.disk_usage(probe).free
-    if free < total + margin:
-        raise SetupError(f'not enough room: the copy needs {total / 2**30:.1f} GB, {free / 2**30:.1f} GB free')
-    done = 0
-    for rel in sorted(snap['files']):
-        target = os.path.join(dst, rel)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        shutil.copy2(os.path.join(src, rel), target)
-        done += snap['files'][rel][0]
-        if progress:
-            progress(done, total)
-    if compare(snap, snapshot(dst, pair=False)):
-        raise SetupError('the copy does not match the game folder')
-    return dst
 
 
 # ---- firewall (read-only check; the rule is added only on the user's click, through UAC) ------------------------

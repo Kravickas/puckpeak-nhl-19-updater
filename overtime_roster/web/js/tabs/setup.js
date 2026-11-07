@@ -38,19 +38,20 @@ function LinkRow() {
 
 // --- 1 Where is shadPS4? ---------------------------------------------------------------------------------------------------
 const WHERE_INFO = [
-  { head: 'What to pick', items: ['The folder of your emulator (with shadPS4QtLauncher.exe or shadPS4.exe in it), or shadPS4.exe itself. Any shadPS4 will do.',
+  { head: 'What to pick', items: ['Press Find game and pick shadPS4QtLauncher.exe, shadPS4.exe, or NHL 19\'s eboot.bin. Any shadPS4 will do.',
     'With QtLauncher, the version selected in it is used.',
-    'The program finds NHL 19 and your roster saves from there.'] },
+    'The program finds the rest from there: NHL 19, the emulator and your roster saves.'] },
   { head: 'The checks', items: ['shadPS4: found, and its version.', 'NHL 19: the game (CUSA11126 or CUSA11116) with update 1.60.',
     'ShadNet: you are signed in inside shadPS4.', 'Network: the Overtime server answers.',
     'Hold the mouse on a check to read all of it.'] },
 ];
 
-// Windows' picker; in a browser (no window to show it in) Python answers {type: true} and the path is typed
-async function pickEmulator(path, folder) {
-  const reply = await call('setup_pick_emulator', folder);
+// Find game: Windows' picker for the launcher, the emulator or the game; in a browser (no window to show it in)
+// Python answers {type: true} and the path is typed
+async function findGame(path) {
+  const reply = await call('setup_pick_emulator', false);
   if (!reply || !reply.type) return;
-  const typed = window.prompt('The full path of your emulator folder or shadPS4.exe:', path || '');
+  const typed = window.prompt('The full path of shadPS4QtLauncher.exe, shadPS4.exe or NHL 19\'s eboot.bin:', path || '');
   if (typed && typed.trim()) call('setup_set_emulator', typed.trim());
 }
 
@@ -62,9 +63,8 @@ function WhereCard({ s }) {
     <div class="card-body">
       <div class="row">
         <${PathText} path=${s.emulator.path} unset="Not picked yet"/>
-        <${Button} kind=${s.emulator.path ? 'ghost' : 'primary'} disabled=${busy} onClick=${() => pickEmulator(s.emulator.path, true)}>
-          ${s.emulator.path ? 'Change folder...' : 'Pick emulator folder...'}<//>
-        <${Button} kind="ghost" disabled=${busy} onClick=${() => pickEmulator(s.emulator.path, false)}>Pick shadPS4.exe...<//>
+        <${Button} kind=${s.emulator.path ? 'ghost' : 'primary'} disabled=${busy} onClick=${() => findGame(s.emulator.path)}
+          title="Pick shadPS4QtLauncher.exe, shadPS4.exe or NHL 19's eboot.bin">Find game...<//>
       </div>
       <div class=${cls('su-checks', s.checking && 'checking')}>
         ${s.checks.map((c) => html`<div key=${c.key} class=${cls('su-check', c.tone || 'idle')} title=${c.text}>

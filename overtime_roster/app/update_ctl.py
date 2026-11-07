@@ -16,7 +16,7 @@ import datetime
 import os
 import time
 
-from overtime_core import art, gamefiles, nhlcom, photos, rosterupdate as U, sfo, teams as T
+from overtime_core import art, gamefiles, kitcompose, nhlcom, photos, rosterupdate as U, sfo, teams as T
 
 from .. import VERSION
 from . import install, jobs, myedits, office, patch, paths, roster_card as RC, savegame, selfupdate, update
@@ -519,7 +519,9 @@ class UpdateCtl(Part):
                     raise update.UpdateError('Another roster was opened: nothing was saved.')
                 # a roster the game loads from a save keeps the stock throwback label ("2016-17 HOME") on a row the jersey
                 # layer drew as an NHL 27 alternate: it gets ALTERNATE like the default roster does (overlay)
-                layers = art.cached_alternates(paths.app_dir('cache'))
+                want = dict(c.patch_want)
+                on = [f for f in kitcompose.FAMILIES if want.get(kitcompose.switch(f))] if want.get('art', True) else []
+                layers = art.cached_alternates(paths.app_dir('cache'), on)
                 n = art.alternate_rows(session.db, layers) if layers else 0
                 if n:
                     c.host.log(f'jersey labels: {n} throwback rows relabelled ALTERNATE')

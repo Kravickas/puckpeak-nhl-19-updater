@@ -104,8 +104,10 @@ RINK_PACK = 'rink.zip'         # NHL 27 pucks, ice lines, board ads, league logo
 # on this PC from the game's own files (make_kits) into the cache, served right after the kits pack.
 KITLAYER_PACKS = {kitcompose.source_pack('nhl'): 'NHL alternate jerseys',
                   kitcompose.source_pack('intl'): 'National team jerseys',
-                  kitcompose.source_pack('clubs'): 'AHL, ECHL, junior and European club jerseys'}
+                  kitcompose.source_pack('clubs'): 'AHL, ECHL, junior and European club jerseys',
+                  kitcompose.source_pack('hometown'): 'Hometown Remix jerseys'}
 FAMILY_OF = {kitcompose.source_pack(f): f for f in kitcompose.FAMILIES}
+LAST_FAMILY = 'hometown'    # served after looks.zip (art_packs): its jerseys replace the Utah and Seattle kits there
 # 0.30's whole jersey packs (only alts_intl was served): nothing reads them now, so Patch takes them out of the cache
 OLD_ALT_PACKS = ('alts_nhl.zip', 'alts_intl.zip', 'alts_ahl.zip', 'alts_chl.zip', 'alts_euro.zip')
 # the packs with a switch of their own (Game patch, More jerseys and ice): each downloads when it is switched on
@@ -164,8 +166,10 @@ def art_packs(cache_dir=None, game_dir=None, kits=True, photos=True, extras=None
         except art.ArtError as err:
             problems.append(str(err))
     # the jerseys made on this PC (make_kits): the NHL kits' pants with `kits`, the families switched on
+    def on(f):
+        return extras is None or kitcompose.source_pack(f) in extras
     made = [local_kits(cache_dir, f) for f in (['pants'] if kits else []) +
-            [f for f in kitcompose.FAMILIES if extras is None or kitcompose.source_pack(f) in extras]]
+            [f for f in kitcompose.FAMILIES if f != LAST_FAMILY and on(f)]]
     for name in ART_PACKS:
         skip = (name == KITS_PACK and not kits) or (name in (PHOTOS_PACK, PEOPLE_PACK) and not photos) or \
             (name in EXTRA_PACKS and extras is not None and name not in extras)
@@ -181,6 +185,10 @@ def art_packs(cache_dir=None, game_dir=None, kits=True, photos=True, extras=None
         if name == KITS_PACK:
             for path in filter(None, made):
                 add(path)
+    if on(LAST_FAMILY):     # Hometown Remix wins over everything, looks.zip's Utah and Seattle kits too
+        path = local_kits(cache_dir, LAST_FAMILY)
+        if path:
+            add(path)
     local = local_people(cache_dir) if photos else None
     for path in (local, local_clubart(cache_dir)):     # the people's files are in no other pack; the clubs' come last:
         if path:                                        # they win over looks32's and ice_all's of the same art id

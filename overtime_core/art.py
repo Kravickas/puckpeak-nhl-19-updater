@@ -413,12 +413,16 @@ def alternate_rows(db, packs):
     return changed
 
 
-def cached_alternates(cache_dir):
+def cached_alternates(cache_dir, families=None):
     """The jersey layer packs in `cache_dir` (kitlayers_<family>.zip, read for their pack.json only) as Packs that carry
-    `alternates`, for alternate_rows: the roster a save holds takes the labels too (v0.60.0). []: none downloaded."""
+    `alternates`, for alternate_rows: the roster a save holds takes the labels too (v0.60.0). []: none downloaded. With
+    `families` only those (the ones whose switch is on: a downloaded pack that is switched off draws nothing, so its rows
+    keep their labels; the order is theirs, the last wins a row)."""
     out = []
     try:
-        names = sorted(n for n in os.listdir(cache_dir) if n.startswith('kitlayers_') and n.endswith('.zip'))
+        names = sorted((n for n in os.listdir(cache_dir) if n.startswith('kitlayers_') and n.endswith('.zip')
+                        and (families is None or n[len('kitlayers_'):-4] in families)),
+                       key=lambda n: families.index(n[len('kitlayers_'):-4]) if families else 0)
     except OSError:
         return out
     for name in names:

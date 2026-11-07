@@ -420,6 +420,12 @@ class Rig:
         monkeypatch.setattr(overlay, 'set_menus', self.set_menus)
         monkeypatch.setattr(launch, 'start', self.start)
         monkeypatch.setattr(keypress, 'cross_key', lambda emu: 'n')
+        # NHL 19's player has a ShadNet sign-in and the log says nothing against it (tests below change these)
+        self.player = {'shadnet': True, 'npid': 'Me', 'password': True}
+        self.logs = []                  # shadnet_log answers in turn (then the last one)
+        monkeypatch.setattr(gamesetup, 'shadnet_player', lambda user: self.player)
+        monkeypatch.setattr(gamesetup, 'shadnet_log', lambda user: (self.logs.pop(0) if len(self.logs) > 1
+                                                                    else self.logs[0] if self.logs else None))
         self.start_error = start_error
 
     def set_menus(self, game_dir, launch_opts, running=None):
@@ -446,6 +452,37 @@ def test_the_game_start_bakes_the_hook_starts_presses_and_takes_it_off(mp, monke
     assert [e for e in rig.events if e[0] == 'press'] == [('press', 'n'), ('press', 'n')]
     assert ('sleep', MC.BOOT_WAIT) in rig.events and ('sleep', MC.TITLE_GAP) in rig.events
     assert mp.game['phase'] == 'ended'
+
+
+def test_no_shadnet_sign_in_refuses_before_the_game_starts(mp, monkeypatch):
+    """Live 2026-11-07: a tester's game stopped at SIGN IN REQUIRED while the friend waited."""
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    rig.player = {'shadnet': False, 'npid': 'Me', 'password': True}
+    start_lobby(mp)
+    mp._launch_job()
+    assert 'started' not in kinds(rig) and mp.game['phase'] == 'failed' and mp.game['note'] == MC.SIGNIN_MISSING
+
+
+def test_a_game_that_did_not_sign_in_stops_before_the_presses(mp, monkeypatch):
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    old = {'state': 'signed_in', 'when': 10.0, 'account': 5}
+    new = {'state': 'signed_out', 'when': 20.0, 'account': None, 'shadnet_on': True, 'network_on': True}
+    rig.logs = [old, new]
+    start_lobby(mp)
+    mp._launch_job()
+    assert 'press' not in kinds(rig) and kinds(rig)[-1] == 'hook'     # the hook still comes off
+    assert mp.game['phase'] == 'failed' and 'SIGN IN REQUIRED' in mp.game['note'] and 'nobody was signed in' in mp.game['note']
+
+
+def test_the_last_runs_log_does_not_stop_a_new_start(mp, monkeypatch):
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    rig.logs = [{'state': 'rejected', 'code': 8, 'when': 10.0}]       # the new run has not written a log yet
+    start_lobby(mp)
+    mp._launch_job()
+    assert kinds(rig) == ['hook', 'started', 'press', 'press', 'hook']
 
 
 def test_without_the_press_setting_the_card_says_what_to_press(mp, monkeypatch):

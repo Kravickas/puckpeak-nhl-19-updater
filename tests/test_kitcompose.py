@@ -88,6 +88,19 @@ def test_cover_copies_plain_fabric_over_the_old_crest(pil):
         K.cover(raw, pil.new('L', (64, 64), 255))
 
 
+def test_cover_plain_rows_copy_the_given_row_of_the_same_columns(pil):
+    raw = template(64, 64, 'BC1')
+    mask = pil.new('L', (K.SIZE, K.SIZE), 0)
+    plain = pil.new('L', (K.SIZE, K.SIZE), 0)
+    plain.paste(255, (0, 800, K.SIZE, 900))     # block rows 12 and 13: below MIRROR_Y, from row 100 -> block row 1
+    before = gnf.detile(gnf.Gnf(raw).texture, gnf.Gnf(raw).data())[0]
+    out = K.cover(raw, mask, plain, (100, 40))
+    after = gnf.detile(gnf.Gnf(out).texture, gnf.Gnf(out).data())[0]
+    row = 16 * 8
+    assert after[12 * row:13 * row] == before[1 * row:2 * row] and after[13 * row:14 * row] == before[1 * row:2 * row]
+    assert after[:12 * row] == before[:12 * row] and after[14 * row:] == before[14 * row:]
+
+
 def test_flat_normals_are_zero_and_keep_the_shape():
     raw = template(64, 64, 'BC5', 'SNORM', mips=3)
     out = K.flat(raw[:K.HEAD])                  # the header is enough
@@ -109,6 +122,57 @@ def test_pants_take_the_new_main_and_trim_colours(pil):
     assert near(out.getpixel((5, 24)), (200, 150, 0))
     one = gnf.to_image(K.pants(raw, (10, 40, 120))).convert('RGB')        # no trim: the stripe takes the main colour
     assert near(one.getpixel((5, 24)), (10, 40, 120))
+
+
+def _number_sheet(pil):
+    """A 64 x 64 RGBA sheet: a glyph on clear ground, 3 inks: fill (black) inside, a white ring, a red rim."""
+    img = pil.new('RGBA', (64, 64), (0, 0, 0, 0))
+    for box, colour in (((8, 8, 56, 56), (220, 40, 20, 255)), ((12, 12, 52, 52), (230, 230, 230, 255)),
+                        ((16, 16, 48, 48), (20, 20, 20, 255))):
+        img.paste(pil.new('RGBA', (box[2] - box[0], box[3] - box[1]), colour), box[:2])
+    return img
+
+
+def test_font_recolours_the_sheets_three_inks_and_keeps_its_shape(pil):
+    raw = gnf.make(template(64, 64, 'BC3'), _number_sheet(pil))
+    out = gnf.to_image(K.font(raw, (245, 188, 79), (20, 22, 20), (56, 45, 89))).convert('RGBA')
+    assert near(out.getpixel((32, 32)), (245, 188, 79, 255), 20)          # the glyph's body: fill
+    assert near(out.getpixel((14, 32)), (56, 45, 89, 255), 20)            # the ring inside the rim: mid
+    assert near(out.getpixel((10, 32)), (20, 22, 20, 255), 20)            # the outer rim: edge
+    assert out.getpixel((2, 2))[3] == 0                                    # clear ground stays clear
+    two = gnf.to_image(K.font(raw, (245, 188, 79), (20, 22, 20))).convert('RGBA')       # no mid: the edge colour
+    assert near(two.getpixel((14, 32)), (20, 22, 20, 255), 20)
+    assert K.run({'op': 'font', 'fill': [1, 2, 3], 'edge': [4, 5, 6]}, raw, None)
+    assert 'font' in K.WHOLE
+
+
+def test_font_shape_takes_the_digits_from_another_sheet_in_the_same_colours(pil):
+    """On a 64 px sheet the digits start at row 13 (215 / 1024): above it the sheet's own glyphs stay."""
+    other = pil.new('RGBA', (64, 64), (0, 0, 0, 0))
+    other.paste(pil.new('RGBA', (20, 20), (220, 40, 20, 255)), (22, 40))        # a glyph only the other sheet has
+    raw, shape = gnf.make(template(64, 64, 'BC3'), _number_sheet(pil)), gnf.make(template(64, 64, 'BC3'), other)
+    args = ((245, 188, 79), (20, 22, 20), (56, 45, 89))
+    out = gnf.to_image(K.font(raw, *args, shape)).convert('RGBA')
+    plain = gnf.to_image(K.font(raw, *args)).convert('RGBA')
+    assert out.getpixel((32, 10))[3] == 255 and plain.getpixel((32, 10))[3] == 255     # the letters' rows stay the sheet's own
+    assert out.getpixel((10, 30))[3] == 0 and plain.getpixel((10, 30))[3] == 255       # the digits' rows: the other's shapes
+    assert out.getpixel((32, 50))[3] == 255
+    assert K.run({'op': 'font', 'fill': [1, 2, 3], 'edge': [4, 5, 6], 'shape': 'x'}, raw, None, lambda q: shape)
+
+
+def test_font_mix_matrix_sends_the_inks_and_their_mixtures_to_the_new_inks():
+    ink = ((224, 224, 224), (16, 16, 16), (160, 144, 96))            # a stock sheet's near-degenerate inks
+    target = ((245, 188, 79), (20, 22, 20), (57, 45, 88))
+    m = K._mix_matrix(ink, target)
+    assert m is not None
+
+    def apply(c):
+        return [sum(m[r * 4 + k] * c[k] for k in range(3)) + m[r * 4 + 3] for r in range(3)]
+    for i, t in zip(ink, target):
+        assert all(abs(x - y) < 0.5 for x, y in zip(apply(i), t))
+    half = [(x + y) / 2 for x, y in zip(ink[0], ink[2])]                # a soft edge between fill and rim stays between
+    assert all(abs(x - (y + z) / 2) < 0.5 for x, y, z in zip(apply(half), target[0], target[2]))
+    assert K._mix_matrix(((9, 9, 9), (9, 9, 9), (200, 0, 0)), target) is None
 
 
 def test_an_unknown_step_is_refused():

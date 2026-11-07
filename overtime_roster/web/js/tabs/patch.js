@@ -1,12 +1,12 @@
 // Game patch: Legacy's Game patch tab in NHL 19's look. Left: the patch (state, Patch / Unpatch / Play) and its
 // switches in three groups, each with a switch of its own and a fold (v0.70.0: Teams and league, Menus and server
-// texts, Updated assets; an asset switch downloads its pack). Right: what is in the game now (layers, files, Quick
-// check, a full copy). What the game patch does is the "?" beside the Patch button. Slices `patch`, `patch_files`;
+// texts, Updated assets; an asset switch downloads its pack). Right: what is in the game now (patched in, online:
+// server, network switches, ShadNet; files; Check the game). What the game patch does is the "?" beside the Patch button. Slices `patch`, `patch_files`;
 // calls in docs/ui/patch.md.
 import { html, cls, useState } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, Switch, Info, Tag, Modal, TextField, Field, ProgressBar, Order } from '../ui.js';
+import { Card, Button, Switch, Info, Tag, Modal, ProgressBar, Order } from '../ui.js';
 
 export const tip = 'Patch the game once. Unpatch puts every game file back.';
 
@@ -54,7 +54,8 @@ function Group({ g, busy, open, onOpen }) {
           <span class="gp-group-sub">${g.sub}</span>
         </span>
       </button>
-      ${st && st.size && html`<span class="gp-store">${st.size} on this PC</span>`}
+      ${st && (st.size || st.total) && html`<span class="gp-store">${st.size ? `${st.size} on this PC` : 'None on this PC'}${st.total ? `, ${st.total} for all` : ''}</span>`}
+      ${st && st.wait && html`<span class="gp-wait" title=${st.wait} aria-label=${st.wait} tabindex="0">!</span>`}
       ${st && st.can_remove && html`<${Button} small className="gp-store-drop" onClick=${() => call('setup_packs_drop')}
         title="Take every downloaded asset off this PC">Delete...<//>`}
       <${Switch} on=${g.on} disabled=${g.disabled} label=${g.title} onChange=${(on) => call('patch_group', g.key, on)}/>
@@ -110,40 +111,43 @@ function PatchCard({ s, go }) {
   <//>`;
 }
 
+// "What's in your game now": is it patched, can it play online (server, network switches, ShadNet), are the files
+// right. No backup copy (owner 2026-11-07: the patch never changes the game's own files).
 function NowCard({ s }) {
   const g = s.game;
-  const [to, setTo] = useState('');
+  const o = g.online || {};
+  const net = o.network === true ? ['good', 'Network switches on']
+    : o.network === false ? ['caution', 'Network switches off: Play turns them on'] : ['idle', 'shadPS4 not set up'];
+  const sn = o.shadnet ? ['good', `ShadNet: ${o.shadnet}`] : ['bad', 'No ShadNet sign-in: Multiplayer tab'];
+  const bad = g.files.bad > 0 || g.problems.length > 0;
   return html`<${Card} n="2" title="What's in your game now" className="gp-now"
       aside=${g.problems.length ? html`<${Tag} tone="bad">${g.problems.length} ${g.problems.length === 1 ? 'problem' : 'problems'}<//>` : null}>
     <div class="card-body gp-now-body">
-      ${s.patched ? html`<dl class="gp-facts">
-        <div><dt>Patched</dt><dd>${g.applied_at}</dd></div>
-        <div><dt>Patched in</dt><dd class="gp-chips">${g.layers.length ? g.layers.map((x) => html`<${Tag} key=${x.key}>${x.text}<//>`)
-          : html`<span class="faint">None: the Overtime server only.</span>`}</dd></div>
-        <div><dt>Files</dt><dd class="gp-files-line">
-          <span class=${g.files.bad ? 'bad-text' : 'good-text'}>${g.files.count} files changed${g.files.bad ? `, ${g.files.bad} not right` : ', all intact'}</span>
-          <${Button} small className="gp-files-btn" onClick=${() => call('patch_files', true)}>List them<//>
+      <div class=${cls('gp-now-state', !s.patched ? 'caution' : bad ? 'bad' : 'good')}>
+        <span class=${cls('gp-dot', !s.patched ? 'caution' : bad ? 'bad' : 'good')}></span>
+        <span>${!s.patched ? 'Not patched: NHL 19 runs as it came.'
+          : bad ? 'Patched, but something is not right (below).' : `Patched${g.applied_at ? ` ${g.applied_at}` : ''}, all intact.`}</span>
+      </div>
+      <dl class="gp-facts">
+        ${s.patched && html`<div><dt>Patched in</dt><dd class="gp-chips">${g.layers.length ? g.layers.map((x) => html`<${Tag} key=${x.key}>${x.text}<//>`)
+          : html`<span class="faint">The Overtime server only.</span>`}</dd></div>`}
+        <div><dt>Online</dt><dd class="gp-online">
+          ${o.server && html`<span class="gp-on-item" title="The server the patch points NHL 19 at">${o.server}</span>`}
+          <span class=${cls('gp-on-item', net[0])} title="shadPS4's Set Network Connected and Enable shadNet, for NHL 19"><span class=${cls('gp-dot', net[0])}></span>${net[1]}</span>
+          <span class=${cls('gp-on-item', sn[0])} title="The ShadNet account NHL 19 signs in with"><span class=${cls('gp-dot', sn[0])}></span>${sn[1]}</span>
         </dd></div>
-      </dl>` : html`<p class="gp-clean">No patch files. NHL 19 runs as it came.</p>`}
+        ${s.patched && html`<div><dt>Files</dt><dd class="gp-files-line">
+          <span class=${g.files.bad ? 'bad-text' : 'good-text'}>${g.files.count} Overtime files${g.files.bad ? `, ${g.files.bad} not right` : ', all as written'}</span>
+          <${Button} small className="gp-files-btn" onClick=${() => call('patch_files', true)}>List them<//>
+        </dd></div>`}
+      </dl>
       ${g.problems.length > 0 && html`<ul class="gp-problems">${g.problems.map((t, k) => html`<li key=${k}>${t}</li>`)}</ul>`}
-      <div class="gp-tool">
-        <div class="gp-tool-row">
-          <span class="field-label">Check for damage</span>
-          <span class="sp"></span>
-          <${Button} small className="gp-verify" disabled=${s.busy} onClick=${() => call('setup_verify', false)}>Quick check<//>
-          <${Button} small disabled=${s.busy} onClick=${() => call('setup_verify', true)} title=${g.size ? `Every file: ${g.size}, a few minutes` : 'Every file: a few minutes'}>Check every file (slow)<//>
-        </div>
-        ${g.verify && html`<div class=${cls('small-note gp-verify-text', g.verify.tone === 'bad' ? 'bad-text' : 'good-text')}>${g.verify.text}</div>`}
+      <div class="gp-tool gp-tool-row">
+        <span class="small-note">Compares NHL 19's own files with how they were before the first patch.</span>
+        <span class="sp"></span>
+        <${Button} small className="gp-verify" disabled=${s.busy} onClick=${() => call('setup_verify', false)}>Check the game<//>
       </div>
-      <div class="gp-tool">
-        <${Field} label="Backup copy of the game" hint=${g.copy ? g.copy.text : `${g.size ? `About ${g.size}: a` : 'A'} spare to put back if the game folder breaks.`}>
-          <div class="row">
-            <${TextField} value=${to} placeholder="D:\\Games\\NHL 19 copy" disabled=${s.busy} onChange=${setTo}
-              onEnter=${() => call('setup_copy', to)}/>
-            <${Button} disabled=${s.busy} onClick=${() => call('setup_copy', to)}>Copy<//>
-          </div>
-        <//>
-      </div>
+      ${g.verify && html`<div class=${cls('small-note gp-verify-text', g.verify.tone === 'bad' ? 'bad-text' : 'good-text')}>${g.verify.text}</div>`}
     </div>
   <//>`;
 }
