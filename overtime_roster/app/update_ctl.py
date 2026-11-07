@@ -34,8 +34,9 @@ SWITCHES = (
      'from the 20 who dress. A unit whose player has moved on is made by rating. Lines you set yourself and saved '
      'stay when My edits is on (your line always wins). Off: lines by rating for every team that changed, as '
      'before.'),
-    ('nhl27', 'NHL 27 ratings and types', "Every player's ratings, player type and contract from NHL 27.",
-     "Players NHL 27 does not have keep EA's ratings. Draft info (year, round, pick) comes with the ratings."),
+    ('nhl27', 'Updated ratings and types', "Every player's current ratings, player type and contract.",
+     "Players the ratings update does not have keep EA's ratings. Draft info (year, round, pick) comes with the "
+     'ratings.'),
     ('calendar', 'Calendar', 'The real schedule of the season, for all 32 teams.',
      'The NHL plays 84 games a team since 2025-26. Pick 82 for the length NHL 19 was made for.'),
     ('retire', 'Retirements', 'Free agents no league lists any more retire.',
@@ -44,12 +45,12 @@ SWITCHES = (
      'Every player edit you saved on the Roster tab (card, face & type, equipment) and the lines and letters you set '
      'on the Lines tab are kept in My edits and put back after the update. One the roster refuses (a number another player has now) is skipped and the result says '
      'why. Off: the update leaves every player as NHL.com has him. My edits on the Save bar lists them.'),
-    ('drafts', 'Draft info', 'Year, round and pick of every player. It comes with the NHL 27 ratings.',
-     'Draft info cannot be turned on or off on its own yet: it follows the NHL 27 ratings switch.'),
+    ('drafts', 'Draft info', 'Year, round and pick of every player. It comes with the updated ratings.',
+     'Draft info cannot be turned on or off on its own yet: it follows the updated ratings switch.'),
 )
 OPTIONS = ('lines', 'nhl27', 'calendar', 'retire', 'myedits')     # the switches the player turns (rosters, drafts follow)
 LOCKED = {'rosters': 'NHL rosters are always on: the other parts start from them.',
-          'drafts': 'Draft info follows the NHL 27 ratings switch. It cannot be turned off on its own yet.'}
+          'drafts': 'Draft info follows the updated ratings switch. It cannot be turned off on its own yet.'}
 GO_STEPS = (('check', 'NHL.com'), ('plan', 'Plan'), ('apply', 'Change'), ('verify', 'Check'), ('backup', 'Back up'),
             ('save', 'Save'), ('report', 'Report'))
 CHECK_STEPS = GO_STEPS[:2]                         # Check first: NHL.com and the plan
@@ -974,16 +975,16 @@ class UpdateCtl(Part):
         if not o['nhl27']:
             text = v('Left as they were.', 'Off: left as they are.')
         elif rep is not None and (rep.nhl27 or {}).get('rated'):
-            text = f"{rep.nhl27['rated']:,} players have NHL 27 ratings and types."
+            text = f"{rep.nhl27['rated']:,} players have updated ratings and types."
         elif would and n27.get('players'):
-            text = f"{len(n27['players']):,} players in NHL 27 bring their ratings and types."
+            text = f"{len(n27['players']):,} players bring their updated ratings and types."
         elif rep is not None and rep.ratings:
-            text = f"No NHL 27 pack here: {rep.ratings:,} of EA's rating values were used."
+            text = f"No ratings update here: {rep.ratings:,} of EA's rating values were used."
         elif would and g is not None and g.ratings:
-            text = "No NHL 27 pack here: EA's ratings are used."
+            text = "No ratings update here: EA's ratings are used."
         else:
             text = v('No ratings data here: left as they were.', 'No ratings data here: left as they are.')
-        out.append({'part': 'NHL 27 ratings', 'text': text})
+        out.append({'part': 'Ratings', 'text': text})
         label = season_label(rec['season'])
         if not o['calendar']:
             text = v('Left as it was.', 'Off: left as it is.')
@@ -1027,7 +1028,7 @@ class UpdateCtl(Part):
         if missing:
             text += (' ' if text else '') + (f"{clubs['clubs']} clubs matched, {missing} slot"
                                              f"{'s' if missing != 1 else ''} kept NHL 19's own logo "
-                                             f"(NHL 27 has no club for {'it' if missing == 1 else 'them'}).")
+                                             f"(the update has no club for {'it' if missing == 1 else 'them'}).")
         if text:
             out.append({'part': 'Club logos', 'text': text})
         elif rec.get('clubart_skipped'):

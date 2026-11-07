@@ -93,8 +93,26 @@ class LobbyClient:
         return self._call('POST', f'/api/lobby/{_code(code)}/join',
                           {'name': name, 'ext': ext, **({'roster_crc': roster_crc} if roster_crc else {})})
 
-    def ready(self, code, token, value=True):
-        return self._call('POST', f'/api/lobby/{_code(code)}/ready', {'token': token, 'ready': bool(value)})
+    def ready(self, code, token, value=True, patch=None):
+        return self._call('POST', f'/api/lobby/{_code(code)}/ready', {'token': token, 'ready': bool(value),
+                                                                      **({'patch': patch} if patch else {})})
+
+    def roster_mode(self, code, token, mode):
+        return self._call('POST', f'/api/lobby/{_code(code)}/roster_mode', {'token': token, 'mode': mode})
+
+    def upload_roster(self, code, token, blob):
+        """The host's own roster_h2h bytes for a lobby on 'host' (overtime_server/http/appupdate.py _host_roster)."""
+        q = urllib.parse.urlencode({'token': token})
+        req = urllib.request.Request(f'{self.base}/api/lobby/{_code(code)}/roster?{q}', data=bytes(blob), method='POST',
+                                     headers={'Content-Type': 'application/octet-stream', 'Accept': 'application/json'})
+        try:
+            with self._open(req, timeout=max(self.timeout, 60)) as r:
+                raw = r.read()
+        except urllib.error.HTTPError as err:
+            raise self._refused(err.code, err.read()) from None
+        except (urllib.error.URLError, OSError, ValueError) as err:
+            raise LobbyDown(f'the lobby service did not answer ({err})', net.certificate_failed(err)) from None
+        return self._json(raw)
 
     def settings(self, code, token, rules):
         """The host sets match rules ({key: value}); the lobby comes back (both ready flags cleared on a change)."""

@@ -48,7 +48,9 @@ Set-Location $root
 $name = 'OvertimeNHL19'
 (Get-Process -Id $PID).PriorityClass = $Priority      # pip and PyInstaller inherit it
 
-$running = Get-Process -Name $name, "$name-cli" -ErrorAction SilentlyContinue
+$distDir = Join-Path $root 'dist'     # only this checkout's exe is replaced: a copy running from elsewhere is fine
+$running = Get-Process -Name $name, "$name-cli" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and $_.Path.StartsWith($distDir, [StringComparison]::OrdinalIgnoreCase) }
 if ($running -and -not $CheckOnly) { throw "Close $name first: Windows does not let a running program be replaced." }
 
 $py = Join-Path $root '.venv-build\Scripts\python.exe'

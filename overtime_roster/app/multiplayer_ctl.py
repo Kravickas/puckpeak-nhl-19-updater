@@ -23,11 +23,13 @@ HISTORY_POLL seconds while it does, after the game closes and on every call that
 import re
 import threading
 import time
+import webbrowser
 
 from overtime_core import history as H, overlay, rules as RU
 
-from .. import hud
-from . import gamesetup, history_view as HV, jobs, keypress, launch, lobby_client as LC, patch_ctl, paths
+from .. import VERSION, hud
+from . import (gamesetup, history_view as HV, hostroster, jobs, keypress, launch, lobby_client as LC, patch_ctl, paths,
+               shadnet)
 from .registry import Part
 
 POLL = 3.0              # seconds between `state` asks while in a lobby
@@ -52,6 +54,7 @@ PHRASES = ('gg', 'Good game, rematch?', 'Nice one!', 'Unlucky', 'One sec', 'Read
 CHAT_MAX = 140
 CHAT_SHOWN = 20
 EXT = re.compile(r'^\d{1,12}$')
+EMAIL = re.compile(r'[^\s@]+@[^\s@]+\.[^\s@]+')
 NAME_MAX = 24
 LOCAL = ('127.0.0.1', 'localhost', '::1')
 DOWN_TEXT = 'The lobby service did not answer. Check your internet, then press Check again.'
@@ -69,12 +72,13 @@ class MultiplayerCtl(Part):
     SLICES = {'multiplayer': 'view'}
     CALLS = {'mp_set_name': 'set_name', 'mp_set_ext': 'set_ext', 'mp_set_press': 'set_press', 'mp_refresh': 'refresh',
              'mp_create': 'create', 'mp_join': 'join', 'mp_ready': 'ready', 'mp_leave': 'leave',
-             'mp_launch_now': 'launch_now', 'mp_set_rule': 'set_rule',
+             'mp_launch_now': 'launch_now', 'mp_set_rule': 'set_rule', 'mp_roster_mode': 'set_roster_mode',
              'mp_reset_rules': 'reset_rules', 'mp_history_refresh': 'history_refresh',
              'mp_history_player': 'history_player', 'mp_history_close': 'history_close',
              'mp_result_open': 'result_open', 'mp_result_close': 'result_close', 'mp_result': 'send_result',
              'mp_review_open': 'review_open', 'mp_review_close': 'review_close', 'mp_set_hidden': 'set_hidden',
-             'mp_set_hud': 'set_hud', 'mp_say': 'say'}
+             'mp_set_hud': 'set_hud', 'mp_say': 'say', 'mp_shadnet_signin': 'shadnet_signin',
+             'mp_shadnet_register': 'shadnet_register', 'mp_shadnet_create': 'shadnet_create'}
     TAB = 'multiplayer'
 
     def __init__(self, ctl):
@@ -83,6 +87,12 @@ class MultiplayerCtl(Part):
         prefs = ctl.prefs.get('multiplayer') or {}
         self.name = str(prefs.get('name') or '')[:NAME_MAX]
         self.typed_ext = prefs.get('ext') if isinstance(prefs.get('ext'), int) else None
+        checked = prefs.get('shadnet') if isinstance(prefs.get('shadnet'), dict) else {}
+        # the Online ID and account id the app's own ShadNet sign-in proved (never the password)
+        self.checked = ({'npid': checked['npid'], 'account': checked['account']}
+                        if isinstance(checked.get('npid'), str) and isinstance(checked.get('account'), int) else None)
+        self.sn_login = shadnet.login           # seams for tests
+        self.sn_register = shadnet.register
         self.press_title = prefs.get('press', True) is not False
         self.show_hud = prefs.get('hud', True) is not False     # the card and the chat over the game
         self.hud = None
@@ -122,19 +132,22 @@ class MultiplayerCtl(Part):
 
     # --- who I am ------------------------------------------------------------------------------------------------
     def ext(self):
-        """(ShadNet id, where it came from): typed wins; else the game log's; (None, '') when neither is known."""
-        if self.typed_ext:
-            return self.typed_ext, 'typed'
+        """(ShadNet id, where it came from): the game's own sign-in wins (live 2026-11-07: a typed id that was not the
+        player's own made two players one); a typed one only while the log has none; (None, '') when neither."""
         if self.logged.get('account'):
-            return self.logged['account'], 'log'
+            return self.logged['account'], self.logged.get('from') or 'log'
+        if self.typed_ext and self.logged.get('state') != 'stale':
+            return self.typed_ext, 'typed'
         return None, ''
 
     def my_name(self):
-        return self.name or self.logged.get('npid') or ''
+        """The name friends see: the ShadNet Online ID (one name per player, owner 2026-11-07); a typed name only
+        while there is none."""
+        return self.logged.get('npid') or self.name or ''
 
     def _remember(self):
         self.ctl.remember(multiplayer={'name': self.name, 'ext': self.typed_ext, 'press': self.press_title,
-                                       'url': self.url_override, 'hud': self.show_hud})
+                                       'url': self.url_override, 'hud': self.show_hud, 'shadnet': self.checked})
 
     def set_name(self, name):
         name = ' '.join(str(name or '').split())[:NAME_MAX]
@@ -154,6 +167,84 @@ class MultiplayerCtl(Part):
             self._remember()
             self.error = ''
         self._changed()
+        return {'ok': True}
+
+    def shadnet_signin(self, npid, password, new=False):
+        """The player's own ShadNet account into shadPS4 (gamesetup.shadnet_signin). The app signs in to ShadNet
+        first: a wrong password never reaches the game, and the account id is known at once (no NHL 19 run needed).
+        When ShadNet does not answer it is saved anyway and the id comes from the game's next sign-in."""
+        try:
+            npid, password = self._can_save(npid, password)
+        except gamesetup.SetupError as err:
+            return self._fail(str(err))
+        account = None
+        why = f'Saved, but ShadNet did not answer. Start NHL 19 once so it signs in as {npid}, then press Check again.'
+        try:
+            account = self.sn_login(npid, password)
+        except shadnet.ShadNetDown as err:
+            self.ctl.host.log(f'Multiplayer: ShadNet check of {npid} got no usable answer ({err}); saved unchecked.')
+        except shadnet.ShadNetError as err:
+            if not (new and err.code == 8):
+                return self._fail(str(err))
+            # a brand-new account the server does not take yet (e-mail not confirmed): the password is right
+            why = f'Account {npid} made. Confirm the e-mail ShadNet sent, then press Check again.'
+        return self._save_signin(npid, password, account, why)
+
+    def _can_save(self, npid, password):
+        """(npid, password) cleaned when they can be written now, else SetupError."""
+        if not self.logged.get('user_dir'):
+            raise gamesetup.SetupError('Set up shadPS4 first (Setup tab).')
+        npid, password = gamesetup.shadnet_check(npid, password)
+        if overlay.emulator_running():
+            raise gamesetup.SetupError('shadPS4 is running. Close the game first, then try again.')
+        return npid, password
+
+    def _save_signin(self, npid, password, account, why):
+        user = self.logged.get('user_dir') or ''
+        try:
+            npid = gamesetup.shadnet_signin(user, npid, password)
+        except gamesetup.SetupError as err:
+            return self._fail(str(err))
+        with self.mlock:
+            self.typed_ext = None
+            self.checked = {'npid': npid, 'account': account} if account else None
+            self._remember()
+            self.error = ''
+            if account:
+                self.logged = dict(self.logged, npid=npid, account=account, state='signed_in', why='',
+                                   **{'from': 'shadnet'})
+            else:
+                self.logged = dict(self.logged, npid=npid, account=None, state='stale', why=why)
+        self.ctl.host.log(f'Multiplayer: ShadNet sign-in set to {npid}' + (f' (account {account}).' if account else '.'))
+        self.refresh()
+        return {'ok': True, 'npid': npid, 'account': account}
+
+    def shadnet_create(self, npid, email, password):
+        """Make a new ShadNet account (the site's sign-up, from the app) and sign in with it."""
+        try:
+            npid, password = self._can_save(npid, password)     # before the account exists: nothing left half done
+        except gamesetup.SetupError as err:
+            return self._fail(str(err))
+        email = str(email or '').strip()
+        if len(password) < 6:
+            return self._fail('The password needs at least 6 characters.')
+        if not EMAIL.fullmatch(email) or len(email) > 120:
+            return self._fail('Type a real e-mail address (ShadNet may send a confirmation).')
+        try:
+            self.sn_register(npid, password, email, agent=f'OvertimeRoster/{VERSION}')
+        except shadnet.ShadNetDown as err:
+            return self._fail(f'{err} Or make the account on the ShadNet site.')
+        except shadnet.ShadNetError as err:
+            return self._fail(str(err))
+        self.ctl.host.log(f'Multiplayer: made ShadNet account {npid}.')
+        out = self.shadnet_signin(npid, password, new=True)
+        if not out.get('ok'):
+            return dict(out, created=True, error=f'Account {npid} made. ' + out.get('error', ''))
+        return dict(out, created=True)
+
+    @staticmethod
+    def shadnet_register():
+        webbrowser.open(gamesetup.SHADNET_REGISTER)
         return {'ok': True}
 
     def set_press(self, on):
@@ -186,9 +277,21 @@ class MultiplayerCtl(Part):
         emu = setup.known_emulator()
         user = gamesetup.emu_user_dir(emu) if emu else ''
         log = gamesetup.shadnet_log(user) if user else None
-        users = gamesetup.shadnet_users(user) if user else []
-        logged = {'npid': (log or {}).get('npid') or (users[0]['npid'] if users else ''),
-                  'account': (log or {}).get('account'), 'why': gamesetup.shadnet_why(log) if user else ''}
+        who = gamesetup.shadnet_identity(user, log) if user else {'npid': '', 'account': None, 'state': None}
+        if who['state'] == 'stale':
+            why = (f'The ShadNet account changed to {who["npid"]}. Start NHL 19 once so it signs in as '
+                   f'{who["npid"]}, then press Check again.')
+        elif user and not who['npid']:
+            why = 'Sign in to ShadNet below, or create your own account here.'
+        else:
+            why = gamesetup.shadnet_why(log) if user else ''
+        logged = {'npid': who['npid'], 'account': who['account'], 'state': who['state'], 'why': why,
+                  'user_dir': user}
+        checked = self.checked
+        if (not who['account'] and checked and who['npid'] and (log or {}).get('state') != 'rejected'
+                and checked['npid'].casefold() == who['npid'].casefold()):
+            # the app's own ShadNet sign-in proved this Online ID's account id: no NHL 19 run needed
+            logged.update(account=checked['account'], state='signed_in', why='', **{'from': 'shadnet'})
         checks = self._checks(emu)
         with self.mlock:
             self.logged, self.checks = logged, checks
@@ -347,8 +450,63 @@ class MultiplayerCtl(Part):
             code, token = self.code, self.token
         if not code:
             return {'ok': False}
+        patch = None
+        if value:
+            emu = self.ctl.setup.known_emulator()
+            try:
+                patch = gamesetup.patch_fingerprint(emu) if emu else 'none'
+            except (OSError, ValueError, gamesetup.SetupError) as err:
+                self.ctl.host.log(f'Multiplayer: the patch could not be read ({err!r}).')
+        if value and self._hosts_own_roster():
+            try:
+                self._upload_roster(code, token)
+            except hostroster.HostRosterError as err:
+                return self._fail(str(err))
+            except LC.LobbyError as err:
+                return self._lobby_error(err)
         try:
-            lobby = self.client().ready(code, token, bool(value))
+            lobby = self.client().ready(code, token, bool(value), patch)
+        except LC.LobbyError as err:
+            return self._lobby_error(err)
+        self._apply(lobby)
+        return {'ok': True}
+
+    def _hosts_own_roster(self):
+        with self.mlock:
+            return self.me == 0 and (self.lobby or {}).get('roster_mode') == 'host'
+
+    def _upload_roster(self, code, token):
+        """Build the roster this host's game serves and give it to the lobby (at every Ready, so edits made since
+        are in). The guest's game, and this one, download it by its CRC in Online Versus."""
+        c = self.ctl
+        if not c.game_dir or not c.game.ok:
+            raise hostroster.HostRosterError('Pick your NHL 19 folder in Setup first.')
+        try:
+            with c.lock:
+                s = c.session
+                blob, crc, came = hostroster.host_roster(c.game_dir, c.game.schema(), s.db if s is not None else None)
+        except (OSError, ValueError, KeyError, overlay.PatchError) as err:
+            raise hostroster.HostRosterError(f'Your roster could not be read ({err}).') from None
+        where = 'the roster open here' if came == 'open' else 'the roster Patch put on your game'
+        c.host.log(f'Multiplayer: uploading {where} ({len(blob)} bytes, CRC {crc[:12]}...).')
+        self.client().upload_roster(code, token, blob)
+
+    def set_roster_mode(self, mode):
+        """The host picks whose roster the match plays on: 'server' (the online roster) or 'host' (the host's own
+        roster and lines, uploaded at Ready; the guest's game adopts it)."""
+        if mode not in ('server', 'host'):
+            return self._fail('Pick the server roster or your own.')
+        with self.mlock:
+            code, token, me = self.code, self.token, self.me
+            state = (self.lobby or {}).get('state')
+        if not code:
+            return {'ok': False}
+        if me != 0:
+            return self._fail('Only the host picks the roster.')
+        if state in LAUNCHING:
+            return self._fail('The game is starting: the roster is fixed now.')
+        try:
+            lobby = self.client().roster_mode(code, token, mode)
         except LC.LobbyError as err:
             return self._lobby_error(err)
         self._apply(lobby)
@@ -920,6 +1078,8 @@ class MultiplayerCtl(Part):
             return {
                 'you': {'name': self.my_name(), 'name_from': 'typed' if self.name else 'game' if self.logged['npid'] else '',
                         'ext': ext, 'ext_from': source, 'ext_why': self.logged.get('why', ''), 'press': self.press_title,
+                        'shadnet': {'npid': self.logged.get('npid') or '', 'state': self.logged.get('state'),
+                                    'ready': bool(self.logged.get('user_dir'))},
                         'hud': {'on': self.show_hud, 'available': self.hud_ok(), 'phrases': list(PHRASES)}},
                 'checks': self._checks_view(),
                 'lobby': lobby,
@@ -956,6 +1116,9 @@ class MultiplayerCtl(Part):
         rules = self._rules_view(lobby, host) if isinstance(lobby.get('rules'), dict) else None   # None: a server before M3b
         return {'code': lobby.get('code'), 'public': bool(lobby.get('public')), 'state': lobby.get('state'),
                 'waiting': lobby.get('waiting'), 'players': players, 'rules': rules,
+                'roster_mode': (None if 'roster_mode' not in lobby else
+                                {'mode': lobby.get('roster_mode'), 'uploaded': bool(lobby.get('host_roster')),
+                                 'edit': host and lobby.get('state') not in LAUNCHING}),
                 'chat': [{'n': c['n'], 'name': str(c.get('name') or ''), 'text': str(c.get('text') or ''),
                           'mine': c.get('who') == self.me}
                          for c in (lobby.get('chat') or [])[-CHAT_SHOWN:] if isinstance(c, dict) and isinstance(c.get('n'), int)],

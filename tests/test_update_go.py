@@ -225,7 +225,7 @@ def test_busy_never_drops_between_steps(app):
     r = v['result']
     assert r['kind'] == 'good' and r['title'] == 'Updated and saved' and not r['can_undo']
     assert dict(r['items'])['Saved over'] == 'My roster' and dict(r['items'])['In the game'] == 'Custom Roster 1'
-    assert [l['part'] for l in r['lines']] == ['NHL rosters', 'Real lines', 'NHL 27 ratings', 'Calendar',
+    assert [l['part'] for l in r['lines']] == ['NHL rosters', 'Real lines', 'Ratings', 'Calendar',
                                                'Retirements', 'Checked']
     assert fakes.ran[-1]['lines'] is True       # the switch is on unless the player turns it off
     assert r['lines'][-1]['text'] == 'The roster opens in NHL 19 with 32 teams.'
@@ -382,7 +382,7 @@ def test_switches_reach_the_update(app):
     assert fakes.ran[-1] == {'per32': 82, 'nhl27': False, 'schedule': False, 'retire': False, 'expansion': True,
                              'lines': False, 'served': False}     # no patch record: NHL 19's own salary cap
     lines = {l['part']: l['text'] for l in view(host)['result']['lines']}
-    assert lines['NHL 27 ratings'] == 'Left as they were.' and lines['Calendar'] == 'Left as it was.'
+    assert lines['Ratings'] == 'Left as they were.' and lines['Calendar'] == 'Left as it was.'
     assert lines['Retirements'] == 'Nobody retired.' and lines['Real lines'] == 'Off: lines by rating.'
     assert c.prefs['update']['nhl27'] is False and c.prefs['update']['lines'] is False     # remembered
 

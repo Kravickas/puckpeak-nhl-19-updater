@@ -41,52 +41,45 @@ function PatchBar({ p, go }) {
   </div>`;
 }
 
-// one row of "What should be updated?": title, one line, its options, the "?", the switch
-function Step({ w, busy, children }) {
+// one tile of "What should be updated?": title, two lines at most (all of it in the "?"), the switch
+function Step({ w, busy }) {
   return html`<div class=${cls('up-step', w.on && 'on', w.locked && 'locked')} data-key=${w.key}>
     <div class="up-step-main">
       <div class="up-step-title">${w.title}${w.always && html`<span class="up-always">Always on</span>`}</div>
-      <div class="up-step-sub">${w.sub}</div>
-      ${children}
+      <div class="up-step-sub" title=${w.sub}>${w.sub}</div>
     </div>
     <${Info} title=${w.info.title} text=${w.info.text}/>
     <${Switch} on=${w.on} disabled=${busy || w.locked} label=${w.title} onChange=${(on) => call('update_option', w.key, on)}/>
   </div>`;
 }
 
-// two columns: what comes from NHL.com and NHL 27, then My edits, on the left; the calendar, retirements and the
-// data source on the right
+// the tiles' order: the rosters and what rides on them, the ratings, then the season (v0.70.0: every switch shows,
+// the calendar's and the data's choices sit in one bar under the tiles, so the card needs no scroll)
+const ORDER = ['rosters', 'lines', 'myedits', 'retire', 'nhl27', 'drafts', 'calendar'];
+
 function StepsCard({ s }) {
   const by = Object.fromEntries(s.switches.map((w) => [w.key, w]));
-  const cal = by.calendar;
+  const keys = ORDER.filter((k) => by[k]).concat(s.switches.map((w) => w.key).filter((k) => !ORDER.includes(k)));
+  const cal = by.calendar || { on: false };
   return html`<${Card} n="1" title="What should be updated?" grow className="up-steps-card"
       aside=${html`<span class="up-aside">Turn a part off to keep it as it is.</span><${Info} title="What Go does" sections=${GO_INFO}/>`}>
     <div class="card-body up-steps-body">
-      <div class="up-steps">
-        <${Step} w=${by.rosters} busy=${s.busy}/>
-        <${Step} w=${by.nhl27} busy=${s.busy}/>
-        <${Step} w=${by.drafts} busy=${s.busy}/>
-        <${Step} w=${by.myedits} busy=${s.busy}/>
-        <${Step} w=${cal} busy=${s.busy}>
-          <div class="up-opts">
-            <${Segmented} className="up-season" options=${s.seasons} value=${s.season} disabled=${s.busy || !cal.on}
-              onChange=${(v) => call('update_option', 'season', v)}/>
-            <${Segmented} className="up-per32" value=${s.per32} disabled=${s.busy || !cal.on}
-              options=${[{ value: 84, label: '84 games', title: 'The real NHL since 2025-26' }, { value: 82, label: '82 games', title: 'The length NHL 19 was made for' }]}
-              onChange=${(v) => call('update_option', 'per32', v)}/>
-          </div>
-        <//>
-        <${Step} w=${by.retire} busy=${s.busy}/>
-        <div class="up-step on data" data-key="data">
-          <div class="up-step-main">
-            <div class="up-step-title">Data</div>
-            <div class="up-step-sub">Where the rosters and the calendar come from.</div>
-            <div class="up-opts">
-              <${Segmented} className="up-data" value=${s.offline} disabled=${s.busy}
-                options=${[{ value: false, label: 'NHL.com' }, { value: true, label: s.offline_date ? `Offline copy (${s.offline_date})` : 'Offline copy' }]}
-                onChange=${(v) => call('update_option', 'offline', v)}/>
-            </div>
-          </div>
+      <div class="up-steps">${keys.map((k) => html`<${Step} key=${k} w=${by[k]} busy=${s.busy}/>`)}</div>
+      <div class="up-bar">
+        <div class=${cls('up-opt', !cal.on && 'off')}>
+          <span class="caps up-opt-label">Season</span>
+          <${Segmented} className="up-season" options=${s.seasons} value=${s.season} disabled=${s.busy || !cal.on}
+            onChange=${(v) => call('update_option', 'season', v)}/>
+          <${Segmented} className="up-per32" value=${s.per32} disabled=${s.busy || !cal.on}
+            options=${[{ value: 84, label: '84 games', title: 'The real NHL since 2025-26' }, { value: 82, label: '82 games', title: 'The length NHL 19 was made for' }]}
+            onChange=${(v) => call('update_option', 'per32', v)}/>
+        </div>
+        <span class="sp"></span>
+        <div class="up-opt">
+          <span class="caps up-opt-label">Data</span>
+          <${Segmented} className="up-data" value=${s.offline} disabled=${s.busy}
+            options=${[{ value: false, label: 'NHL.com' }, { value: true, label: s.offline_date ? `Offline copy (${s.offline_date})` : 'Offline copy' }]}
+            onChange=${(v) => call('update_option', 'offline', v)}/>
           <${Info} title="Data" text="NHL.com has today's rosters. The offline copy comes with Overtime Roster: use it when NHL.com does not answer."/>
         </div>
       </div>

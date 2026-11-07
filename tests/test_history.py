@@ -100,3 +100,39 @@ def test_player_detail_lists_opponents_teams_and_recent_matches():
 def test_player_detail_unknown_player_and_limit():
     assert H.player_detail(games(), 'zz') is None
     assert len(H.player_detail(games(), 'a1', limit=2)['recent']) == 2
+
+
+def test_a_forfeit_is_a_1_0_loss_for_the_player_who_quit_whatever_a_lone_claim_says():
+    m = match(1, ANN, BO, cb=claim('BOS', 0, 4))                 # Bo's own (unfinished) score
+    m['forfeit'] = ANN[0]
+    r = H.resolve(m)
+    assert (r['status'], r['winner'], r['left'], r['forfeit']) == (H.CONFIRMED, BO[0], ANN[0], True)
+    assert r['scores'] == {ANN[0]: 0, BO[0]: 1} and r['waiting_for'] is None
+    assert H.resolve(match(2, ANN, BO))['forfeit'] is False
+
+
+def test_two_mirroring_reports_stand_over_a_forfeit_a_dispute_does_not():
+    m = match(1, ANN, BO, ca=claim('PIT', 3, 2), cb=claim('BOS', 2, 3))
+    m['forfeit'] = ANN[0]
+    r = H.resolve(m)
+    assert (r['status'], r['winner'], r['forfeit']) == (H.CONFIRMED, ANN[0], False)
+    m['claims'][BO[0]] = claim('BOS', 5, 3)                       # the two differ: the quit decides
+    r = H.resolve(m)
+    assert (r['status'], r['winner'], r['forfeit']) == (H.CONFIRMED, BO[0], True)
+    rows = H.standings([m])
+    assert [(x['name'], x['w'], x['l'], x['gf'], x['ga']) for x in rows] == [('Bo', 1, 0, 1, 0), ('Ann', 0, 1, 0, 1)]
+
+
+def test_game_stats_keep_penalty_minutes_and_drop_the_numbers_the_game_leaves_at_0():
+    # live match 1 of 2026-11-07: pims 480 with four minors (the opponent had 4 power plays); shotsa / fol 0 on both sides
+    raw = {'shots': 26, 'shotsa': 0, 'pims': 480, 'ppo': 3, 'fow': 8, 'fol': 0, 'toa': 230}
+    assert H.clean_stats(raw) == {'shots': 26, 'pims': 8, 'ppo': 3, 'fow': 8, 'toa': 230}
+    assert H.clean_stats({'shotsa': 0, 'fol': 0}) is None and H.clean_stats({'pims': 300})['pims'] == 5
+
+
+def test_the_opponents_report_gives_shots_against_and_faceoffs_lost():
+    mine = {'shots': 26, 'fow': 8}
+    assert H.with_opponent(mine, {'shots': 34, 'fow': 24}) == {'shots': 26, 'fow': 8, 'shotsa': 34, 'fol': 24}
+    assert H.with_opponent(mine, None) == mine and H.with_opponent(mine, {}) is not mine
+    s = H.stat_summary([{'stats': {'fow': 8}, 'for': 2, 'against': 4}])
+    assert s['rates']['faceoffs'] is None and s['rates']['saving'] is None   # no opponent numbers: no rate

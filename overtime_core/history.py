@@ -16,10 +16,16 @@ from . import calendar
 
 CONFIRMED, DISPUTED, WAITING, OPEN = 'confirmed', 'disputed', 'waiting', 'open'
 LEFT_AFTER = 3600       # seconds a game's own report waits for the other side before it counts alone (Legacy's rule)
+FORFEIT_SCORE = (1, 0)  # a match the other player quit on the ice: the one who stayed wins 1-0 (rating margin 1)
 MAX_SCORE = 99
 TEAM_TEXT = re.compile(r'^[A-Z]{2,4}$')
 STAT_KEYS = ('shots', 'shotsa', 'hits', 'pims', 'ppg', 'ppo', 'ppga', 'fow', 'fol', 'passc', 'passa', 'toa', 'bs', 'bag', 'bao')
 STAT_MAX = 100000      # time on attack is in seconds; nothing else comes near
+# Live match 1 of 2026-11-07 (docs/notes/game-report-fields.md): the game's `pims` is penalty time in seconds (480 with
+# four minors, matching the opponent's 4 power plays), and its `shotsa` and `fol` were 0 on both sides. So pims is kept
+# in minutes, and shots against / faceoffs lost come from the opponent's report (its shots / fow) instead.
+SECONDS_TO_MINUTES = ('pims',)
+NOT_SENT = ('shotsa', 'fol')
 TEAMS = sorted(calendar.SLOTS)        # the codes the app offers; the game's own abbreviation is accepted too
 
 
@@ -30,11 +36,27 @@ def pid(ext, salt):
 
 def clean_stats(raw):
     """The game's own per-player numbers (docs/notes/game-report-fields.md): only the allowlisted names, whole numbers
-    0..STAT_MAX. None when nothing usable is left."""
+    0..STAT_MAX, penalty time in minutes, without the numbers the game leaves at 0 (NOT_SENT). None when nothing usable
+    is left."""
     if not isinstance(raw, dict):
         return None
-    out = {k: raw[k] for k in STAT_KEYS if isinstance(raw.get(k), int) and not isinstance(raw.get(k), bool) and 0 <= raw[k] <= STAT_MAX}
+    out = {k: raw[k] for k in STAT_KEYS if k not in NOT_SENT and isinstance(raw.get(k), int)
+           and not isinstance(raw.get(k), bool) and 0 <= raw[k] <= STAT_MAX}
+    for k in SECONDS_TO_MINUTES:
+        if k in out:
+            out[k] = round(out[k] / 60)
     return out or None
+
+
+def with_opponent(mine, theirs):
+    """His stats with shots against and faceoffs lost taken from the opponent's report (its shots and fow), when it
+    sent them; a copy."""
+    out = dict(mine or {})
+    if theirs:
+        for k, src in (('shotsa', 'shots'), ('fol', 'fow')):
+            if theirs.get(src) is not None:
+                out[k] = theirs[src]
+    return out
 
 
 # How a player played: the game's own numbers (STAT_KEYS) as a box score and as totals over his games. Each is one side's
@@ -77,13 +99,14 @@ def stat_summary(games):
             totals[k] = totals.get(k, 0) + v
             counted[k] = counted.get(k, 0) + 1
     t = totals.get
+    faceoffs = [g['stats'] for g in games if g['stats'].get('fow') is not None and g['stats'].get('fol') is not None]
     goals_for = sum(g['for'] for g in games if g['stats'].get('shots'))
     goals_against = sum(g['against'] for g in games if g['stats'].get('shotsa'))
     return {'games': len(games), 'totals': totals,
             'avg': {k: round(v / counted[k], 1) for k, v in totals.items()},
             'rates': {'shooting': _pct(goals_for, sum(g['stats'].get('shots', 0) for g in games if g['stats'].get('shots'))),
                       'saving': None if not t('shotsa') else _pct(max(0, t('shotsa') - goals_against), t('shotsa')),
-                      'faceoffs': _pct(t('fow', 0), t('fow', 0) + t('fol', 0)),
+                      'faceoffs': _pct(sum(s['fow'] for s in faceoffs), sum(s['fow'] + s['fol'] for s in faceoffs)),
                       'passing': _pct(t('passc', 0), t('passa', 0)),
                       'power_play': _pct(t('ppg', 0), t('ppo', 0))}}
 
@@ -107,18 +130,23 @@ def score(value):
 
 def resolve(match):
     """What the claims of a match add up to:
-    {status, teams: {pid: team|None}, scores: {pid: score|None}, winner: pid|None, waiting_for: pid|None}.
+    {status, teams: {pid: team|None}, scores: {pid: score|None}, winner: pid|None, waiting_for: pid|None, left: pid|None,
+     forfeit: bool}.
     confirmed = both claimed and mirror (A for == B against, A against == B for); disputed = both claimed, they differ;
     waiting = one claim (its scores are shown as provisional); open = none. A lone claim marked `lapsed` (the game's own
     report, LEFT_AFTER seconds old: matches.py marks it) is confirmed, with `left` the player who never reported: the
-    one who left pays for it, and a report of his own, however late, puts the two claims to the normal test."""
+    one who left pays for it, and a report of his own, however late, puts the two claims to the normal test.
+    `match['forfeit']` (pid) quit the match on the ice (the server saw him leave it in play): confirmed, a FORFEIT_SCORE
+    loss for him, whatever single or disputed claims say; only two mirroring claims (both games reported a finished
+    match) stand over it."""
     a, b = (p['pid'] for p in match['players'])
     claims = match.get('claims') or {}
     ca, cb = claims.get(a), claims.get(b)
     teams = {a: (ca or {}).get('team') or (cb or {}).get('opp_team'),
              b: (cb or {}).get('team') or (ca or {}).get('opp_team')}
     scores = {a: None, b: None}
-    out = {'status': OPEN, 'teams': teams, 'scores': scores, 'winner': None, 'waiting_for': None, 'left': None}
+    out = {'status': OPEN, 'teams': teams, 'scores': scores, 'winner': None, 'waiting_for': None, 'left': None,
+           'forfeit': False}
     if ca and cb:
         if (ca['for'], ca['against']) == (cb['against'], cb['for']):
             out['status'] = CONFIRMED
@@ -134,6 +162,11 @@ def resolve(match):
         if c.get('lapsed'):
             out['status'], out['waiting_for'], out['left'] = CONFIRMED, None, other
             out['winner'] = who if c['for'] > c['against'] else other
+    gone = match.get('forfeit')
+    if gone in (a, b) and not (ca and cb and out['status'] == CONFIRMED):
+        stay = b if gone == a else a
+        scores[stay], scores[gone] = FORFEIT_SCORE
+        out.update(status=CONFIRMED, winner=stay, waiting_for=None, left=gone, forfeit=True)
     return out
 
 
@@ -199,7 +232,8 @@ def player_detail(matches, who, limit=20):
         mine_stats = ((m.get('claims') or {}).get(who) or {}).get('stats')
         their_stats = ((m.get('claims') or {}).get(theirs['pid']) or {}).get('stats')
         if won is not None and mine_stats:
-            played.append({'stats': mine_stats, 'for': r['scores'][who], 'against': r['scores'][theirs['pid']]})
+            played.append({'stats': with_opponent(mine_stats, their_stats), 'for': r['scores'][who],
+                           'against': r['scores'][theirs['pid']]})
         if len(recent) < limit:
             recent.append({'id': m['id'], 'started': m['started'], 'status': r['status'], 'rules': m.get('rules'),
                            'box': box_score(mine_stats, their_stats),

@@ -38,6 +38,8 @@ def _status(r, names, you):
         if who == you:
             return 'caution', 'Result entered: confirm yours'
         return 'info', f'Waiting for {names[who]}'
+    if r.get('forfeit'):
+        return 'good', f"{names[r['left']]} left the match: a forfeit loss"
     if r.get('left'):
         return 'good', f"{names[r['left']]} left: counted without a report"
     return STATUS[r['status']]

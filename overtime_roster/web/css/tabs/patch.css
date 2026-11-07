@@ -2,7 +2,10 @@
    (docs/ui/CONTRACT.md); tokens from tokens.css, parts from app.css. Legacy's Game patch layout: the patch and its switches on
    the left; what is in the game now and what the patch does on the right. */
 
-/* --- 1 Overtime game patch: the state, the three buttons, one row per switch ---------------------------------------- */
+/* the patch and its groups take the wider column; what is in the game now the narrower one */
+.tab-patch .columns.gp { grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr); }
+
+/* --- 1 Overtime game patch: the state, the three buttons, the switches in groups ------------------------------------ */
 .tab-patch .gp-main { min-height: 0; }
 .tab-patch .gp-top { flex: none; display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .tab-patch .gp-state { display: flex; align-items: flex-start; gap: 10px; font-size: 14.5px; font-weight: 600; line-height: 1.4; color: var(--text-2); }
@@ -39,6 +42,56 @@
 .tab-patch .gp-layer.coming .gp-layer-sub { color: var(--text-3); }
 .tab-patch .gp-hint { flex: 1; min-width: 0; text-align: right; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab-patch .gp-layer.coming .info-dot { margin-right: 56px; }
+
+/* a group: a head with its fold, count and own switch; open, its switches in two columns */
+.tab-patch .gp-group { flex: none; display: flex; flex-direction: column; background: var(--tile);
+  box-shadow: inset 3px 0 0 var(--text-off); transition: box-shadow .15s; }
+.tab-patch .gp-group.on { box-shadow: inset 3px 0 0 var(--accent); }
+.tab-patch .gp-group.mixed { box-shadow: inset 3px 0 0 rgba(255, 79, 0, .45); }
+.tab-patch .gp-group-head { display: flex; align-items: center; gap: 12px; padding: 4px 12px 4px 6px; }
+.tab-patch .gp-group-fold { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 5px 4px 5px 8px;
+  border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tab-patch .gp-group-fold:hover .gp-group-title, .tab-patch .gp-group-fold:focus-visible .gp-group-title { color: var(--accent-hi); }
+.tab-patch .gp-group-fold:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tab-patch .gp-chev { flex: none; width: 8px; height: 8px; margin: 0 4px 0 2px; border-right: 2px solid var(--text-2);
+  border-bottom: 2px solid var(--text-2); transform: rotate(-45deg); transition: transform .15s; }
+.tab-patch .gp-group.open .gp-chev { transform: rotate(45deg) translate(-2px, -2px); }
+.tab-patch .gp-group-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tab-patch .gp-group-title { display: flex; align-items: center; gap: 8px; font: 700 16px/1.25 var(--font-head);
+  font-stretch: var(--head-stretch); font-style: var(--head-style); letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text); }
+.tab-patch .gp-group:not(.on):not(.mixed) .gp-group-title { color: var(--text-2); }
+.tab-patch .gp-folder { width: 16px; height: 13px; color: var(--caution); }
+.tab-patch .gp-group-count { font-family: var(--font); font-size: 12.5px; font-weight: 600; font-style: normal; font-stretch: normal; line-height: 1; letter-spacing: 0; text-transform: none;
+  color: var(--text-3); }
+.tab-patch .gp-group-sub { font-size: 12.5px; line-height: 1.35; color: var(--text-2); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tab-patch .gp-store { flex: none; font-size: 12.5px; color: var(--text-3); white-space: nowrap; }
+.tab-patch .gp-group.open { flex: 0 1 auto; min-height: 0; }
+/* one-line tiles, as many columns as fit; on a very small window only the tiles scroll, the card and the heads stay */
+.tab-patch .gp-group-rows { min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 5px; padding: 1px 8px 5px 14px; animation: rise-in .18s var(--ease) both; }
+.tab-patch .gp-group-rows .gp-layer { padding: 4px 10px 4px 12px; gap: 10px; }
+.tab-patch .gp-group-rows .gp-layer-title { font-size: 14px; line-height: 1.2; }
+.tab-patch .gp-group-rows .gp-layer-title > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tab-patch .gp-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.tab-patch .gp-dot.good { background: var(--good); }
+.tab-patch .gp-dot.caution { background: var(--caution); }
+.tab-patch .gp-dot.bad { background: var(--bad); }
+.tab-patch .gp-dot.info { background: #4aa3ff; }
+.tab-patch .gp-bin { flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line-hi);
+  background: transparent; color: var(--text-2); cursor: pointer; }
+.tab-patch .gp-bin svg { width: 13px; height: 15px; }
+.tab-patch .gp-bin:hover, .tab-patch .gp-bin:focus-visible { color: #ff6b8f; border-color: #ff6b8f; outline: none; }
+.tab-patch .gp-layers:has(.gp-group.open) > .gp-layer.coming { display: none; }
+.tab-patch .gp-group-rows .gp-layer { background: rgba(255, 255, 255, .035); }
+.tab-patch .gp-group-rows .gp-layer:hover { background: var(--tile-hi); }
+.tab-patch .gp-group-rows .gp-layer-sub { line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-patch .gp-group-rows .gp-layer.on .gp-layer-sub.info { color: var(--text); }
+@media (max-width: 1100px) {
+  .tab-patch .columns.gp { grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); }
+}
+
 
 /* --- 2 The Photos, logos pack (v0.10.0) --------------------------------------------------------------------------- */
 .tab-patch .gp-pack-size { font-size: 12.5px; color: var(--text-3); }
@@ -88,7 +141,10 @@
   .tab-patch .gp-layer { padding: 3px 10px 3px 12px; }
   .tab-patch .gp-layer.coming { padding-top: 5px; padding-bottom: 5px; }
   .tab-patch .gp-layer-title { font-size: 13.5px; }
-  .tab-patch .gp-layer:not(.off) .gp-layer-sub { display: none; }
+  .tab-patch .gp-layers > .gp-layer:not(.off) .gp-layer-sub { display: none; }
+  .tab-patch .gp-group-head { padding-top: 2px; padding-bottom: 2px; }
+  .tab-patch .gp-group-rows { padding-bottom: 3px; gap: 4px; }
+  .tab-patch .gp-group-rows .gp-layer { padding-top: 2px; padding-bottom: 2px; }
   .tab-patch .gp-layer-sub { font-size: 12px; }
   .tab-patch .gp-now-body { gap: 7px; }
   .tab-patch .gp-tool { padding-top: 6px; }

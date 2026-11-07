@@ -2,6 +2,35 @@
 
 What changed in each version, for players.
 
+## 0.70.0 (2026-11-07)
+
+### Changed
+
+- **Game patch, simpler.** The switches sit in three groups you can open: Teams and league, Menus and server texts, and
+  Updated assets. Each group has its own switch (on: its main parts, off: everything in it), and you open a group to
+  pick single parts. No more all-or-nothing art pack.
+- **Updated assets download one by one.** Team art, 3D jerseys, player photos, the alternate and national team jerseys
+  and the centre ice of every league each download when you switch them on. A dot before each name shows whether it is
+  already in the game (green) or needs Patch (yellow).
+- **Plain names.** "NHL 27" is gone from the app: Updated assets, Team art, 3D jerseys, Updated ratings and types. The
+  default roster switch now just says what it does (all 32 teams; its "?" explains NHL 19 shipped with 31 in 2018,
+  before Seattle). The World of Chel switch says it only keeps the tile (Overtime does not run World of Chel yet).
+- **"What's in your game now"** (Game patch, right card) uses plain words: Patched in, files changed and intact,
+  Check for damage, Backup copy of the game.
+- **Update tab fits without scrolling:** the switches are compact tiles, with the season and data choices in one bar.
+
+### Fixed
+
+- **Real lines and captains** now shows on the Update tab (the switch was missing).
+
+### Also in 0.60.3 and 0.60.4 (in-app updates)
+
+- **ShadNet sign-in and sign-up in the app** (Multiplayer); your account is found without starting NHL 19 first.
+- **Lobby host picks the roster:** the server roster, or the host's own open roster with its lines, uploaded at Ready.
+- **Both players need the same game patch** before Ready in a lobby.
+- **Forfeit:** a player who leaves or drops a match in play loses it 1-0 (server update).
+- Multiplayer tab no longer crashes on the rank progress bar.
+
 ## 0.60.2 (2026-11-07)
 
 ### Fixed

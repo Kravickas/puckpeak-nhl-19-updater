@@ -51,31 +51,72 @@ function Name({ you }) {
     ${you.name}<//>`;
 }
 
-const FROM = { log: 'from the game log', typed: 'typed by you' };
+const FROM = { log: "from the game's sign-in", typed: 'typed by you', shadnet: 'checked with ShadNet' };
 
-function ExtId({ you, quoted }) {
+// ShadNet sign-in: the app signs in to ShadNet with the player's own Online ID and password (that gives the account
+// id at once, no NHL 19 run) and writes them into shadPS4, keeping a copy of the old file. "New account" makes one
+// through the ShadNet site's sign-up and signs in with it.
+function SignIn({ sn, onDone }) {
+  const [make, setMake] = useState(false);
+  const [npid, setNpid] = useState(sn.npid || '');
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [mail, setMail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const id = npid.trim();
+  const idOk = /^[A-Za-z0-9_-]{3,16}$/.test(id);
+  const ok = make ? idOk && pw.length >= 6 && pw === pw2 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail.trim())
+    : idOk && pw.length > 0;
+  const go = async () => {
+    if (!ok || busy) return;
+    setBusy(true);
+    try {
+      const r = make ? await call('mp_shadnet_create', id, mail.trim(), pw) : await call('mp_shadnet_signin', id, pw);
+      if (r && r.ok) { setPw(''); setPw2(''); onDone && onDone(); }
+    } finally { setBusy(false); }
+  };
+  const enter = (e) => { if (e.key === 'Enter') go(); };
+  const hint = make && pw2 && pw !== pw2 ? 'The passwords differ.' : make && pw && pw.length < 6 ? 'At least 6 characters.' : '';
+  return html`<div class="mp-signin">
+    <div class="mp-note">Each player needs their <b>own</b> ShadNet account. Never share one: two players on one account
+      cannot play each other.</div>
+    <div class="mp-row">
+      <input class="field" placeholder="Online ID" value=${npid} spellcheck="false" autocomplete="username"
+        aria-label="ShadNet Online ID" onInput=${(e) => setNpid(e.target.value)} onKeyDown=${enter}/>
+      ${make && html`<input class="field" type="email" placeholder="E-mail" value=${mail} autocomplete="email"
+        aria-label="E-mail" onInput=${(e) => setMail(e.target.value)} onKeyDown=${enter}/>`}
+    </div>
+    <div class="mp-row">
+      <input class="field" type="password" placeholder="Password" value=${pw}
+        autocomplete=${make ? 'new-password' : 'current-password'} aria-label="ShadNet password"
+        onInput=${(e) => setPw(e.target.value)} onKeyDown=${enter}/>
+      ${make && html`<input class="field" type="password" placeholder="Password again" value=${pw2}
+        autocomplete="new-password" aria-label="Password again" onInput=${(e) => setPw2(e.target.value)} onKeyDown=${enter}/>`}
+      <${Button} small disabled=${!ok || busy} onClick=${go}>${busy ? '...' : make ? 'Create' : 'Sign in'}<//>
+    </div>
+    ${hint && html`<div class="mp-note">${hint}</div>`}
+    <div class="mp-note">${make
+      ? html`Already have one? <a href="#" onClick=${(e) => { e.preventDefault(); setMake(false); }}>Sign in</a>.
+          3 to 16 letters, digits, - or _. Free.`
+      : html`No account yet? <a href="#" onClick=${(e) => { e.preventDefault(); setMake(true); setNpid(''); setPw(''); }}>Create one here</a>
+          (free). Capitals count.`}
+      <a href="#" class="mp-quiet" onClick=${(e) => { e.preventDefault(); call('mp_shadnet_register'); }}>ShadNet site</a></div>
+  </div>`;
+}
+
+function ExtId({ you }) {
   const [edit, setEdit] = useState(false);
-  const [text, setText] = useState('');
-  const use = () => { call('mp_set_ext', text.trim()); setEdit(false); setText(''); };
-  if (!you.ext) {
-    return html`<${Fact} label="ShadNet id" tone="caution" action=${html`<${Tag} tone="caution">needed<//>`}>not found yet<//>
-      <div class="mp-note">${you.ext_why || html`The id is in shadPS4's log after NHL 19 has signed in once. Start the game from Setup, then come
-        back and press <b>Check again</b>.`} Or type it: the log line reads <i>${quoted}</i>.</div>
-      <div class="mp-row">
-        <input class="field" placeholder="ShadNet id (numbers)" value=${text} spellcheck="false"
-          onInput=${(e) => setText(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter') use(); }}/>
-        <${Button} small kind="ghost" disabled=${!text.trim()} onClick=${use}>Use it<//>
-        <${Button} small onClick=${() => call('mp_refresh')}>Check again<//>
-      </div>`;
+  const sn = you.shadnet || {};
+  if (!you.ext || edit) {
+    const who = sn.npid ? html`${sn.npid}` : 'no ShadNet account yet';
+    return html`<${Fact} label="Player" tone="caution"
+        action=${edit ? html`<${Button} small kind="ghost" onClick=${() => setEdit(false)}>Cancel<//>`
+          : html`<${Button} small kind="ghost" onClick=${() => call('mp_refresh')}>Check again<//>`}>${who}<//>
+      ${!edit && you.ext_why ? html`<div class="mp-note">${you.ext_why}</div>` : null}
+      ${sn.ready ? html`<${SignIn} sn=${sn} onDone=${() => setEdit(false)}/>` : null}`;
   }
-  if (edit) {
-    return html`<div class="mp-fact"><span class="mp-fact-label caps">ShadNet id</span>
-      <input class="field" placeholder="numbers; empty: the game log's" value=${text} spellcheck="false"
-        onInput=${(e) => setText(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter') use(); }}/>
-      <${Button} small kind="ghost" onClick=${use}>Use<//></div>`;
-  }
-  return html`<${Fact} label="ShadNet id" tone="good" sub=${FROM[you.ext_from]}
-      action=${html`<${Button} small kind="ghost" onClick=${() => { setText(''); setEdit(true); }}>Change<//>`}>${you.ext}<//>`;
+  return html`<${Fact} label="Player" tone="good" sub=${`#${you.ext}`}
+      action=${html`<${Button} small kind="ghost" onClick=${() => setEdit(true)}>Change<//>`}>${sn.npid || you.name || you.ext}<//>`;
 }
 
 function Checks({ checks, go }) {
@@ -88,17 +129,17 @@ function You({ s, go }) {
   const lobbyOpen = !!s.lobby;
   return html`<${Card} n=${1} title="You">
     <div class="mp-body">
-      <${Name} you=${s.you}/>
-      <${ExtId} you=${s.you} quoted=${s.quoted}/>
+      ${!s.you.shadnet?.npid && !s.you.ext && html`<${Name} you=${s.you}/>`}
+      <${ExtId} you=${s.you}/>
       <${Checks} checks=${s.checks} go=${go}/>
       ${s.error && html`<div class="mp-note bad" role="alert">${s.error}</div>`}
       ${s.error && !lobbyOpen && html`<div class="mp-row"><${Button} small onClick=${() => call('mp_refresh')}>Check again<//></div>`}
-      <${Fact} label="Press for me" sub="the title screen"
-          action=${html`<${Toggle} on=${s.you.press} label="Press the title screen for me" onChange=${(v) => call('mp_set_press', v)}/>`}>
-        ${s.you.press ? 'on' : 'off'}<//>
-      ${s.you.hud && html`<${Fact} label="Over the game" sub=${s.you.hud.available ? 'chat and results' : 'Windows only'}
-          action=${html`<${Toggle} on=${s.you.hud.on} label="Show chat and results over the game"
-            onChange=${(v) => call('mp_set_hud', v)}/>`}>${s.you.hud.on && s.you.hud.available ? 'on' : 'off'}<//>`}
+      <${Fact} label="Auto start"
+          action=${html`<${Toggle} on=${s.you.press} label="Get past the title screen for me" onChange=${(v) => call('mp_set_press', v)}/>`}>
+        ${s.you.press ? 'App skips the title screen' : 'Off: you press ✕'}<//>
+      ${s.you.hud && html`<${Fact} label="Overlay" sub=${s.you.hud.available ? null : 'Windows only'}
+          action=${html`<${Toggle} on=${s.you.hud.on} label="Show chat and results on top of the game"
+            onChange=${(v) => call('mp_set_hud', v)}/>`}>${s.you.hud.on && s.you.hud.available ? 'Chat and results in game' : 'Off'}<//>`}
     </div>
   </${Card}>`;
 }
@@ -199,11 +240,36 @@ function Lobby({ s }) {
 }
 
 // the match rules: the host picks them before Ready, the partner sees them; both games then play these
-function Rules({ rules, host, hostName }) {
+const ROSTER_OPTIONS = [
+  { value: 'server', label: 'Server roster' },
+  { value: 'host', label: "Host's own roster" },
+];
+
+// whose roster the match plays on: the server's online roster, or the host's own (its app uploads it at Ready and the
+// guest's game downloads it, as a shared roster in the PS3 legacy app)
+function RosterPick({ roster, host, hostName }) {
+  const own = roster.mode === 'host';
+  const picked = ROSTER_OPTIONS.find((o) => o.value === roster.mode);
+  return html`<div class="mp-roster-pick">
+    <label class=${cls('mp-rule', own && 'changed')}>
+      <span class="mp-rule-label caps">Roster</span>
+      ${roster.edit
+        ? html`<${Select} value=${roster.mode} options=${ROSTER_OPTIONS} onChange=${(v) => call('mp_roster_mode', v)}/>`
+        : html`<span class="mp-rule-value">${picked ? picked.label : roster.mode}</span>`}
+    </label>
+    ${own && host && html`<div class="mp-note">The roster open in Overtime Roster (with your edits and lines; none open: the one
+      Patch put on your game) is sent when you press Ready. Both games download it in Online Versus.</div>`}
+    ${own && !host && html`<div class="mp-note">${hostName || 'The host'} plays their own roster.
+      ${roster.uploaded ? 'Your game downloads it when you press PLAY.' : 'It is sent when they press Ready.'}</div>`}
+  </div>`;
+}
+
+function Rules({ rules, host, hostName, roster }) {
   const edit = rules.can_edit;
   return html`<${Card} n=${3} title="Match rules"
       aside=${html`<${Tag} tone=${rules.is_default ? 'info' : 'accent'}>${rules.summary}<//>`}>
     <div class="mp-body">
+      ${roster && html`<${RosterPick} roster=${roster} host=${host} hostName=${hostName}/>`}
       <div class="mp-rules">${rules.rows.map((r) => {
         const picked = r.options.find((o) => o.value === r.value);
         return html`<label key=${r.key} class=${cls('mp-rule', r.value !== r.default && 'changed')}>
@@ -288,7 +354,7 @@ function RatingStrip({ r }) {
         <span class="mp-note">${r.ranked ? `#${r.rank} of ${r.of}` : `${r.placing} more rated ${r.placing === 1 ? 'game' : 'games'} to get your rank`}</span></span></div>
     <div class="mp-rating-sub">${r.change != null && html`<span class=${cls('mp-delta', r.change > 0 && 'plus', r.change < 0 && 'minus')}>${signed(r.change)} last game</span>`}
       <span class="mp-note">${r.record}${Math.abs(r.streak) >= 2 ? ` \u00b7 ${Math.abs(r.streak)} ${r.streak > 0 ? 'wins' : 'losses'} in a row` : ''}</span></div>
-    ${r.next && r.ranked && html`<div class="mp-progress" title=${`${r.next.to_go} to ${r.next.name}`}><span style=${`width:${Math.round((r.next.progress || 0) * 100)}%`}></span></div>
+    ${r.next && r.ranked && html`<div class="mp-progress" title=${`${r.next.to_go} to ${r.next.name}`}><span style=${{ width: `${Math.round((r.next.progress || 0) * 100)}%` }}></span></div>
       <span class="mp-note mp-progress-n">${r.next.to_go} to ${r.next.name} (${r.next.at})</span>`}
     <${Toggle} on=${!r.hidden} onChange=${(on) => call('mp_set_hidden', !on)}>Show me on the web board<//>
   </div>`;
@@ -469,9 +535,10 @@ export default function Multiplayer({ go }) {
         ? html`<${Lobby} s=${s}/>`
         : html`<${Card} n=${2} title="Lobby" aside="Play one friend at a time">
             ${s.you.ext ? html`<${Pick} s=${s}/>`
-              : html`<div class="mp-body"><div class="mp-empty">Set your ShadNet id first: a lobby is tied to your game's sign-in.</div></div>`}
+              : html`<div class="mp-body"><div class="mp-empty">Sign in to ShadNet first (left): a lobby is tied to your game's own sign-in.</div></div>`}
           </${Card}>`}
-      ${s.lobby && s.lobby.rules && html`<${Rules} rules=${s.lobby.rules} host=${s.lobby.host} hostName=${s.lobby.host_name}/>`}
+      ${s.lobby && s.lobby.rules && html`<${Rules} rules=${s.lobby.rules} host=${s.lobby.host} hostName=${s.lobby.host_name}
+          roster=${s.lobby.roster_mode}/>`}
       ${s.game && html`<${Game} game=${s.game}/>`}
       ${s.history && s.history.supported && html`<${History} h=${s.history}/>`}
     </div>

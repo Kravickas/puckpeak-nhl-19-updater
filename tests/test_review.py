@@ -82,3 +82,11 @@ def test_the_review_uses_the_players_own_stats_and_the_opponents_for_penalties()
     assert r['has_stats'] and len(r['tips']) == 2 and 'outshot 12-30' in r['tips'][0] and '8 penalty minutes against 2' in r['tips'][1]
     other = run(games, 'b2')
     assert other['tips'] == [] and other['has_stats']                                     # Bo won the shots: nothing to fix
+
+
+def test_the_opponents_shots_and_faceoffs_stand_in_for_the_zeros_the_game_sends():
+    # live match 1 of 2026-11-07: the review said "outshot them 26-0" from the game's shotsa 0
+    got = V.tips({'shots': 26, 'shotsa': 0, 'pims': 8, 'fow': 8, 'fol': 0}, {'shots': 34, 'fow': 24, 'pims': 6}, False, 2)
+    assert got == ['8 penalty minutes against 6. Fewer hooks and trips: every penalty gives away the power play.',
+                   'You won 25% of faceoffs. Pick your best taker for the key draws and back him up with a winger.']
+    assert V.tips({'shots': 20, 'shotsa': 0}, {'shots': 34}, False, 2)[0].startswith('You were outshot 20-34')

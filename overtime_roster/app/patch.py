@@ -89,8 +89,8 @@ def layers_for(game_dir, want=None, database=False, no_database=False, art=False
 
 
 # The art layer's switch (Patch tab) and its packs, in the order they are laid over each other (a later one wins).
-ART_SWITCH = {'art': 'NHL 27 team art: logos, menu jerseys and centre ice of all teams, Utah\'s and Seattle\'s kits and '
-                     'Utah\'s arena', 'kits': 'NHL 27 3D kits of all teams (a download)'}
+ART_SWITCH = {'art': 'Updated team art: logos, menu jerseys and centre ice of all teams, Utah\'s and Seattle\'s kits and '
+                     'Utah\'s arena', 'kits': 'Updated 3D jerseys of all teams (a download)'}
 LOOKS32_PACK = 'looks32.zip'   # all teams: logos, menu jerseys, centre ice (a core download)
 KITS_PACK = 'kits.zip'         # all teams' 3D kits, a delta pack on the game's own files (downloaded)
 PHOTOS_PACK = 'photos.zip'     # NHL.com portraits, p<artid> of the default database's bios
@@ -102,14 +102,14 @@ RINK_PACK = 'rink.zip'         # NHL 27 pucks, ice lines, board ads, league logo
 # step per texture, no game file in it), downloaded with the family's switch (alts_<family>: the switch 0.30's whole
 # alts_* packs had; those carried NHL 19's own normal maps and are no longer served). Patch makes the family's textures
 # on this PC from the game's own files (make_kits) into the cache, served right after the kits pack.
-KITLAYER_PACKS = {kitcompose.source_pack('nhl'): 'NHL alternate jerseys from NHL 27',
-                  kitcompose.source_pack('intl'): 'National team jerseys from NHL 27',
-                  kitcompose.source_pack('clubs'): 'AHL, ECHL, junior and European club jerseys from NHL 27'}
+KITLAYER_PACKS = {kitcompose.source_pack('nhl'): 'NHL alternate jerseys',
+                  kitcompose.source_pack('intl'): 'National team jerseys',
+                  kitcompose.source_pack('clubs'): 'AHL, ECHL, junior and European club jerseys'}
 FAMILY_OF = {kitcompose.source_pack(f): f for f in kitcompose.FAMILIES}
 # 0.30's whole jersey packs (only alts_intl was served): nothing reads them now, so Patch takes them out of the cache
 OLD_ALT_PACKS = ('alts_nhl.zip', 'alts_intl.zip', 'alts_ahl.zip', 'alts_chl.zip', 'alts_euro.zip')
 # the packs with a switch of their own (Game patch, More jerseys and ice): each downloads when it is switched on
-EXTRA_PACKS = {ICE_PACK: 'Centre ice of the clubs of every league from NHL 27', RINK_PACK: 'IIHF centre ice and puck, NHL 27 pucks, board ads and league logos',
+EXTRA_PACKS = {ICE_PACK: 'Centre ice of every league', RINK_PACK: 'IIHF centre ice and puck, pucks, board ads and league logos',
                **KITLAYER_PACKS}
 ART_PACKS = (LOOKS32_PACK, ICE_PACK, RINK_PACK, KITS_PACK, PHOTOS_PACK, PEOPLE_PACK, 'looks.zip')   # looks.zip (Utah, Seattle: kits, arena) last: wins
 # the photos the people pack lacks, drawn by Update on this PC (overtime_core.photos): only in the app's cache, no

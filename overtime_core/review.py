@@ -21,12 +21,14 @@ def _pct(a, b):
 
 
 def tips(mine, theirs, won, goals_for):
-    """Up to MAX_TIPS lines from the two players' stats (`theirs` may be missing: the opponent's shots are `mine['shotsa']`)."""
+    """Up to MAX_TIPS lines from the two players' stats (`theirs` may be missing; the opponent's shots and faceoffs won
+    stand for his shots against and faceoffs lost, `mine['shotsa']` / `mine['fol']` only when it sent none)."""
     if not mine:
         return []
     theirs = theirs or {}
+    mine = H.with_opponent(mine, theirs)
     out = []
-    shots, shots_a = mine.get('shots'), mine.get('shotsa', theirs.get('shots'))
+    shots, shots_a = mine.get('shots'), mine.get('shotsa')
     if shots is not None and shots_a is not None and shots + shots_a:
         share = shots / (shots + shots_a)
         if share < OUTSHOT:

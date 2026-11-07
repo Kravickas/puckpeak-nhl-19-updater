@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 from overtime_core import gamefiles, overlay, sfo, xmlpatch
 
@@ -343,15 +344,96 @@ def shadnet_users(user_dir):
     """The emulator's users as far as Overtime needs them: [{'user_id', 'name', 'shadnet', 'npid', 'password'}].
     Only these fields are read out of users.json ('password': whether one is filled in); e-mail, password and token
     never leave it."""
+    return [_user_row(u) for u in _raw_users(user_dir) if isinstance(u, dict)]
+
+
+def _raw_users(user_dir):
     try:
         with open(os.path.join(user_dir, 'users.json'), encoding='utf-8-sig') as f:
             users = (json.load(f).get('Users') or {}).get('user') or []
+        return users if isinstance(users, list) else []
     except (OSError, ValueError, AttributeError):
         return []
-    return [{'user_id': u.get('user_id'), 'name': u.get('user_name') or '',
-             'shadnet': bool(u.get('shadnet_enabled')), 'npid': u.get('shadnet_npid') or '',
-             'password': bool(u.get('shadnet_password'))}
-            for u in users if isinstance(u, dict)]
+
+
+def _user_row(u):
+    return {'user_id': u.get('user_id'), 'name': u.get('user_name') or '', 'shadnet': bool(u.get('shadnet_enabled')),
+            'npid': u.get('shadnet_npid') or '', 'password': bool(u.get('shadnet_password'))}
+
+
+# ShadNet accounts: the app makes them through the site's own form endpoint (shadnet.register), the site is the
+# fallback (docs/notes/shadnet-protocol.md); an Online ID is 3-16 letters, digits, '-' or '_', and the server
+# compares it with its capitals.
+SHADNET_REGISTER = 'https://www.shadps4.net/shadnet/register/'
+ONLINE_ID = re.compile(r'[A-Za-z0-9_-]{3,16}')
+USERS_FILE = 'users.json'
+
+
+def _player_one(users):
+    """The user NHL 19 plays as: player_index 1 (user 1000), else the first one."""
+    rows = [u for u in users if isinstance(u, dict)]
+    return next((u for u in rows if u.get('player_index') == 1), rows[0] if rows else None)
+
+
+def shadnet_player(user_dir):
+    """shadnet_users' row of the user the game plays as, or None."""
+    one = _player_one(_raw_users(user_dir))
+    return _user_row(one) if one else None
+
+
+def shadnet_identity(user_dir, log=None):
+    """Who this PC is on ShadNet, as far as it can be proven: {'npid': the Online ID the game plays as, 'account': the
+    ShadNet account id, or None, 'state': shadnet_log's, or 'stale'}. The account id counts only from a sign-in of
+    that same Online ID: a log from before a change of account says nothing about the new one. (Not by file times:
+    shadPS4 rewrites users.json by itself, unchanged, after the log of its run.)"""
+    one = shadnet_player(user_dir) or {}
+    npid = one.get('npid') or '' if one.get('shadnet') else ''
+    log = shadnet_log(user_dir) if log is None else log
+    out = {'npid': npid, 'account': None, 'state': (log or {}).get('state')}
+    if not log or log.get('state') != 'signed_in' or not npid:
+        return out
+    if (log.get('npid') or '').casefold() == npid.casefold():
+        out['account'] = log.get('account')
+    else:
+        out['state'] = 'stale'
+    return out
+
+
+def shadnet_check(npid, password):
+    """(npid, password) cleaned, or SetupError in words."""
+    npid = str(npid or '').strip()
+    password = str(password or '')
+    if not ONLINE_ID.fullmatch(npid):
+        raise SetupError('The Online ID is 3 to 16 letters, digits, - or _ (capitals count).')
+    if not password or len(password) > 64 or password != password.strip():
+        raise SetupError('Type the ShadNet password (no spaces at the start or end).')
+    return npid, password
+
+
+def shadnet_signin(user_dir, npid, password, running=None):
+    """Put the player's own ShadNet account into the user NHL 19 plays as (users.json: Online ID, password, ShadNet
+    on; the old sign-in token goes, it belonged to the old account). The file as it was is kept next to it as
+    users.json.overtime-<time>. shadPS4 must be closed (it writes the file itself). Returns the Online ID."""
+    npid, password = shadnet_check(npid, password)
+    _refuse_while_running(running)
+    path = os.path.join(user_dir, USERS_FILE)
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        doc = json.loads(data.decode('utf-8-sig'))
+        users = doc['Users']['user']
+    except (OSError, ValueError, KeyError, TypeError):
+        raise SetupError('shadPS4 has no users yet. Start shadPS4 once (Setup, Start), close it, then try again.')
+    one = _player_one(users)
+    if one is None:
+        raise SetupError('shadPS4 has no users yet. Start shadPS4 once (Setup, Start), close it, then try again.')
+    with open(path + time.strftime('.overtime-%Y%m%d-%H%M%S'), 'wb') as f:
+        f.write(data)
+    if (one.get('shadnet_npid') or '') != npid:
+        one['shadnet_token'] = ''
+    one.update(shadnet_npid=npid, shadnet_password=password, shadnet_enabled=True)
+    _write(path, json.dumps(doc, indent=4).encode('utf-8'))
+    return npid
 
 
 # shadPS4's log of its last run (it starts a new one at every start): the ShadNet sign-in is near the top
@@ -413,7 +495,7 @@ def shadnet_why(log):
         return ''
     if log.get('state') == 'rejected':
         return (f'ShadNet refused the sign-in (code {log.get("code")}): the Online ID or the password is wrong, or '
-                'the Online ID has other capitals. Fix it in the Online card, then start the game again.')
+                'the Online ID has other capitals. Fix it under ShadNet on the Multiplayer tab, then start the game again.')
     if log.get('shadnet_on') is False or log.get('disabled_globally'):
         own = ' (no game settings were used, so the shared ones applied)' if log.get('own_config') is False else ''
         net = ' and the network' if log.get('network_on') is False else ''
@@ -421,7 +503,7 @@ def shadnet_why(log):
                 'Setup, then press Check again.')
     if log.get('state') == 'signed_in':
         return (f'The game signed in as {log.get("npid") or "your Online ID"}, but this shadPS4 build does not print '
-                'the account id. Type the id below.')
+                'the account id. Install the NHL 19 build of shadPS4 in Setup, then start the game again.')
     if log.get('state') == 'signed_out':
         return ('ShadNet was on, but nobody was signed in. Check the ShadNet user in the Online card, start the game '
                 'again, then press Check again.')
@@ -545,6 +627,21 @@ def _keys_on(path):
         return all(_net_value(cfg, k) == v for k, v in NETWORK.items())
     except (OSError, ValueError, AttributeError):
         return False
+
+
+def patch_fingerprint(emu_exe):
+    """What the lobby compares between the two games (overtime_server/lobby.py _patch_status): a short hash of the patch
+    file installed for this emulator, or 'none' when it is missing or changed (switched-off network keys do not count:
+    the game start turns them on). Two games that play each other must carry the same patch, or they desync."""
+    st = status(emu_exe)
+    problems = [p for p in st.get('problems') or () if not str(p).startswith('network switched off')]
+    text = installed_patch() if st.get('installed') and not problems else None
+    if not text:
+        return 'none'
+    return hashlib.sha256(text.replace(CRLF, LF).encode('utf-8')).hexdigest()[:16]
+
+
+CRLF, LF = chr(13) + chr(10), chr(10)
 
 
 def installed_patch():

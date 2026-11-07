@@ -1,12 +1,14 @@
 """The Multiplayer tab's controller (docs/plans/m3-multiplayer-tab.md): who the player is, the lobby calls against a fake
 service, the poller's state machine, and the game start with fakes for the hook, shadPS4 and the key presses."""
 import json
+import os
+import threading
 import types
 
 import pytest
 
 from overtime_core import overlay, rules as RU, xmlpatch
-from overtime_roster.app import gamesetup, keypress, launch, lobby_client as LC, multiplayer_ctl as MC
+from overtime_roster.app import gamesetup, keypress, launch, lobby_client as LC, multiplayer_ctl as MC, shadnet
 
 
 class Host:
@@ -25,6 +27,8 @@ class FakeCtl:
         self.host = Host()
         self.game_dir = str(tmp_path / 'game')
         self.game = types.SimpleNamespace(ok=True)
+        self.lock = threading.RLock()
+        self.session = None
         self.setup = types.SimpleNamespace(server={'host': host}, known_emulator=lambda: str(tmp_path / 'emu' / 'shadPS4.exe'),
                                            ctl=self, _xml=lambda: xmlpatch.build(host))
 
@@ -68,7 +72,8 @@ class FakeService:
         self.lobby['players'].insert(0, {'name': 'Bo', 'ready': False, 'launch': False, 'roster': 'unknown', 'stage': 'lobby'})
         return {'token': 'secret-token', 'you': 1, 'lobby': self.lobby}
 
-    def ready(self, code, token, value=True):
+    def ready(self, code, token, value=True, patch=None):
+        self.patch = patch
         self._go('ready', code, token, value)
         return {**self.lobby, 'you': 0}
 
@@ -108,17 +113,31 @@ def mp(tmp_path):
     part.service = FakeService()
     part.make_client = lambda url: part.service
     part.sleep = lambda s: None
+    part.sn_login = _sn_down                # tests never reach the real ShadNet
+    part.sn_register = _sn_down
     return part
+
+
+def _sn_down(*a, **k):
+    raise shadnet.ShadNetDown('ShadNet did not answer.')
 
 
 def log_in(tmp_path, monkeypatch, account=16349, npid='iksperial'):
     user = tmp_path / 'user'
     (user / 'log').mkdir(parents=True, exist_ok=True)
+    write_users(user, npid)
+    os.utime(user / 'users.json', (1000, 1000))
     (user / 'log' / 'shad_log.txt').write_bytes(
         f"[Lib.Np] ConnectUser: user_id=1000 signed in npid='{npid}' accountId={account}\n".encode())
     monkeypatch.setattr(gamesetup, 'emu_user_dir', lambda emu: str(user))
-    monkeypatch.setattr(gamesetup, 'shadnet_users', lambda d: [{'npid': npid}])
     return user
+
+
+def write_users(user, npid, password='pw'):
+    rows = [{'player_index': i, 'user_id': 999 + i, 'user_name': 'shadPS4', 'shadnet_enabled': i == 1 and bool(npid),
+             'shadnet_npid': npid if i == 1 else '', 'shadnet_password': password if i == 1 else '',
+             'shadnet_token': 'old' if i == 1 else '', 'shadnet_email': ''} for i in (1, 2)]
+    (user / 'users.json').write_text(json.dumps({'Users': {'commit_hash': 'x', 'user': rows}}), encoding='utf-8')
 
 
 def good_checks(part, tone='good'):
@@ -128,7 +147,7 @@ def good_checks(part, tone='good'):
 
 
 # --- who I am -----------------------------------------------------------------------------------------------------
-def test_the_id_comes_from_the_log_and_a_typed_one_wins(mp, tmp_path, monkeypatch):
+def test_the_id_comes_from_the_log_and_beats_a_typed_one(mp, tmp_path, monkeypatch):
     log_in(tmp_path, monkeypatch)
     mp._checks = lambda emu: []
     assert mp.ext() == (None, '') and mp.view()['you']['ext'] is None          # not looked yet
@@ -136,13 +155,121 @@ def test_the_id_comes_from_the_log_and_a_typed_one_wins(mp, tmp_path, monkeypatc
     v = mp.view()['you']
     assert (v['ext'], v['ext_from'], v['name'], v['name_from']) == (16349, 'log', 'iksperial', 'game')
     assert v['ext_why'] == ''                                                  # the id is known: nothing to explain
-    assert mp.set_ext('777') == {'ok': True}
-    assert mp.view()['you']['ext'] == 777 and mp.view()['you']['ext_from'] == 'typed'
+    assert mp.set_ext('777') == {'ok': True}                                   # live 2026-11-07: typed ids got shared
+    assert mp.view()['you']['ext'] == 16349 and mp.view()['you']['ext_from'] == 'log'
     assert mp.ctl.prefs['multiplayer']['ext'] == 777
+    mp.logged = dict(mp.logged, account=None, state='signed_in')               # an old build: no account id in the log
+    assert mp.ext() == (777, 'typed')
+    mp.logged['state'] = 'stale'                                               # the account changed since: nothing counts
+    assert mp.ext() == (None, '')
+    mp.look()
     assert mp.set_ext('') == {'ok': True} and mp.view()['you']['ext_from'] == 'log'
+
+
+def test_signing_in_writes_the_own_account_and_a_stale_log_does_not_count(mp, tmp_path, monkeypatch):
+    user = log_in(tmp_path, monkeypatch)
+    mp._checks = lambda emu: []
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    mp.look()
+    mp.set_ext('777')
+    assert mp.shadnet_signin('x', 'pw')['error'].startswith('The Online ID')
+    assert 'password' in mp.shadnet_signin('Skater_2', '')['error']
+    assert mp.shadnet_signin('Skater_2', 's3cret') == {'ok': True, 'npid': 'Skater_2', 'account': None}
+    doc = json.loads((user / 'users.json').read_text(encoding='utf-8'))
+    one, two = doc['Users']['user']
+    assert (one['shadnet_npid'], one['shadnet_password'], one['shadnet_enabled'], one['shadnet_token']) == (
+        'Skater_2', 's3cret', True, '')
+    assert two['shadnet_npid'] == '' and doc['Users']['commit_hash'] == 'x'
+    assert len(list(user.glob('users.json.overtime-*'))) == 1                   # the old file is kept
+    assert mp.typed_ext is None
+    v = mp.view()['you']                                                       # the log still says iksperial
+    assert v['ext'] is None and v['shadnet'] == {'npid': 'Skater_2', 'state': 'stale', 'ready': True}
+    assert 'Skater_2' in v['ext_why'] and 'Start NHL 19' in v['ext_why']
+    (user / 'log' / 'shad_log.txt').write_bytes(b"[Lib.Np] ConnectUser: user_id=1000 signed in npid='Skater_2' accountId=5\n")
+    mp.look()
+    assert mp.ext() == (5, 'log')
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: True)
+    assert 'running' in mp.shadnet_signin('Skater_2', 'x')['error']
     for bad in ('abc', '-4', '0', '1234567890123', '16 349'):
         assert 'number' in mp.set_ext(bad)['error'], bad
     assert mp.view()['you']['ext_from'] == 'log'
+
+
+def test_signing_in_checks_with_shadnet_and_needs_no_game_run(mp, tmp_path, monkeypatch):
+    user = log_in(tmp_path, monkeypatch)                                       # the log says iksperial / 16349
+    mp._checks = lambda emu: []
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    mp.look()
+    tried = []
+
+    def login(npid, pw):
+        tried.append((npid, pw))
+        if pw != 's3cret':
+            raise shadnet.ShadNetError('Wrong Online ID or password. Capitals count.', 8)
+        return 501
+
+    mp.sn_login = login
+    before = (user / 'users.json').read_bytes()
+    assert 'Capitals' in mp.shadnet_signin('Skater_2', 'wrong')['error']
+    assert (user / 'users.json').read_bytes() == before                        # a refused password is not written
+    assert mp.shadnet_signin('Skater_2', 's3cret') == {'ok': True, 'npid': 'Skater_2', 'account': 501}
+    v = mp.view()['you']
+    assert (v['ext'], v['ext_from'], v['ext_why']) == (501, 'shadnet', '')
+    assert mp.ctl.prefs['multiplayer']['shadnet'] == {'npid': 'Skater_2', 'account': 501}
+    assert 's3cret' not in json.dumps(mp.ctl.prefs)                            # the password stays in users.json only
+    mp.look()                                                                  # the old log does not undo it
+    assert mp.ext() == (501, 'shadnet')
+    again = MC.MultiplayerCtl(mp.ctl)                                          # nor a restart of the app
+    again._checks = lambda emu: []
+    again.look()
+    assert again.ext() == (501, 'shadnet')
+    (user / 'log' / 'shad_log.txt').write_bytes(b"[Lib.Np] ConnectUser: user_id=1000 signed in npid='Skater_2' accountId=501\n")
+    again.look()
+    assert again.ext() == (501, 'log')                                         # the game's own sign-in agrees
+    (user / 'log' / 'shad_log.txt').write_bytes(b'[Lib.Np] Login rejected error code 8\n')
+    again.look()
+    assert again.ext() == (None, '')                                           # the password changed on the site
+    write_users(user, 'Other_1')                                               # another account put in by hand
+    (user / 'log' / 'shad_log.txt').write_bytes(b'')
+    again.look()
+    assert again.ext() == (None, '')                                           # the check was for Skater_2 only
+
+
+def test_creating_an_account_in_the_app(mp, tmp_path, monkeypatch):
+    log_in(tmp_path, monkeypatch)
+    mp._checks = lambda emu: []
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    mp.look()
+    made = []
+
+    def register(npid, pw, email, agent=''):
+        if npid == 'Taken':
+            raise shadnet.ShadNetError('Username already taken.')
+        made.append((npid, pw, email))
+
+    mp.sn_register = register
+    mp.sn_login = lambda npid, pw: 777
+    assert 'e-mail' in mp.shadnet_create('Skater_2', 'nope', 's3cret')['error']
+    assert '6 characters' in mp.shadnet_create('Skater_2', 'a@b.cd', 'abc')['error']
+    assert 'already taken' in mp.shadnet_create('Taken', 'a@b.cd', 's3cret')['error']
+    assert mp.shadnet_create('Skater_2', 'a@b.cd', 's3cret') == {'ok': True, 'npid': 'Skater_2', 'account': 777,
+                                                                 'created': True}
+    assert made == [('Skater_2', 's3cret', 'a@b.cd')] and mp.ext() == (777, 'shadnet')
+    mp.sn_register = _sn_down
+    assert 'ShadNet site' in mp.shadnet_create('Skater_3', 'a@b.cd', 's3cret')['error']
+    mp.sn_register = register
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: True)             # checked before the account is made
+    assert 'running' in mp.shadnet_create('Skater_4', 'a@b.cd', 's3cret')['error'] and len(made) == 1
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+
+    def unconfirmed(npid, pw):
+        raise shadnet.ShadNetError('Wrong Online ID or password.', 8)
+
+    mp.sn_login = unconfirmed
+    out = mp.shadnet_create('Skater_5', 'a@b.cd', 's3cret')
+    assert out['ok'] and out['account'] is None and out['created']             # saved: the password is right
+    assert 'Confirm the e-mail' in mp.view()['you']['ext_why'] and mp.ext() == (None, '')
+    assert 'Wrong' in mp.shadnet_signin('Skater_5', 'other')['error']          # a plain sign-in still refuses
 
 
 def test_name_is_trimmed_and_remembered(mp):
@@ -685,3 +812,59 @@ def test_why_the_service_did_not_answer_goes_to_the_error_log_once(mp, monkeypat
     assert mp.view()['error'] == MC.CERT_TEXT and len(logged) == 2
     mp._lobbies()                                         # it answers again: the words go
     assert mp.view()['error'] == ''
+
+
+def _roster_service(svc):
+    def roster_mode(code, token, mode):
+        svc._go('roster_mode', code, token, mode)
+        svc.lobby = {**svc.lobby, 'roster_mode': mode, 'host_roster': False}
+        return {**svc.lobby, 'you': 0}
+
+    def upload_roster(code, token, blob):
+        svc._go('upload_roster', code, token, bytes(blob))
+        svc.lobby = {**svc.lobby, 'host_roster': True}
+        return {**svc.lobby, 'you': 0}
+    svc.roster_mode, svc.upload_roster = roster_mode, upload_roster
+
+
+def test_the_host_plays_its_own_roster_and_sends_it_at_ready(mp, monkeypatch):
+    # live 2026-11-07: the server roster had dealt lines; the host may play its own roster, the guest adopts it
+    _roster_service(mp.service)
+    start_lobby(mp)
+    mp.service.lobby['roster_mode'] = 'server'
+    mp.lobby = dict(mp.service.lobby)
+    assert mp.view()['lobby']['roster_mode'] == {'mode': 'server', 'uploaded': False, 'edit': True}
+    assert 'Pick' in mp.set_roster_mode('mine')['error']
+    assert mp.set_roster_mode('host') == {'ok': True}
+    assert mp.view()['lobby']['roster_mode']['mode'] == 'host'
+    mp.ctl.game.schema = lambda: 'schema'
+    monkeypatch.setattr(MC.hostroster, 'host_roster', lambda game_dir, schema, db: (b'ROSTER', 'C' * 54, 'patch'))
+    mp.service.calls.clear()
+    assert mp.ready() == {'ok': True}
+    assert [c[0] for c in mp.service.calls] == ['upload_roster', 'ready']
+    assert mp.service.calls[0][3] == b'ROSTER'
+
+
+def test_a_host_without_a_served_roster_is_told_to_patch(mp, monkeypatch):
+    _roster_service(mp.service)
+    start_lobby(mp)
+    mp.service.lobby['roster_mode'] = 'server'
+    mp.lobby = dict(mp.service.lobby)
+    mp.set_roster_mode('host')
+    mp.ctl.game.schema = lambda: 'schema'
+
+    def none(game_dir, schema, db):
+        raise MC.hostroster.HostRosterError('press Patch first')
+    monkeypatch.setattr(MC.hostroster, 'host_roster', none)
+    mp.service.calls.clear()
+    assert 'Patch' in mp.ready()['error'] and mp.service.calls == []
+
+
+def test_the_guest_cannot_pick_the_roster(mp):
+    _roster_service(mp.service)
+    mp.set_name('Me')
+    mp.set_ext('5')
+    mp.join('K7M2Q')
+    mp.service.calls.clear()
+    assert 'host' in mp.set_roster_mode('host')['error'] and mp.service.calls == []
+    assert mp.view()['lobby']['roster_mode'] is None      # a server without the roster choice shows none

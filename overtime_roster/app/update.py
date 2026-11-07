@@ -69,7 +69,7 @@ def leagues_text(leagues, where):
 
 
 def _nhl27_text(nhl27):
-    return f"NHL 27: {len(nhl27['players'])} players, {len(nhl27.get('contracts') or [])} contracts"
+    return f"Ratings update: {len(nhl27['players'])} players, {len(nhl27.get('contracts') or [])} contracts"
 
 
 def fetch(url, timeout=60):
@@ -123,7 +123,7 @@ def gather(client, season, pack_dir, fetch=None, offline=False, step=lambda key,
         step('pack', 'ok', f'{n} EA ratings, data pack {when}'.strip() + (f'; {_nhl27_text(nhl27)}' if nhl27 else ''))
     except R.PackError as err:
         if nhl27:
-            step('pack', 'ok', f'{_nhl27_text(nhl27)} ({err}): no national teams, clubs from NHL 27')
+            step('pack', 'ok', f'{_nhl27_text(nhl27)} ({err}): no national teams, clubs from the ratings update')
         else:
             step('pack', 'skip', f'{err}: ratings stay as they are')
     out = Gathered(season, [], [], R.ea_rows(pack), (pack or {}).get('drafts') or [],
@@ -244,10 +244,10 @@ def details(todo, report, names):
         out.append((f'Calendar {table}', '-', f"{e['games']} games, {e['first']} to {e['last']}"))
     n27 = report.nhl27 or {}
     if n27.get('values'):
-        out.append(('NHL 27 ratings and player types', '-',
+        out.append(('Updated ratings and player types', '-',
                     f"{n27['rated']} player(s), {n27['values']} value(s), {n27.get('styles', 0)} type(s)"))
     if n27.get('gear_values'):
-        out.append(('Real equipment (NHL 27)', '-', f"{n27['gear']} player(s), {n27['gear_values']} value(s)"))
+        out.append(('Real equipment', '-', f"{n27['gear']} player(s), {n27['gear_values']} value(s)"))
     if n27.get('masks') or n27.get('goalie_colours'):
         out.append(('Goalies who changed teams: team mask, gear in team colours', '-',
                     f"{n27.get('masks', 0)} mask(s), {n27.get('goalie_colours', 0)} goalie(s) in team colours"))
@@ -259,7 +259,7 @@ def details(todo, report, names):
     if report.ratings - n27.get('values', 0):
         out.append(('EA ratings', '-', f"{report.ratings - n27.get('values', 0)} value(s)"))
     if 'deals' in n27:
-        out.append(('Contracts (NHL 27)', '-', f"{n27['deals']} club, {n27['minors']} minors"))
+        out.append(('Contracts', '-', f"{n27['deals']} club, {n27['minors']} minors"))
         out.append(('Contracts estimated', '-', f"{n27['estimated']} player(s)"))
         if n27.get('rights'):
             out.append(('NHL rights kept, no contract yet (unsigned picks)', '-', f"{n27['rights']} player(s)"))

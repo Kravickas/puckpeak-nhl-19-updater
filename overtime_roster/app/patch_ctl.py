@@ -29,10 +29,11 @@ LAYERS = (
      "In the game's menus, Arizona's city, name, nickname and short name become the Utah Mammoth's. Burnaby, the "
      "city of Seattle's AHL club, becomes Coachella Valley."),
     ('roster', f'{SEASON_LABEL} default roster',
-     'Seattle and every club as they are today, in every new mode.',
-     "Modes that start from the default roster (Play Now, Season, Franchise, Be a Pro) get the real league: today's "
-     'rosters, Utah, ratings, lines and the calendar. Seattle needs it: with this switch off, NHL 19 has 31 teams in '
-     'those modes.'),
+     "Today's NHL in every new mode: all 32 teams, rosters, lines, ratings and the calendar.",
+     "Modes that start from the default roster (Play Now, Season, Franchise, Be a Pro) get today's league: rosters, "
+     'ratings, lines and the calendar, with Utah. NHL 19 came out in 2018 with 31 teams, before the Seattle Kraken '
+     'joined the NHL, so this switch is also what adds Seattle as the 32nd team. Off, those modes keep NHL 19\'s 31 '
+     'teams.'),
     ('league', f'{SEASON_LABEL} salary cap',
      'Cap $104.0M, floor $76.9M, lowest salary $850,000.',
      'New Franchise and Season leagues use the 2026-27 money rules. The game as it came has the 2018-19 rules: '
@@ -46,36 +47,52 @@ LAYERS = (
      'Takes Hockey Ultimate Team, Draft Champions and World of Chel off the menu.',
      'These modes need EA servers that no longer run, so their tiles leave the main menu. Every other mode stays '
      'where it was.'),
-    ('chel', 'Bring back World of Chel',
-     'Keeps its tile for when the Overtime server runs it.',
-     'Only with "Hub without the closed modes" on: World of Chel stays in the hub. Turn it on when your server runs '
-     'EASHL games.'),
-    ('art', 'NHL 27 team art',
+    ('chel', 'Keep the World of Chel tile',
+     'Leaves its tile in the hub, for a server that runs it. Overtime does not yet.',
+     "World of Chel (EASHL) is NHL 19's online club mode: your own pro in 6-on-6 club and drop-in games. It needed "
+     "EA's servers, which are closed, and the Overtime server does not run it yet. With \"Hub without the closed "
+     'modes" on, this keeps its tile anyway.'),
+    ('art', 'Team art',
      "Every team's logos, menu jerseys and centre ice. Utah's arena.",
-     "NHL 27 logos, menu jerseys and centre ice for every team. Utah's and Seattle's 3D kits, and Utah's Delta "
-     "Center on Arizona's arena. They come with the Photos, logos pack (below), beside the game's own files, which "
-     "stay as they are."),
-    ('photos', 'Player photos from NHL.com',
+     "Updated logos, menu jerseys and centre ice for every team, Utah's and Seattle's 3D jerseys, and Utah's Delta "
+     "Center in place of Arizona's arena. Downloads when you switch it on. The game's own files stay as they are."),
+    ('photos', 'Player photos',
      "Today's portraits on the player cards.",
-     "NHL.com portraits for the players of the 2026-27 default roster. They show with that roster only, so the switch "
-     "needs it. They come with the Photos, logos pack. Off, the game keeps its own pictures."),
-    ('kits', 'NHL 27 3D kits',
-     "The other 30 teams' NHL 27 jerseys, numbers and socks on the ice.",
-     "Every other team's NHL 27 jerseys on the ice. They come with the Photos, logos pack."),
+     f'NHL.com portraits for the players of the {SEASON_LABEL} default roster. They show with that roster only, so '
+     'the switch needs it. Downloads when you switch it on. Off, the game keeps its own pictures.'),
+    ('kits', '3D jerseys',
+     "The other 30 NHL teams' updated jerseys, numbers and socks on the ice.",
+     "Every other NHL team's updated jerseys on the ice. Downloads when you switch it on."),
 )
-PACK_KEYS = ('art', 'photos', 'kits')   # the switches the Photos, logos pack brings (off until it is here)
-NO_PACK = ("Until you get the Photos, logos pack, Utah plays in the Coyotes' look and Seattle shows a stand-in crest "
-           "and kit.")
+PACK_KEYS = ('art', 'photos', 'kits')   # the asset switches of the core packs (off until a pack is here)
+NO_PACK = ("Not downloaded yet. Until the team art is here, Utah plays in the Coyotes' look and Seattle shows a "
+           "stand-in crest and kit.")
 # the packs each pack switch reads (patch.ART_PACKS names); the art switch needs one of its two
 PACK_FILES = {'art': (patch.LOOKS32_PACK, 'looks.zip'), 'photos': (patch.PHOTOS_PACK, patch.PEOPLE_PACK), 'kits': (patch.KITS_PACK,)}
 # the packs with a switch of their own: {switch key: pack}
 EXTRA_KEYS = {patch.extra_key(name): name for name in patch.EXTRA_PACKS}
-EXTRA_TITLES = {'ice_all': ('Centre ice of the clubs of every league', 'The centre ice of every club NHL 27 has.'),
-                'rink': ('IIHF centre ice and puck, NHL 27 rink art', "The IIHF emblem and puck in national team games, NHL 27's pucks, board ads and league logos. National team games keep NHL 19's boards."),
-                'alts_nhl': ('NHL alternate jerseys', "NHL 27's alternate jerseys of the NHL teams, made on this PC at Patch."),
-                'alts_intl': ('National team jerseys', "NHL 27's main and alternate jerseys, made on this PC at Patch."),
-                'alts_clubs': ('Club jerseys of every league', "NHL 27's jerseys of the AHL, ECHL, junior and European "
-                               "clubs, made on this PC at Patch (a few minutes the first time, about 3 GB on the disk).")}
+EXTRA_TITLES = {'ice_all': ('Centre ice of every league', 'The centre ice of every club of every league.'),
+                'rink': ('IIHF centre ice and rink art', 'The IIHF emblem and puck in national team games; updated '
+                         "pucks, board ads and league logos. National team games keep NHL 19's boards."),
+                'alts_nhl': ('NHL alternate jerseys', "The NHL teams' updated alternate jerseys, made on this PC at Patch."),
+                'alts_intl': ('National team jerseys', 'Updated main and alternate jerseys of the national teams, made on '
+                              'this PC at Patch.'),
+                'alts_clubs': ('Club jerseys of every league', 'Updated jerseys of the AHL, ECHL, junior and European '
+                               'clubs, made on this PC at Patch (a few minutes the first time, about 3 GB on the disk).')}
+# every asset switch and the packs it downloads when switched on (v0.70.0: one switch, one download, no bundle)
+ASSET_PACKS = {'art': (*PACK_FILES['art'], patch.CLUBART_PACK), 'photos': PACK_FILES['photos'],
+               'kits': PACK_FILES['kits'], **{key: (name,) for key, name in EXTRA_KEYS.items()}}
+ART_NEEDED = 'Needs "Team art".'
+# the Game patch page's groups (v0.70.0): key, title, one line, its switches in the page's order, and the switches
+# its own switch turns on (the rest are choices: World of Chel's tile, the big jersey and ice downloads)
+GROUPS = (
+    ('league', 'Teams and league', "Utah, today's rosters and the salary cap.", ('names', 'roster', 'league'),
+     ('names', 'roster', 'league')),
+    ('menus', 'Menus and server texts', 'The hub without the closed modes; Overtime in the messages.',
+     ('text', 'menus', 'chel'), ('text', 'menus')),
+    ('assets', 'Updated assets', 'Logos, jerseys, centre ice and player photos. Each downloads when you switch it on.',
+     ('art', 'kits', 'photos', 'alts_nhl', 'alts_intl', 'alts_clubs', 'ice_all', 'rink'), ('art', 'kits', 'photos')),
+)
 COMING = {'title': '32 teams in every mode',
           'sub': 'Classic Franchise and NHL Season with both Seattle and Utah. Today a 32 Team Expansion Draft Franchise '
                  'has both. Still being built.'}
@@ -83,14 +100,14 @@ NAMES = (('City', 'Arizona', 'Utah'), ('Team', 'Arizona Coyotes', 'Utah Mammoth'
          ('Short name', 'ARI', 'UTA'), ('AHL city', 'Burnaby', 'Coachella Valley'))
 ABOUT = (
     ('In the game', ["Utah plays in Arizona's place and Seattle is the 32nd team.",
-                     'The 2026-27 rosters, salary cap and NHL 27 team art.',
+                     'The 2026-27 rosters, salary cap and updated team art.',
                      "NHL 19 goes online on the Overtime server instead of EA's."]),
     ('On your PC', ['The game folder is only read. shadPS4 serves the patch from a folder beside it (named like the game folder, plus -mods).',
                     'Unpatch takes every patch file away. Deleting that folder by hand does the same.']),
     ('Your rosters', ['Your roster saves stay as they are.',
                       'The default roster switch only changes the roster new modes start from.']),
     ('When to patch again', ['After you change a switch, or after Overtime Roster updates.',
-                             'When "In the game now" lists a problem.']),
+                             "When \"What's in your game now\" lists a problem."]),
 )
 
 PATCHING = 'Patching NHL 19...'
@@ -148,18 +165,19 @@ def served(st):
             **{key: key.replace('_', '-') in packs for key in EXTRA_KEYS}}
 
 
-def why(want, key, found):
-    """Why a switch cannot be on now, or None. `found`: the art packs here (packs_here)."""
+def why(want, key, found, missing_ok=False):
+    """Why a switch cannot be on now, or None. `found`: the art packs here (packs_here). `missing_ok`: a pack not
+    downloaded yet is no reason (switching it on downloads it)."""
     if key in EXTRA_KEYS:
         if not want.get('art'):
-            return 'Needs "NHL 27 team art".'
-        return None if EXTRA_KEYS[key] in found else 'Not downloaded yet.'
+            return ART_NEEDED
+        return None if missing_ok or EXTRA_KEYS[key] in found else 'Not downloaded yet.'
     if key == 'chel' and not want.get('menus'):
         return 'Needs "Hub without the closed modes".'
-    if key in PACK_KEYS and not any(name in found for name in PACK_FILES[key]):
+    if key in PACK_KEYS and not missing_ok and not any(name in found for name in PACK_FILES[key]):
         return NO_PACK
     if key in ('kits', 'photos') and not want.get('art'):
-        return 'Needs "NHL 27 team art".'
+        return ART_NEEDED
     if key == 'photos' and not want.get('roster'):
         return f'Needs the {SEASON_LABEL} default roster.'
     return None
@@ -454,7 +472,7 @@ def clubart_text(clubs, log=None):
         words.append(SHIPPED_LOGOS)
     elif missing:
         words.append(f"Club logos: {clubs['clubs']} clubs matched, {len(missing)} slot"
-                     f"{'s' if len(missing) != 1 else ''} kept NHL 19's own logo (NHL 27 has no club for "
+                     f"{'s' if len(missing) != 1 else ''} kept NHL 19's own logo (the update has no club for "
                      f"{'it' if len(missing) == 1 else 'them'}).")
     return ' '.join(words)
 
@@ -515,7 +533,7 @@ def one_click(setup, then=None):
         if on['art']:       # the jerseys of the layer packs on this PC's game files; unchanged: kept
             patch.make_kits(on, game_dir, cache, log=ctl.host.log, step=lambda text: step(text, 0.62))
         art = patch.art_layer(on, layers, cache, log=ctl.host.log, game_dir=game_dir)
-        step('writing the patch files' + (' and the NHL 27 team art...' if 'art' in layers else '...'), 0.65)
+        step('writing the patch files' + (' and the updated team art...' if 'art' in layers else '...'), 0.65)
         applied = None
         if layers:
             # news is no switch: always the tile (a beta1 patch served the hub without it, and apply keeps served options)
@@ -776,11 +794,11 @@ def chips(st, teams32):
         packs = [p for p in (ly.get('art') or {}).get('packs') or []
                  if not any(w in str(p.get('name', '') if isinstance(p, dict) else p).lower()
                             for w in ('kits', 'photos', 'alts-', 'ice-all'))]
-        add('art', f"{len(packs)} art pack{'s' if len(packs) != 1 else ''}" if packs else 'NHL 27 team art')
+        add('art', f"{len(packs)} art pack{'s' if len(packs) != 1 else ''}" if packs else 'Team art')
     if now['photos']:
         add('photos', 'NHL.com player photos')
     if now['kits']:
-        add('kits', 'NHL 27 kits')
+        add('kits', '3D jerseys')
     extra = sum(now[key] for key in EXTRA_KEYS)
     if extra:
         add('extras', f"{extra} jersey and ice pack{'s' if extra != 1 else ''}")
@@ -862,11 +880,12 @@ def state_line(f):
 
 class PatchCtl(Part):
     SLICES = {'patch': 'view', 'patch_files': 'files_view'}
-    CALLS = {'patch_refresh': 'patch_refresh', 'patch_option': 'patch_option', 'patch_apply': 'patch_apply',
+    CALLS = {'patch_refresh': 'patch_refresh', 'patch_option': 'patch_option', 'patch_group': 'patch_group',
+             'patch_apply': 'patch_apply',
              'patch_undo': 'patch_undo', 'patch_kits_download': 'patch_kits_download',
              'patch_kits_remove': 'patch_kits_remove', 'patch_files': 'set_files'}
     TAB = 'patch'
-    KITS_BUSY = 'Downloading the NHL 27 kits pack...'   # the busy text while it downloads (Setup's Downloads card)
+    KITS_BUSY = 'Downloading the 3D jerseys pack...'   # the busy text while it downloads (Setup's Downloads card)
     why = staticmethod(why)
 
     def __init__(self, ctl):
@@ -936,6 +955,8 @@ class PatchCtl(Part):
     def patch_option(self, key, value):
         """One switch. Refused (caution, with the reason) when it cannot be on, and while a job runs."""
         c = self.ctl
+        if key in ASSET_PACKS:
+            return c.setup.pack_switch(key, value)
         if key not in KEYS:
             c.say(f'There is no switch called {key}.', 'bad')
             return {'error': 'no such switch'}
@@ -951,6 +972,44 @@ class PatchCtl(Part):
             c.patch_want[key] = bool(value)
             c.remember(patch=dict(c.patch_want))
         c.changed('patch')
+        return None
+
+    def patch_group(self, key, value):
+        """A group's own switch: on turns on its main switches (each that can be, in the page's order, so the team art
+        goes first); off turns every switch of the group off. Asset switches download what is not here."""
+        c = self.ctl
+        group = next((g for g in GROUPS if g[0] == key), None)
+        if group is None:
+            c.say(f'There is no group called {key}.', 'bad')
+            return {'error': 'no such group'}
+        _key, title, _sub, keys, main = group
+        setup = c.setup
+        with c.lock:
+            busy = c.busy
+            running = bool(busy) and key == 'assets' and setup._extras_running()
+        if busy and not running:
+            c.say('Wait for the patch to finish.' if busy in (PATCHING, UNPATCHING) else
+                  f'Wait a moment: {_doing(busy)} is still running.', 'caution')
+            c.changed('patch')
+            return None
+        if value and key == 'assets' and not setup.known_emulator():
+            c.say('Pick shadPS4 first: the assets go in when you patch the game.', 'caution')
+            c.changed('patch')
+            return None
+        found = packs_here(cache_dir())
+        with c.lock:
+            for k in (main if value else keys):
+                c.patch_want[k] = bool(value) and not why(dict(c.patch_want, **{k: True}), k, found, missing_ok=True)
+                if k in PACK_KEYS:
+                    (setup.asked.add if c.patch_want[k] else setup.asked.discard)(k)
+            c.remember(patch=dict(c.patch_want))
+            if not value and running:
+                setup.dl_stop = True
+        c.changed('patch')
+        if value and key == 'assets' and setup._extras_wanted():
+            return setup._extras_next()
+        if value:
+            c.say(f'{title}: switched on. Press Patch to put it in the game.', 'good')
         return None
 
     def patch_apply(self):
@@ -969,7 +1028,7 @@ class PatchCtl(Part):
         def work():
             def progress(share):
                 self.kits_progress = share
-                c.say(f'Downloading the NHL 27 kits pack... {share:.0%}', 'info', -1)
+                c.say(f'Downloading the 3D jerseys pack... {share:.0%}', 'info', -1)
                 c.changed('setup')
             return packdownload.download_kits(paths.app_dir('cache'), progress=progress)
         self.kits_progress = 0.0
@@ -1052,6 +1111,8 @@ class PatchCtl(Part):
             _folder, size, count = self.size
             rows = []
             for key, title, sub, info in LAYERS:
+                if key in ASSET_PACKS:
+                    continue
                 no = why(want, key, found)
                 on, there = picked[key], now[key]
                 tag = None
@@ -1060,13 +1121,23 @@ class PatchCtl(Part):
                         {'text': 'Patch to add', 'tone': 'caution'} if on else \
                         {'text': 'Patch to take away', 'tone': 'caution'} if there else None
                 rows.append({'key': key, 'title': title, 'sub': sub, 'info': {'title': title, 'text': info}, 'on': on,
-                             'disabled': bool(no), 'why': no, 'tag': tag})
+                             'disabled': bool(no), 'why': no, 'tag': tag, 'kind': 'layer'})
+            assets = setup.extra_card(emulator, want, picked, now, patched, keys=ASSET_PACKS)
+            by = {r['key']: r for r in rows}
+            by.update((r['key'], dict(r, kind='asset')) for r in assets['rows'])
+            groups = []
+            for gkey, gtitle, gsub, keys, main in GROUPS:
+                grows = [by[k] for k in keys]
+                groups.append({'key': gkey, 'title': gtitle, 'sub': gsub, 'rows': grows,
+                               'on': all(by[k]['on'] for k in main), 'count': sum(1 for r in grows if r['on']),
+                               'disabled': bool(f['busy']) and not (gkey == 'assets' and setup._extras_running())})
+            groups[-1]['store'] = setup.assets_store()
             return {
                 'ready': ready, 'patched': patched, 'running': f['running'], 'busy': bool(f['busy']),
                 'changed': f['changed'], 'checked': f['checked'],
                 'state': state_line(f),
-                'layers': rows, 'coming': dict(COMING), 'kits': {'installed': f['kits']}, 'pack': setup.pack_card(emulator),
-                'extras': setup.extra_card(emulator, want, picked, now, patched),
+                'layers': rows, 'groups': groups, 'coming': dict(COMING), 'kits': {'installed': f['kits']},
+                'pack': setup.pack_card(emulator),
                 'buttons': {'patch': {'text': 'Patch again' if patched else 'Patch', 'enabled': free},
                             'unpatch': {'enabled': free and patched},
                             'play': {'enabled': free and bool(emulator)},

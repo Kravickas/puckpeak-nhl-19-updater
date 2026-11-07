@@ -170,3 +170,9 @@
 .mp-box-row > :first-child { text-align: left; }
 .mp-box-row.head { opacity: .7; }
 .mp-box-none { padding: 4px 10px 8px 34px; }
+.tab-multiplayer .mp-signin { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.tab-multiplayer .mp-signin .field { flex: 1; min-width: 0; }
+.tab-multiplayer .mp-signin a { color: var(--accent); }
+.tab-multiplayer .mp-signin a.mp-quiet { color: var(--text-2); margin-left: 6px; }
+.tab-multiplayer .mp-roster-pick { display: grid; gap: 6px; margin-bottom: 10px; }
+.tab-multiplayer .mp-roster-pick .mp-rule { max-width: 360px; }

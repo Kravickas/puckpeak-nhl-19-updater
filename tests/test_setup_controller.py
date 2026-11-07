@@ -431,7 +431,7 @@ def test_packs_switched_on_during_a_download_wait_their_turn_and_a_failure_goes_
         return [(names[0], False, 'The disk said no.')]
     monkeypatch.setattr(packdownload, 'download', broken)
     sc.pack_switch('alts_intl', True)
-    assert not sc.ctl.patch_want['alts_intl'] and sc.ctl.said[-1] == ('National team jerseys from NHL 27: The disk said no.', 'bad')
+    assert not sc.ctl.patch_want['alts_intl'] and sc.ctl.said[-1] == ('National team jerseys: The disk said no.', 'bad')
 
     def crashed(names, cache_dir, **kw):
         raise OSError('disk full')
@@ -460,6 +460,46 @@ def test_a_pack_switched_off_while_it_downloads_stops(sc, monkeypatch, tmp_path)
     sc.pack_switch('ice_all', True)
     assert not sc.ctl.patch_want['ice_all'] and sc.ctl.busy is None and sc.dl is None
     assert 'ice_all.zip' not in have
+
+
+def test_each_asset_switch_downloads_its_own_pack_and_a_group_switch_its_main_ones(sc, monkeypatch, tmp_path):
+    """v0.70.0: no all-or-nothing pack. The team art, photos and 3D jerseys download like the jersey and ice packs, when
+    switched on; Updated assets' own switch turns the three on (art first) and leaves the big downloads a choice."""
+    from overtime_roster.app import patch_ctl
+    have, got = _packs_world(sc, monkeypatch, tmp_path)
+    have.clear()
+    monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
+    sc.ctl.patch_want.update(roster=True, art=False, kits=False, photos=False)
+    sc.packs = SC.pack_status(SC.patch_cache())
+    sc.setup_set_emulator(str(sc.world['emu']))
+
+    def rows():
+        card = sc.extra_card(sc.known_emulator(), dict(sc.ctl.patch_want), {}, {}, False, keys=patch_ctl.ASSET_PACKS)
+        return {r['key']: r for r in card['rows']}
+    assert list(rows()) == list(patch_ctl.ASSET_PACKS)
+    assert not rows()['art']['disabled'] and 'nothing is downloaded (15 MB' in rows()['art']['text']
+    assert rows()['kits']['disabled'] and rows()['kits']['text'] == patch_ctl.ART_NEEDED
+    sc.pack_switch('kits', True)                                            # needs the team art first
+    assert got == [] and not sc.ctl.patch_want['kits']
+    sc.pack_switch('art', True)
+    assert got == ['looks32.zip', 'looks.zip', 'clubart.zip'] and sc.ctl.patch_want['art']
+    assert patch_ctl.switches(sc.ctl.patch_want, sorted(have))['art'] and rows()['art']['quiet']
+    sc.ctl.setup = sc
+    group = lambda key, on: patch_ctl.PatchCtl.patch_group(types.SimpleNamespace(ctl=sc.ctl), key, on)
+    group('assets', True)
+    assert got[3:] == ['photos.zip', 'people.zip', 'kits.zip'] and all(sc.ctl.patch_want[k] for k in patch_ctl.PACK_KEYS)
+    assert not any(sc.ctl.patch_want.get(k) for k in patch_ctl.EXTRA_KEYS)   # the big downloads stay a choice
+    group('assets', False)
+    assert not any(sc.ctl.patch_want.get(k) for k in patch_ctl.ASSET_PACKS) and 'kits.zip' in have   # kept on this PC
+    group('menus', True)
+    assert sc.ctl.patch_want['text'] and sc.ctl.patch_want['menus'] and not sc.ctl.patch_want.get('chel')
+    group('league', False)
+    assert not any(sc.ctl.patch_want[k] for k in ('names', 'roster', 'league'))
+    assert group('nope', True) == {'error': 'no such group'}
+    sc.ctl.busy = 'Patching NHL 19...'
+    group('league', True)
+    assert not sc.ctl.patch_want['roster'] and sc.ctl.said[-1] == ('Wait for the patch to finish.', 'caution')
+    sc.ctl.busy = None
 
 
 def test_the_pack_card_is_not_the_jersey_packs_download(sc, monkeypatch, tmp_path):
@@ -498,7 +538,7 @@ def test_downloads_delete_asks_first(sc, monkeypatch, tmp_path):
     assert sc.ctl.shell.asked == [] and 'nothing downloaded' in sc.ctl.said[-1][0]
     sc.pack_remove('looks32.zip')
     (title, _lines, buttons, answers), = sc.ctl.shell.asked
-    assert title == 'Delete "NHL 27 looks for all 32 teams"?' and buttons == ['delete', 'keep']
+    assert title == 'Delete "Team art for all 32 teams"?' and buttons == ['delete', 'keep']
     assert 'looks32.zip' in have
     answers['delete']()
     assert 'looks32.zip' not in have and sc.ctl.said[-1][1] == 'good'
@@ -609,7 +649,7 @@ def test_pack_switches_need_the_pack():
     assert patch_ctl.why(on, 'kits', ['looks.zip']) == patch_ctl.NO_PACK         # the kits need kits.zip
     assert patch_ctl.why(dict(on, roster=False), 'photos', everything) == \
         f'Needs the {patch_ctl.SEASON_LABEL} default roster.'
-    assert patch_ctl.why(dict(on, art=False), 'photos', everything) == 'Needs "NHL 27 team art".'
+    assert patch_ctl.why(dict(on, art=False), 'photos', everything) == 'Needs "Team art".'
     served = patch_ctl.served({'layers': {'art': {'packs': [{'name': 'looks'}, {'name': 'photos'}]}}})
     assert served['photos'] and served['art'] and not served['kits']
 
@@ -660,11 +700,11 @@ def test_pack_card_delete_asks_then_switches_off(sc, monkeypatch, tmp_path):
     sc.packs = SC.pack_status(SC.patch_cache())
     sc.packs_drop()
     (title, lines, buttons, answers), = sc.ctl.shell.asked
-    assert title == f'Delete the {SC.PACK_TITLE}?' and buttons == ['delete', 'keep'] and '25 MB' in lines[0]
+    assert title == 'Delete the downloaded assets?' and buttons == ['delete', 'keep'] and '25 MB' in lines[0]
     assert have == set(patch.ART_PACKS) - set(patch.EXTRA_PACKS)         # nothing gone before the answer
     answers['delete']()
     assert not have and not any(sc.ctl.patch_want[k] for k in patch_ctl.PACK_KEYS)
-    assert sc.ctl.said[-1] == (f'The {SC.PACK_TITLE} is deleted. Patch the game again to take it out.', 'good')
+    assert sc.ctl.said[-1] == ('The downloaded assets are deleted. Patch the game again to take them out.', 'good')
     card = _card(sc)
     assert card['state'] == 'missing' and not card['can_remove']
     sc.setup_set_emulator(str(sc.world['emu']))
@@ -835,7 +875,7 @@ def test_patch_without_update_makes_the_logos_of_the_active_save(sc, monkeypatch
     assert sorted(c['name'] for c in found.values()) == ['Abbotsford Canucks', 'Calgary Wranglers',
                                                          'Hamilton Hammers', 'Henderson Silver Knights']
     text, _tone = next((t, tone) for t, tone in reversed(sc.ctl.said) if t.startswith('Patched'))
-    assert "Club logos: 4 clubs matched, 1 slot kept NHL 19's own logo (NHL 27 has no club for it)." in text
+    assert "Club logos: 4 clubs matched, 1 slot kept NHL 19's own logo (the update has no club for it)." in text
     assert any('club logos of roster RosterCustom0: 4 clubs matched' in line for line in sc.ctl.host.logs)
 
 

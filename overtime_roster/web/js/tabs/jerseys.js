@@ -184,7 +184,7 @@ export default function Jerseys() {
       <${Button} disabled=${!s.can_undo} onClick=${() => call('jerseys_undo')}
         title="Drop your changes and put back the gear the roster had">Take back my gear<//>
       <span class="small-note faint jg-foot-note">${s.mine ? 'This team wears your gear. Save the roster to keep it.'
-        : 'Changes wait here until you press Apply. Jerseys come from the game; the NHL 27 kits go in with Game patch.'}</span>
+        : 'Changes wait here until you press Apply. Jerseys come from the game; the updated jerseys go in with Game patch.'}</span>
     </div>
   </section>`;
 }

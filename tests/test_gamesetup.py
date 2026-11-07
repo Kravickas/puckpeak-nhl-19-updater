@@ -358,7 +358,7 @@ def test_shadnet_why_names_the_reason(world):
     put(_header(extra='[Lib.Np] no users connected to shadNet\n'))
     assert 'nobody was signed in' in gamesetup.shadnet_why(gamesetup.shadnet_log(user))
     put(_header(extra="[Lib.Np] ConnectUser: user_id=1000 signed in npid='skater'\n"))
-    assert 'skater' in gamesetup.shadnet_why(gamesetup.shadnet_log(user)) and 'Type the id' in gamesetup.shadnet_why(
+    assert 'skater' in gamesetup.shadnet_why(gamesetup.shadnet_log(user)) and 'NHL 19 build' in gamesetup.shadnet_why(
         gamesetup.shadnet_log(user))
     put(_header())
     assert 'ended before it signed in' in gamesetup.shadnet_why(gamesetup.shadnet_log(user))

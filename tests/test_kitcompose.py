@@ -234,7 +234,7 @@ def test_patch_makes_the_families_switched_on_and_serves_them_after_the_kits(pla
     made = patch.make_kits(want, world['game'], str(places), log=said.append, step=steps.append)
     assert set(made) == {'pants', 'nhl'} and made['nhl']['files'] == 4 and made['pants']['files'] == 1
     assert said == ['jerseys (pants): made 1 textures', 'jerseys (nhl): made 4 textures']
-    assert steps == [f'making the jerseys on this PC: NHL alternate jerseys from NHL 27, {n} %...'
+    assert steps == [f'making the jerseys on this PC: NHL alternate jerseys, {n} %...'
                      for n in (0, 25, 50, 75, 100)]  # the pants are quick: not said
     layers = []
     packs = patch.art_layer(want, layers, str(places), game_dir=world['game'])

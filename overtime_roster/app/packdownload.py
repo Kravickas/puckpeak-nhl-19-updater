@@ -38,13 +38,13 @@ from .patch import ART_ENV, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK
 EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
 EMULATOR_EXE = 'shadPS4.exe'
 PACKS = {
-    'looks32.zip': {'title': 'NHL 27 looks for all 32 teams', 'core': True},
+    'looks32.zip': {'title': 'Team art for all 32 teams', 'core': True},
     'looks.zip': {'title': 'Utah and Seattle looks', 'core': True},
     PHOTOS_PACK: {'title': 'Player photos from NHL.com', 'core': True},
     PEOPLE_PACK: {'title': 'Player photos of every league', 'core': True},
     # not served by the patch itself: Update makes the clubs' logos and centre ice of it on this PC (overtime_core.clubart)
     CLUBART_PACK: {'title': 'Club logos and centre ice of every league', 'core': True},
-    KITS_PACK: {'title': 'NHL 27 3D kits for 30 teams', 'core': False},
+    KITS_PACK: {'title': '3D jerseys for 30 teams', 'core': False},
     **{name: {'title': title, 'core': False} for name, title in EXTRA_PACKS.items()},
 }
 CORE = tuple(name for name, pack in PACKS.items() if pack['core'])

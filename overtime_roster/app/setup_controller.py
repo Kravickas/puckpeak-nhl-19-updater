@@ -46,9 +46,9 @@ WANTED = ('missing', 'newer', 'offline')    # pack states Download all fetches
 # the packs with their own switch (patch.EXTRA_PACKS, the Game patch tab's More jerseys and ice card): never by
 # Download all or the Photos, logos card (several hundred MB each)
 OPTIONAL = frozenset(patch.EXTRA_PACKS)
-PACK_TITLE = 'Photos, logos pack'     # the four packs as one card (v0.10.0; off until downloaded)
-PACK_SUB = ('NHL 27 logos, menu jerseys, centre ice and 3D kits for all 32 teams, and NHL.com player photos. Kept on '
-            'this PC.')
+PACK_TITLE = 'Updated assets'     # the core packs as one (v0.10.0's card; v0.70.0: a switch each downloads its own)
+PACK_SUB = ('Updated logos, menu jerseys, centre ice and 3D jerseys for all 32 teams, and NHL.com player photos. Kept '
+            'on this PC.')
 PACK_SIZE = 'about 150 MB'      # the four packs of 2026-10-21 (148 MB) when the server cannot say
 
 
@@ -145,6 +145,7 @@ class SetupController(Part):
         self.boost_table = None     # packdownload.published() of the last look
         self.dl = None          # {names, name, part, share} while packs download
         self.dl_stop = False    # a pack switched off while it downloads
+        self.asked = set()      # the core asset switches (patch_ctl.PACK_KEYS) switched on here: their packs download
         self.boost = prefs.get('boost') or {}   # Boost performance: {sha256, emulator, selected}, what comes back when off
         self.boost_part = None  # how far its download is (0..1)
 
@@ -568,7 +569,7 @@ class SetupController(Part):
     def kits_download(self):
         return self.pack_download(KITS)
 
-    def _download(self, names, busy=None, after_ok=None, not_got=None, then=None):
+    def _download(self, names, busy=None, after_ok=None, not_got=None, then=None, switch=False):
         """A job downloading `names`. after_ok(): when all came, says the outcome. not_got(name): each that did not.
         then(): when the job is over."""
         c = self.ctl
@@ -581,13 +582,13 @@ class SetupController(Part):
         titles = PACKS
         cache, game_dir = patch_cache(), c.game_dir
         with c.lock:
-            self.dl = {'names': list(names), 'name': names[0], 'part': 0.0, 'share': 0.0}
+            self.dl = {'names': list(names), 'name': names[0], 'part': 0.0, 'share': 0.0, 'switch': switch}
 
         def progress(name, done, total):
             part = min(1.0, done / total) if total else 0.0
             share = (names.index(name) + part) / len(names) if name in names else part
             with c.lock:
-                self.dl = {'names': list(names), 'name': name, 'part': part, 'share': share}
+                self.dl = {'names': list(names), 'name': name, 'part': part, 'share': share, 'switch': switch}
             c.say(f'Downloading {titles.get(name, (name,))[0]}... {round(part * 100)} %', 'info', share)
             c.changed('setup', 'patch')
 
@@ -671,7 +672,7 @@ class SetupController(Part):
                 self.packs = rows
             if not had:
                 return f'{title}: nothing downloaded to delete.', 'info'
-            if name in OPTIONAL:
+            if any(name in names for names in patch_ctl.ASSET_PACKS.values()):
                 self._extra_off(name)
             if name == KITS:
                 return 'The kits are deleted. Patch the game again to take them out.', 'good'
@@ -767,28 +768,33 @@ class SetupController(Part):
         return {'on': on, 'newer': newer, 'text': text, 'tone': tone, 'progress': part,
                 'can': (on or pub is not None) and not c.busy}
 
-    # --- More jerseys and ice: a switch per pack, as in Legacy --------------------------------------------------------
+    # --- Updated assets: a switch per pack, as in Legacy (v0.70.0: the team art, photos and 3D jerseys too) -----------
     def _extra_off(self, name):
+        """A pack did not come (or was deleted): every switch that needs it and has nothing else to use goes off."""
         c = self.ctl
+        found = patch_ctl.packs_here(patch_cache())
         with c.lock:
-            c.patch_want[patch.extra_key(name)] = False
+            for key, names in patch_ctl.ASSET_PACKS.items():
+                if name in names and patch_ctl.why(dict(c.patch_want, **{key: True}), key, found) is not None:
+                    c.patch_want[key] = False
+                    self.asked.discard(key)
             c.remember(patch=dict(c.patch_want))
 
     def _extras_running(self):
-        return self.dl is not None and self.dl['names'][0] in OPTIONAL
+        return self.dl is not None and bool(self.dl.get('switch') or self.dl['names'][0] in OPTIONAL)
 
     def pack_switch(self, key, on):
-        """One pack's switch: on downloads it when it is not here, in turn with the others switched on; off stops its
-        download and keeps what is on this PC. The next Patch puts the pack in or takes it out."""
+        """One asset switch: on downloads its packs when they are not here, in turn with the others switched on; off
+        stops its download and keeps what is on this PC. The next Patch puts the pack in or takes it out."""
         c = self.ctl
-        name = patch_ctl.EXTRA_KEYS.get(key)
-        if name is None:
+        names = patch_ctl.ASSET_PACKS.get(key)
+        if names is None:
             return {'error': 'Overtime Roster does not know this pack.'}
         with c.lock:
             want = dict(c.patch_want, **{key: True})
             taken = bool(c.busy) and not self._extras_running()
-        no = 'Needs "NHL 27 team art".' if on and not want.get('art') else None
-        if on and not self.known_emulator():
+        no = patch_ctl.why(want, key, patch_ctl.packs_here(patch_cache()), missing_ok=True) if on else None
+        if on and not no and not self.known_emulator():
             no = 'Pick shadPS4 first: the packs go in when you patch the game.'
         if taken or no:
             c.say(no or waiting(c.busy), 'caution')
@@ -797,7 +803,9 @@ class SetupController(Part):
         with c.lock:
             c.patch_want[key] = bool(on)
             c.remember(patch=dict(c.patch_want))
-            if not on and self.dl is not None and self.dl['name'] == name:
+            (self.asked.add if on else self.asked.discard)(key)
+            if not on and self.dl is not None and self.dl['name'] in names and not any(
+                    c.patch_want.get(k) for k, v in patch_ctl.ASSET_PACKS.items() if self.dl['name'] in v):
                 self.dl_stop = True
         c.changed('patch')
         if on and self._extras_wanted():
@@ -807,14 +815,23 @@ class SetupController(Part):
         return None
 
     def _extras_wanted(self):
+        """The packs of the asset switches that are on (and can be) and are not here, in the page's order."""
         with self.ctl.lock:
             rows = {r['name']: r for r in (self.packs if self.packs is not None else local_packs(patch_cache()))}
-            return [name for key, name in patch_ctl.EXTRA_KEYS.items()
-                    if self.ctl.patch_want.get(key) and rows.get(name, {}).get('state') in WANTED]
+            want = dict(self.ctl.patch_want)
+        found = patch_ctl.packs_here(patch_cache())
+        out = []
+        for key, names in patch_ctl.ASSET_PACKS.items():
+            if not want.get(key) or patch_ctl.why(want, key, found, missing_ok=True):
+                continue
+            if key in patch_ctl.PACK_KEYS and key not in self.asked:
+                continue        # switched on before (or by Download): no download the player did not ask for now
+            out += [n for n in names if n not in out and rows.get(n, {}).get('state') in WANTED]
+        return out
 
     def _extras_next(self, tried=()):
         """Download the next pack switched on and not here; a job that runs already picks it up when it ends. A pack
-        that was tried and is still not here goes off (the job failed): no second try by itself."""
+        that was tried and is still not here turns its switch off (the job failed): no second try by itself."""
         names = []
         for name in self._extras_wanted():
             if name in tried:
@@ -829,36 +846,63 @@ class SetupController(Part):
         def got():
             return f'{title} downloaded. Press Patch to put it in the game.', 'good'
         return self._download([name], busy=f'Downloading {title}...', after_ok=got, not_got=self._extra_off,
-                              then=lambda: self._extras_next((*tried, name)))
+                              then=lambda: self._extras_next((*tried, name)), switch=True)
 
-    def extra_card(self, emulator, want, picked, now, patched):
-        """The More jerseys and ice card (Game patch): one row per pack with its switch."""
+    @staticmethod
+    def _asset_row(rows, names, found, key):
+        """One switch's packs as one pack row: here when the switch can use what is here (the team art needs one of
+        its looks packs), else what is left to do, with the size of what it downloads."""
+        rs = [rows.get(n, {'name': n, 'state': 'missing'}) for n in names]
+        rs = [r for r in rs if r['state'] != 'not_served'] or rs
+        usable = patch_ctl.why({'art': True, 'roster': True, key: True}, key, found) is None
+        newer = [r for r in rs if r['state'] == 'newer']
+        todo = [r for r in rs if r['state'] in WANTED]
+        if usable:
+            state = 'newer' if newer else 'here'
+        else:
+            state = next((s for s in ('offline', 'missing') if any(r['state'] == s for r in rs)), rs[0]['state'])
+        size = sum(r.get('size') or 0 for r in todo) if state != 'here' else sum(r.get('local_size') or 0 for r in rs)
+        first = next((r for r in rs if r['state'] == state), rs[0])
+        return {'name': names[0], 'state': state, 'size': size, 'local_size': sum(r.get('local_size') or 0 for r in rs),
+                'removable': len(names) == 1 and bool(first.get('removable')), 'text': first.get('text', ''),
+                'title': first.get('title')}
+
+    def extra_card(self, emulator, want, picked, now, patched, keys=None):
+        """The asset switches (Game patch, Updated assets): one row per switch with its download state. `keys`: the
+        switches (default: the jersey and ice packs, v0.30's More jerseys and ice card)."""
         c = self.ctl
         rows = {r['name']: r for r in (self.packs if self.packs is not None else local_packs(patch_cache()))}
+        found = patch_ctl.packs_here(patch_cache())
         dl, out = self.dl, []
         busy = bool(c.busy) and not self._extras_running()
-        for key, name in patch_ctl.EXTRA_KEYS.items():
-            r, (title, sub) = rows.get(name, {'state': 'missing'}), patch_ctl.EXTRA_TITLES[key]
-            size = _megabytes(r.get('size') or r.get('local_size'))
+        titles = {key: (title, sub) for key, title, sub, _info in patch_ctl.LAYERS}
+        infos = {key: info for key, _title, _sub, info in patch_ctl.LAYERS}
+        for key in (keys or patch_ctl.EXTRA_KEYS):
+            names = patch_ctl.ASSET_PACKS[key]
+            r = self._asset_row(rows, names, found, key)
+            title, sub = patch_ctl.EXTRA_TITLES.get(key) or titles[key]
+            size = _megabytes(r['size'] or r['local_size'])
             state, wanted = r['state'], bool(want.get(key))
-            row = {'key': key, 'name': name, 'title': title, 'sub': sub, 'size': size, 'on': wanted, 'progress': None,
-                   'tag': None, 'tone': '', 'can_remove': bool(r.get('removable')) and not c.busy,
-                   'can_update': False}
-            if dl is not None and c.busy and dl['name'] == name:
+            row = {'key': key, 'name': names[0], 'title': title, 'sub': sub, 'size': size, 'on': wanted,
+                   'progress': None, 'tag': None, 'tone': '', 'quiet': False,
+                   'info': {'title': title, 'text': infos.get(key) or sub},
+                   'can_remove': bool(r.get('removable')) and not c.busy, 'can_update': False}
+            if dl is not None and c.busy and dl['name'] in names:
                 row.update(tone='info', progress=dl['part'], text=f"Downloading... {round(dl['part'] * 100)} %"
                                                                   f"{f' of {size}' if size else ''}")
             elif wanted and state in WANTED and self._extras_running():
                 row['text'] = 'Waiting for its turn...'
             elif state == 'here' or state == 'newer':
-                row['text'] = f'Downloaded ({size}).' if size else 'Downloaded.'
+                row.update(text=f'Downloaded ({size}).' if size else 'Downloaded.', quiet=True)
                 if state == 'newer':
-                    row.update(text='A newer version is out.', can_update=bool(emulator) and not c.busy)
+                    row.update(text='A newer version is out.', quiet=False,
+                               can_update=bool(emulator) and not c.busy)
                 if patched:
                     on, there = bool(picked.get(key)), bool(now.get(key))
                     row['tag'] = {'text': 'In the game', 'tone': 'good'} if on and there else \
                         {'text': 'Patch to add', 'tone': 'caution'} if on else \
                         {'text': 'Patch to take away', 'tone': 'caution'} if there else None
-                if not wanted:
+                if not wanted and state == 'here':
                     row['text'] = f'Off. Kept on this PC{f" ({size})" if size else ""}.'
             elif state == 'offline':
                 row['text'] = 'The Overtime server does not answer: check your internet connection.'
@@ -868,13 +912,20 @@ class SetupController(Part):
                 row['text'] = f'Off: nothing is downloaded{f" ({size} when you switch it on)" if size else ""}.'
             else:
                 row['text'] = r.get('text') or _pack_text(r)
-            can = state in ('here', 'newer', *WANTED) and bool(emulator) and (wanted or bool(want.get('art')))
+            dep = patch_ctl.why(dict(want, **{key: True}), key, found, missing_ok=True)
+            can = state in ('here', 'newer', *WANTED) and bool(emulator) and (wanted or not dep)
             row['disabled'] = busy or not can
-            if not wanted and not want.get('art'):
-                row['text'] = 'Needs "NHL 27 team art".'
+            if not wanted and dep:
+                row.update(text=dep, quiet=False)
             out.append(row)
         return {'title': 'More jerseys and ice', 'rows': out,
                 'sub': 'Switch on what you want: it downloads by itself, and Patch puts it in the game.'}
+
+    def assets_store(self):
+        """The Updated assets group's corner: how much is on this PC, and Delete for all of it."""
+        rows = [r for r in (self.packs if self.packs is not None else local_packs(patch_cache())) if r.get('removable')]
+        return {'size': _megabytes(sum(r.get('local_size') or 0 for r in rows)),
+                'can_remove': bool(rows) and not self.ctl.busy}
 
     # --- The Photos, logos pack (v0.10.0): the four picture packs as one card on Game patch ---------------------------
     def _pack_rows(self):
@@ -962,9 +1013,9 @@ class SetupController(Part):
             return None
         size = _megabytes(sum(r.get('local_size') or 0 for r in rows))
         size = f' ({size})' if size else ''
-        c.shell.ask(f'Delete the {PACK_TITLE}?',
-                    [f'The NHL 27 team art, kits and player photos are taken off this PC{size}.',
-                     'Patch the game again to take them out of NHL 19 too. You can download the pack again any time.'],
+        c.shell.ask('Delete the downloaded assets?',
+                    [f'The team art, jerseys, centre ice and player photos are taken off this PC{size}.',
+                     'Patch the game again to take them out of NHL 19 too. You can download them again any time.'],
                     [('Delete it', 'delete', 'danger'), ('Keep it', 'keep', 'plain')],
                     {'delete': lambda: self._drop([r['name'] for r in rows])})
         return None
@@ -981,8 +1032,9 @@ class SetupController(Part):
             with self.ctl.lock:
                 self.packs = rows
             self._packs_switch(False)
-            return f'The {PACK_TITLE} is deleted. Patch the game again to take it out.', 'good'
-        return self._job(f'Deleting the {PACK_TITLE}...', work, said, expected=(packdownload.PackError,), rescan=False)
+            return 'The downloaded assets are deleted. Patch the game again to take them out.', 'good'
+        return self._job('Deleting the downloaded assets...', work, said, expected=(packdownload.PackError,),
+                         rescan=False)
 
     # --- This program --------------------------------------------------------------------------------------------
     def check_updates(self, on):
