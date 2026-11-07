@@ -62,3 +62,23 @@ def test_stock_patch_archives_rebuild_byte_identical(game_dir):
         with eb.EbArchive(big) as arc:
             folders, entries = eb._parse(big)
             assert {e.path for e in entries} == set(arc.entries)
+
+
+def test_cached_tocs_parse_each_archive_once_and_see_a_changed_one(tmp_path, monkeypatch):
+    out = str(tmp_path / 'boot.big')
+    eb.new_archive(out, {'a/x.bin': b'x'})
+    parsed = []
+    real = eb.EbArchive._parse
+    monkeypatch.setattr(eb.EbArchive, '_parse', lambda self, h: (parsed.append(1), real(self, h))[1])
+    with eb.cached_tocs():
+        for _ in range(3):
+            with eb.EbArchive(out) as arc:
+                assert list(arc.entries) == ['a/x.bin']
+        assert len(parsed) == 1
+        eb.new_archive(out, {'a/x.bin': b'x', 'a/y.bin': b'y' * 40})      # another size: read again
+        with eb.EbArchive(out) as arc:
+            assert sorted(arc.entries) == ['a/x.bin', 'a/y.bin'] and arc.read('a/y.bin') == b'y' * 40
+        assert len(parsed) == 2
+    with eb.EbArchive(out) as arc:      # outside the block: parsed each time
+        pass
+    assert len(parsed) == 3

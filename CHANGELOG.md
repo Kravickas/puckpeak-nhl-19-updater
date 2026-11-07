@@ -2,6 +2,21 @@
 
 What changed in each version, for players.
 
+## 0.70.6 (2026-11-07)
+
+### Changed
+
+- **A much faster Patch** (measured here on the real game, warm disk):
+  - League, menus and database are prepared in 0.12 / 0.12 / 0.50 s instead of 0.88 / 0.44 / 1.66 s: each game
+    archive's file list is read once per Patch, not 660 times.
+  - The game's text (76,000 strings) decodes 4.7 times faster, same strings.
+  - The Patch tab no longer hashes your patch files each time it opens (0.37 s before, about 0 now).
+  - A second Patch no longer reads back 15.6 GB of art to check files it wrote itself (about 9 s warm, more on a cold
+    disk or a hard drive); Patch and Unpatch compare size and time first and hash only when they differ.
+  - Update reads the people pack's list, not its 5,900 photos (2 s before, 0.02 s now).
+- The first Patch after updating still hashes the copied archives once; the speed-up shows from the second Patch on.
+  Writing the files is unchanged, so a Patch is faster but not instant.
+
 ## 0.70.5 (2026-11-07)
 
 ### Fixed

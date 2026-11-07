@@ -248,6 +248,31 @@ def _read_delta(path, name, sha, base):
     return data
 
 
+Listing = collections.namedtuple('Listing', 'name info files sha256')
+
+
+def listing(path):
+    """What an art pack says it holds, from its pack.json alone: name, info (pack.json without the file lists), the
+    game paths, and the pack's sha256 as load_pack's Pack gives it. Nothing is unpacked or checked: for who has a photo
+    (Update), not for laying a pack (load_pack). Raises ArtError when pack.json is missing or unreadable."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            info = json.loads(z.read(MANIFEST).decode('utf-8'))
+    except KeyError:
+        raise ArtError(f'{path}: no {MANIFEST}') from None
+    except (zipfile.BadZipFile, OSError, ValueError) as err:
+        raise ArtError(f'{path}: {err}') from err
+    if info.get('format') not in (FORMAT, DELTA_FORMAT):
+        raise ArtError(f'{path}: pack format {info.get("format")} (this app reads {FORMAT}, {DELTA_FORMAT})')
+    shas = dict(info.get('files') or {})
+    shas.update({p: rec.get('sha256') for p, rec in (info.get('deltas') or {}).items()})
+    if not shas:
+        raise ArtError(f'{path}: the pack holds no textures')
+    meta = {k: v for k, v in info.items() if k not in ('files', 'deltas')}
+    name = info.get('name') or os.path.splitext(os.path.basename(path))[0]
+    return Listing(name, meta, frozenset(shas), Pack(name, meta, dict.fromkeys(shas), path, shas).sha256)
+
+
 def load_pack(path, game_dir=None):
     """Read and check an art pack zip, keeping none of it in memory (Stored); a delta pack needs `game_dir` (its bases).
     Raises ArtError when anything is off."""

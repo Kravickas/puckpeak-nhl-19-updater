@@ -456,3 +456,16 @@ def test_stored_reads_share_one_zip_handle_and_compare_by_sha(tmp_path, monkeypa
     s.read = lambda: reads.append(1) or b''
     assert s == files[next(iter(files))] and not (s != files[next(iter(files))]) and not reads
     assert s != b'GNF ' + b'\xff' * 64
+
+
+def test_listing_is_what_load_pack_says_without_reading_the_files(tmp_path):
+    path = str(tmp_path / 'people.zip')
+    who = [['ab', 2000, 1, 2, 40000]]
+    art.write_pack(path, 'people', {PORTRAIT: gnf('face'), LOGO: gnf('logo')}, extra={'people': who})
+    got, pack = art.listing(path), art.load_pack(path)
+    assert (got.name, got.info, got.files, got.sha256) == (pack.name, pack.info, set(pack.files), pack.sha256)
+    assert got.info['people'] == who
+    with zipfile.ZipFile(str(tmp_path / 'bare.zip'), 'w') as z:
+        z.writestr('x.txt', 'x')
+    with pytest.raises(art.ArtError, match='no pack.json'):
+        art.listing(str(tmp_path / 'bare.zip'))

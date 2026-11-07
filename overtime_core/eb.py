@@ -18,13 +18,33 @@ Entries are stored raw or as "chunkzip" (EA chunked raw-deflate):
   then per chunk (16-byte aligned so the data starts aligned): u32 packed size, u32 method, data.
   Method 1 = raw deflate. A chunk whose packed size equals its unpacked size is stored.
 """
+import contextlib
 import hashlib
 import os
 import struct
+import threading
 import zlib
 
 M64 = (1 << 64) - 1
 FLAGS = 0x00110400
+
+
+_tocs = threading.local()
+
+
+@contextlib.contextmanager
+def cached_tocs():
+    """Inside the block (this thread), each archive's table of contents is parsed once per (path, size, mtime):
+    code that walks every archive of the game again and again (overlay.build) reads each once. Only for blocks that
+    write no archive they have read in it. Blocks nest; the outermost one drops the tables."""
+    outer = getattr(_tocs, 'cache', None)
+    if outer is None:
+        _tocs.cache = {}
+    try:
+        yield
+    finally:
+        if outer is None:
+            _tocs.cache = None
 
 
 class EbArchive:
@@ -32,7 +52,20 @@ class EbArchive:
         self.f = open(path, 'rb')
         h = self.f.read(0x30)
         if h[:2] != b'EB' or struct.unpack_from('>H', h, 2)[0] != 3:
+            self.f.close()
             raise ValueError(f"{path}: not an EB v3 archive")
+        cache = getattr(_tocs, 'cache', None)
+        if cache is not None:
+            st = os.fstat(self.f.fileno())
+            key = (os.path.normcase(os.path.abspath(path)), st.st_size, st.st_mtime_ns)
+            if key in cache:
+                self.entries = cache[key]   # shared: nobody changes an archive's entries
+                return
+        self._parse(h)
+        if cache is not None:
+            cache[key] = self.entries
+
+    def _parse(self, h):
         count = struct.unpack_from('>I', h, 4)[0]
         names_off, names_size = struct.unpack_from('>II', h, 12)
         fnl, dnl, ndirs = h[20], h[21], struct.unpack_from('>H', h, 22)[0]

@@ -77,6 +77,20 @@ class HuffmanTree:
                     self.codes[x] = ((bits << 1) | v, n + 1)
                 else:
                     stack.append((x, (bits << 1) | v, n + 1))
+        self._steps = [None] * (256 * len(self.nodes))  # node << 8 | byte: (symbols, next node), made when first met
+
+    def _step(self, key):
+        """Walk the 8 bits of one input byte from a node: the symbols it finishes and the node it ends on."""
+        i, byte, out = key >> 8, key & 0xff, bytearray()
+        for k in range(7, -1, -1):
+            kind, x = self.nodes[i][(byte >> k) & 1]
+            if kind == 'c':
+                out.append(x)
+                i = 0
+            else:
+                i = x
+        self._steps[key] = step = (bytes(out), i)
+        return step
 
     @classmethod
     def parse(cls, area):
@@ -129,6 +143,19 @@ class HuffmanTree:
         return b''.join(bytes([0, x]) if kind == 'c' else bytes([x, 0]) for pair in self.nodes for kind, x in pair)
 
     def decode(self, area, off, prefix):
+        """A byte at a time (_step): the bits after the n-th symbol are padding, so the last byte's extra symbols
+        are cut off."""
+        n = int.from_bytes(area[off:off + prefix], 'big')
+        pos, node, out, steps = off + prefix, 0, bytearray(), self._steps
+        while len(out) < n:
+            key = (node << 8) | area[pos]
+            got, node = steps[key] or self._step(key)
+            out += got
+            pos += 1
+        return bytes(out[:n])
+
+    def decode_bits(self, area, off, prefix):
+        """decode, a bit at a time (the reference the tests hold decode to)."""
         n = int.from_bytes(area[off:off + prefix], 'big')
         pos, bit, out = off + prefix, 0, bytearray()
         for _ in range(n):

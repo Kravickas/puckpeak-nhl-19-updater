@@ -201,7 +201,7 @@ def people_rows(cache_dir=None, game_dir=None):
     there, so Update draws only the others."""
     path = next((p for p in (os.path.join(f, PEOPLE_PACK) for f in art_places(cache_dir)) if os.path.isfile(p)), None)
     try:
-        return (art.load_pack(path, game_dir).info.get('people') or []) if path else []
+        return (art.listing(path).info.get('people') or []) if path else []
     except art.ArtError:
         return []
 
@@ -321,7 +321,7 @@ def served_portraits(game_dir, cache_dir=None):
     for name in (PHOTOS_PACK, PEOPLE_PACK):
         path = next((p for p in (os.path.join(f, name) for f in art_places(cache_dir)) if os.path.isfile(p)), None)
         try:
-            pack = art.load_pack(path, game_dir) if path else None
+            pack = art.listing(path) if path else None
         except art.ArtError:
             pack = None
         if pack is not None and pack.name in served:
@@ -329,7 +329,7 @@ def served_portraits(game_dir, cache_dir=None):
             people += pack.info.get('people') or []
     local = local_people(cache_dir)
     try:
-        pack = art.load_pack(local, game_dir) if local else None
+        pack = art.listing(local) if local else None
     except art.ArtError:
         pack = None
     if pack is not None and {'name': pack.name, 'sha256': pack.sha256} in \

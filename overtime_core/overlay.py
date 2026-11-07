@@ -519,6 +519,13 @@ def _served_menus(state):
 
 
 def build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None, art=None, launch=None):
+    """_build, with each game archive's table of contents parsed once (the layers look up the winning copy of
+    their files many times over; building writes no archive it reads)."""
+    with eb.cached_tocs():
+        return _build(game_dir, layers, pack, database, lang, menus, art, launch)
+
+
+def _build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None, art=None, launch=None):
     """{game archive path: {entry: new bytes}} and the layer records for the state file. An archive path that is not
     in the game folder is a new archive (the art layer's). `launch` ({'until': unix seconds}) is the menus layer's
     zero-press hook (set_menus); apply never passes it, so a full apply serves the stock menus."""
@@ -652,11 +659,12 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
         art = [served] if served else None
     edits, info = build(game_dir, layers, pack, database, lang, menus, art)
     ours = dict((old or {}).get('files', {}))
+    stamp = _stamp(game_dir)
     rels = {archive: _rel(game_dir, archive) for archive in edits}
     for rel in rels.values():  # before anything is written: whose is the file at each path?
         target = _target(game_dir, rel)
         if rel in ours:
-            if os.path.exists(target) and ours[rel].get('sha256') and _sha256(target) != ours[rel]['sha256']:
+            if os.path.exists(target) and not _intact(target, ours[rel], stamp):
                 raise PatchError(f'{target} changed since the patch wrote it: check it and delete it by hand')
         elif os.path.exists(target) and not os.path.exists(target + LEGACY_SUFFIX)                 and os.path.exists(_backup(game_dir, rel)):
             raise PatchError(f'{_backup(game_dir, rel)} is in the way: check it and delete it by hand')
@@ -697,7 +705,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
             else:
                 st = os.stat(archive)
                 written[rel] = {'source_size': st.st_size, 'source_mtime': int(st.st_mtime),
-                                'entries': sorted(entries)}
+                                'entries': sorted(entries), 'size': os.path.getsize(tmp)}
         art_mod.release()   # the served art read back (_current_art) is in the archives replaced below
         partial = dict((old or {}).get('layers', {}), partial=True)
         for tmp, target, rel in tmps:
@@ -725,7 +733,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
             os.remove(legacy)
     for rel in (old or {}).get('files', {}):
         if rel not in written:
-            _remove_ours(game_dir, rel, old['files'][rel])
+            _remove_ours(game_dir, rel, old['files'][rel], stamp)
             ours.pop(rel, None)
             if ours:
                 save(ours, dict(info, partial=True))
@@ -743,12 +751,13 @@ def _backup(game_dir, rel):
     return os.path.join(overlay_dir(game_dir), BACKUP_DIR, *rel.split('/'))
 
 
-def _remove_ours(game_dir, rel, rec):
-    """Remove one overlay file this patch wrote, only if it is still what was written. True when removed."""
+def _remove_ours(game_dir, rel, rec, stamp):
+    """Remove one overlay file this patch wrote, only if it is still what was written (_intact; `stamp`: the state
+    file's mtime as the patch left it). True when removed."""
     path = _target(game_dir, rel)
     removed = False
     if os.path.exists(path):
-        if rec.get('sha256') and _sha256(path) != rec['sha256']:
+        if not _intact(path, rec, stamp):
             raise PatchError(f'{path} changed since the patch wrote it: left in place, check it and delete it by hand')
         os.remove(path)
         removed = True
@@ -799,13 +808,14 @@ def set_menus(game_dir, launch=None, running=None):
     for path, raw in new.items():
         archives.setdefault(textpack._winner(game_dir, path), {})[path] = raw
     ours = dict(old['files'])
+    stamp = _stamp(game_dir)
     for archive, entries in archives.items():
         rel = _rel(game_dir, archive)
         target = _target(game_dir, rel)
         rec = ours.get(rel)
         if rec is None or not os.path.exists(target):
             raise PatchError(f'{rel} is not a file the patch wrote: apply the patch first')
-        if rec.get('sha256') and _sha256(target) != rec['sha256']:
+        if not _intact(target, rec, stamp):
             raise PatchError(f'{target} changed since the patch wrote it: check it and delete it by hand')
         with eb.EbArchive(target) as served:  # what other layers keep in this archive
             carried = {e: served.read(e) for e in rec.get('entries', []) if e not in menus_mod.LAUNCH_PATHS}
@@ -825,7 +835,7 @@ def set_menus(game_dir, launch=None, running=None):
             if os.path.exists(tmp):
                 os.remove(tmp)
         ours[rel] = dict(rec, source_size=st.st_size, source_mtime=int(st.st_mtime), entries=sorted(entries),
-                         sha256=_sha256(target))
+                         sha256=_sha256(target), size=os.path.getsize(target))
     layers = dict(old['layers'], menus=menus_mod.record(opts, launch))
     state = dict(old, applied=datetime.datetime.now().isoformat(timespec='seconds'), layers=layers, files=ours)
     tmp = state_path(game_dir) + '.tmp'
@@ -841,8 +851,9 @@ def undo(game_dir, running=None):
         raise PatchError('shadPS4 is running: close the game first')
     done = []
     state = _load_state(game_dir) or {}
+    stamp = _stamp(game_dir)
     for rel, rec in state.get('files', {}).items():
-        if _remove_ours(game_dir, rel, rec):
+        if _remove_ours(game_dir, rel, rec, stamp):
             done.append(_target(game_dir, rel))
     for archive in _legacy_files(game_dir):
         for p in (archive, archive + LEGACY_SUFFIX):
@@ -858,10 +869,25 @@ def undo(game_dir, running=None):
 
 
 def _untouched(path, rec, stamp):
-    """An art archive as written: its size, and no newer than the state file (`stamp`) written after it. Reading
-    gigabytes at each look at the game is too slow."""
+    """An overlay archive as written: the size recorded for it, and no newer than the state file (`stamp`) written
+    after it. Reading gigabytes at each look at the game (and again at each Patch) is too slow. A record from before
+    copies kept their size has none: those are hashed."""
     st = os.stat(path)
-    return bool(rec.get('new')) and rec.get('size') == st.st_size and st.st_mtime_ns <= stamp
+    return rec.get('size') is not None and rec.get('size') == st.st_size and stamp is not None \
+        and st.st_mtime_ns <= stamp
+
+
+def _stamp(game_dir):
+    """The state file's mtime (ns), None without one."""
+    try:
+        return os.stat(state_path(game_dir)).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _intact(path, rec, stamp):
+    """An existing overlay file is still the one the patch wrote: untouched by size and time, else by its sha256."""
+    return not rec.get('sha256') or _untouched(path, rec, stamp) or _sha256(path) == rec['sha256']
 
 
 def status(game_dir, lang='eng_us'):
@@ -874,7 +900,7 @@ def status(game_dir, lang='eng_us'):
             out.update(applied=True, layers={'text': {'legacy': True}})
         return out
     out.update(applied_at=state.get('applied'), layers=state.get('layers', {}))
-    stamp = os.stat(state_path(game_dir)).st_mtime_ns
+    stamp = _stamp(game_dir)
     for rel, rec in state.get('files', {}).items():
         path = _target(game_dir, rel)
         source = gamefiles.locate(game_dir, rel)

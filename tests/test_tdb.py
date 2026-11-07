@@ -282,3 +282,17 @@ def test_keep_and_put_back_restore_every_table():
         db.add(db['players'])
     db.put_back(kept)
     assert 'XTRA' not in db and db.to_bytes() == raw and db['players'].get(0, 'lastname') == 'Kesler'
+
+
+def test_huffman_decode_a_byte_at_a_time_matches_bit_by_bit():
+    """decode walks whole input bytes and cuts the padding's symbols off: the same strings as the bit walk."""
+    import random
+    rng = random.Random(19)
+    for _ in range(30):
+        counts = {b: rng.randint(1, 500) for b in rng.sample(range(256), rng.randint(2, 120))}
+        tree = HuffmanTree.build(counts)
+        syms = sorted(counts)
+        for n in (0, 1, 2, 7, 8, 9, 63, 300):
+            s = bytes(rng.choice(syms) for _ in range(n))
+            area = b'\x5a' * 3 + tree.encode(s, 2) + bytes(rng.randrange(256) for _ in range(4))
+            assert tree.decode(area, 3, 2) == tree.decode_bits(area, 3, 2) == s
