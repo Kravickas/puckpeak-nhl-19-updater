@@ -35,6 +35,7 @@ LAUNCHER_DATA = 'shadPS4QtLauncher'     # QtLauncher's folder in %APPDATA%: qt_u
 LOCAL_VERSION = 2                       # versions.json: a version added by hand (0 stable, 1 Pre-release)
 PATCH_FOLDER, PATCH_FILE = 'Overtime', 'overtime.xml'
 NETWORK = {'connected_to_network': True, 'shad_net_enabled': True}  # custom_configs\CUSA11126.json, "General"
+DMEM_KEY, DMEM_1440 = 'extra_dmem_in_mbytes', 3500   # "General": what the 1440p block (xmlpatch res1440) needs
 # the ShadNet servers the game's "Network" section needs filled (live 2026-11-07: a tester's game-specific Network tab
 # was empty and the game stopped at SIGN IN REQUIRED until he typed them); the shared config.json's are used if set
 SERVERS = {'shadnet_server': 'srv.shadps4.net:31313', 'shadnet_webapi_server': 'http://srv.shadps4.net:31315'}
@@ -801,8 +802,22 @@ def install(emu_exe, xml_text, running=None):
     if not isinstance(cfg.get('Network'), dict):
         cfg.pop('Network', None)
     section = cfg.get('Network') or {}   # shadPS4 reads it before "General"
-    if not _both_on(cfg) or cfg_path in entries:
-        previous = (entries.get(cfg_path) or {}).get('previous') or {k: general.get(k) for k in NETWORK}
+    kept = dict((entries.get(cfg_path) or {}).get('previous') or {})
+    dmem_now = general.get(DMEM_KEY)
+    if xmlpatch.res1440(xml_text):     # Kravickas: 1440p needs Additional DMem 3500 MB or more
+        dmem_want = dmem_now if isinstance(dmem_now, int) and dmem_now >= DMEM_1440 else DMEM_1440
+    else:                               # 1080p: the player's own value comes back
+        dmem_want = kept[DMEM_KEY] if DMEM_KEY in kept else dmem_now
+    if not _both_on(cfg) or cfg_path in entries or dmem_want != dmem_now:
+        previous = kept or {k: general.get(k) for k in NETWORK}
+        if dmem_want != dmem_now and DMEM_KEY not in previous:
+            previous[DMEM_KEY] = dmem_now
+        elif not xmlpatch.res1440(xml_text):
+            previous.pop(DMEM_KEY, None)
+        if dmem_want is None:
+            general.pop(DMEM_KEY, None)
+        else:
+            general[DMEM_KEY] = dmem_want
         previous_network = (entries.get(cfg_path) or {}).get('previous_network') or {
             k: section[k] for k in NETWORK if k in section}
         general.update(NETWORK)
@@ -813,6 +828,8 @@ def install(emu_exe, xml_text, running=None):
         cfg['Network'] = dict(section, **filled, **NETWORK)
         put(cfg_path, json.dumps(cfg, indent=4).encode('utf-8'), previous_keys=previous,
             previous_network=previous_network, added=[k for k in filled if k not in section])
+        if entries[cfg_path].get('previous') is not None:
+            entries[cfg_path]['previous'] = previous     # an earlier install's record learns the DMem key too
     record()
     return m
 

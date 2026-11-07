@@ -5,7 +5,7 @@
 import { html, cls, useState, useEffect, useRef } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, PathText, Checkbox, Info } from '../ui.js';
+import { Card, Button, PathText, Checkbox, Info, Segmented } from '../ui.js';
 
 export const tip = 'Pick shadPS4 and the roster you work on. Everything else follows them.';
 
@@ -85,6 +85,12 @@ function WhereCard({ s }) {
 const BOOST_INFO = [
   { head: 'What it does', items: ["Plays NHL 19 on Kravickas's NHL 19 build of shadPS4, for better performance and graphics.", 'Saves, patch and ShadNet login stay the same.'] },
   { head: 'Your own shadPS4', items: ['It stays where it is, untouched.', 'Disable puts it back, in this app and in QtLauncher.'] },
+  { head: 'Resolution', items: ["1080p is the game's own. 1440p renders at 2560x1440 (Kravickas's patch): sharper, needs a stronger GPU.", '1440p also sets Additional DMem to 3500 MB; 1080p puts your own value back.', 'Works with any shadPS4, with or without Boost. Takes effect at the next start of NHL 19.'] },
+  { head: 'Replays at 60 fps', items: ["Kravickas's patch, on for everyone: replays, celebrations and cutscenes run at 60 instead of 30."] },
+];
+const RESOLUTIONS = [
+  { value: 1080, label: '1080p', title: "The game's own resolution" },
+  { value: 1440, label: '1440p', title: 'Renders at 2560x1440 (Kravickas patch), needs a stronger GPU' },
 ];
 
 function BoostCard({ s }) {
@@ -98,6 +104,10 @@ function BoostCard({ s }) {
         <${Button} small kind=${b.on ? 'ghost' : 'primary'} disabled=${!b.can} title="Kravickas build"
           onClick=${() => call('setup_boost', !b.on)}>${b.on ? 'Disable' : 'Enable'} Boost performance<//>
         <${Button} small kind="ghost" onClick=${() => call('setup_boost_source')}>Source code<//>
+      </div>
+      <div class="su-state su-res">
+        <span class="su-st">Resolution</span>
+        <${Segmented} options=${RESOLUTIONS} value=${b.resolution || 1080} onChange=${(v) => call('setup_resolution', v)}/>
       </div>
     </div>
   <//>`;

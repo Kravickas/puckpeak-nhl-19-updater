@@ -33,6 +33,30 @@
       <Line Type="bytes" Address="0x526E0BA" Value="68747470733A2F2F3139322E3136382E312E31352F00"/>
     </PatchList>
   </Metadata>
+  <!-- By Kravickas (github.com/Kravickas/ps4_cheats, PATCHES/NHL19.xml "60 FPS replays", CUSA11116 v1.60; the same
+       bytes in CUSA11126 v1.60). The video-out flip rate: mov ebx, 3 at 0x28ec8df -> mov ebx, 1 and the cmovl ebx, eax
+       at 0x28ec8ef -> nop, so replays and the other 30 fps sequences flip every vblank. -->
+  <Metadata Name="60 FPS replays (Kravickas)" AppVer="01.60" AppElf="eboot.bin" isEnabled="true">
+    <PatchList>
+      <Line Type="bytes" Address="0x2CEC8DF" Value="BB01000000"/>
+      <Line Type="bytes" Address="0x2CEC8EF" Value="909090"/>
+    </PatchList>
+  </Metadata>
+  <!-- By Kravickas (github.com/Kravickas/ps4_cheats, PATCHES/NHL19.xml "Resolution 2560x1440 (16:9)", CUSA11116 v1.60;
+       the same bytes in CUSA11126 v1.60). The render size immediates at 0x293bd70..0x293bdaa (1600x900 and 1920x1080)
+       -> 2560x1440, and 0x1736ea -> cave 0x4a35077 (text padding) scales a video memory size to match. Off by default
+       (1080p): the Setup tab's Resolution choice turns it on, with Additional DMem 3500 MB (gamesetup.DMEM_1440). -->
+  <Metadata Name="Resolution 2560x1440 (Kravickas)" AppVer="01.60" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x2D3BD70" Value="B8000A0000"/>
+      <Line Type="bytes" Address="0x2D3BD75" Value="BA000A0000"/>
+      <Line Type="bytes" Address="0x2D3BD7A" Value="B9A0050000"/>
+      <Line Type="bytes" Address="0x2D3BD7F" Value="BEA0050000"/>
+      <Line Type="bytes" Address="0x2D3BDAA" Value="41C74558000A0000"/>
+      <Line Type="bytes" Address="0x5736EA" Value="E988198C049090"/>
+      <Line Type="bytes" Address="0x4E35077" Value="483D00000040721348B90000C090000000004839C8740448C1E001498B0E483B4DE8E953E673FB"/>
+    </PatchList>
+  </Metadata>
   <!-- 0x423ad80 appends a 0x38 entry to a team's fixed list (32 slots of 366 inline entries, header begin/end/cap)
        with no capacity check; a full list's next entry zeroes the next team's begin/end and that team's next append
        writes to 0 (0xc0000005 at 0x423ce8c after "Too few players"). Hook 0x423ce71 -> cave 0x56eb000 (text padding):

@@ -14,6 +14,11 @@ loaded eboot only. `build` makes the file from the FEATURES table below; `build(
   bap32       Seattle in Be a Pro: Choose Team keeps the expansion team (399) and a Be a Pro league is built with 32
               teams (NHL and AHL) while the 32-team switch is live; with the overlay league layer's Be a Pro Lua
               (overlay.BAP_PATHS). Goes off with the switch (expansion32_off) (docs/notes/nhl19-32teams-re.md, run c2)
+  replays60   replays, celebrations, cinematics and menus at 60 fps: the video-out flip rate is forced to every vblank
+              (the game picks every 2nd there). By Kravickas, github.com/Kravickas/ps4_cheats PATCHES/NHL19.xml
+              (CUSA11116 v1.60); its sites are byte-identical in CUSA11126 v1.60 (docs/notes/boost-performance.md)
+  res1440     render at 2560x1440 instead of 1920x1080, by Kravickas (same file, "Resolution 2560x1440 (16:9)"). Written
+              off (isEnabled="false"); with_res1440 switches it (the Setup tab's Resolution choice, with Additional DMem)
   ledger_cap  a capacity check on the Franchise per-team list append in 0x423ad80 (a daily per-team ledger, cleared at
               the season reset: 369 days against 366 slots), whose overflow crashes the expansion career offseason at
               0x423ce8c; the cap drops at most 3 days' entries (docs/notes/nhl19-32teams-re.md, R1: runs c1, e1)
@@ -41,14 +46,15 @@ REDIRECTOR = '0x51DCCFF'
 NUCLEUS = ('0x526E089', '0x526E0A2', '0x526E0BA')
 E32_DEFAULT, E32_STOCK = '0x6F7963', 'C6051E2EC50500'
 BAP32_TITLE = 'BAP32: Seattle in Be a Pro'
+RES1440_TITLE = 'Resolution 2560x1440 (Kravickas)'
 
 
 class Feature:
     """One <Metadata> block. `lines` hold (address, hex bytes) for code, or (address, room, template) for a string slot;
     `title` and `comment` are templates over $redirector / $nucleus (the Nucleus host) / $nucleus_url."""
 
-    def __init__(self, title, comment, lines):
-        self.title, self.comment, self.lines = title, comment, lines
+    def __init__(self, title, comment, lines, enabled=True):
+        self.title, self.comment, self.lines, self.enabled = title, comment, lines, enabled
 
 
 FEATURES = {
@@ -66,6 +72,22 @@ FEATURES = {
         """  <!-- QosClient copies its 'ncrt' flag (state+0xe467) into the ProtoSSL ref before the coordinator request
        (mov cl, [rbx+0xe467] at 0x385aa16). mov cl, 1 disables cert validation for the QoS coordinator link only. -->""",
         [('0x3C5AA16', 'B10190909090')]),
+    'replays60': Feature(
+        '60 FPS replays (Kravickas)',
+        """  <!-- By Kravickas (github.com/Kravickas/ps4_cheats, PATCHES/NHL19.xml "60 FPS replays", CUSA11116 v1.60; the same
+       bytes in CUSA11126 v1.60). The video-out flip rate: mov ebx, 3 at 0x28ec8df -> mov ebx, 1 and the cmovl ebx, eax
+       at 0x28ec8ef -> nop, so replays and the other 30 fps sequences flip every vblank. -->""",
+        [('0x2CEC8DF', 'BB01000000'), ('0x2CEC8EF', '909090')]),
+    'res1440': Feature(
+        RES1440_TITLE,
+        """  <!-- By Kravickas (github.com/Kravickas/ps4_cheats, PATCHES/NHL19.xml "Resolution 2560x1440 (16:9)", CUSA11116 v1.60;
+       the same bytes in CUSA11126 v1.60). The render size immediates at 0x293bd70..0x293bdaa (1600x900 and 1920x1080)
+       -> 2560x1440, and 0x1736ea -> cave 0x4a35077 (text padding) scales a video memory size to match. Off by default
+       (1080p): the Setup tab's Resolution choice turns it on, with Additional DMem 3500 MB (gamesetup.DMEM_1440). -->""",
+        [('0x2D3BD70', 'B8000A0000'), ('0x2D3BD75', 'BA000A0000'), ('0x2D3BD7A', 'B9A0050000'),
+         ('0x2D3BD7F', 'BEA0050000'), ('0x2D3BDAA', '41C74558000A0000'), ('0x5736EA', 'E988198C049090'),
+         ('0x4E35077', '483D00000040721348B90000C090000000004839C8740448C1E001498B0E483B4DE8E953E673FB')],
+        enabled=False),
     'nucleus': Feature(
         'Nucleus hosts: $nucleus',
         """  <!-- Nucleus prod base URLs (flat 0x4e6e089 accounts, 0x4e6e0a2 gateway, 0x4e6e0ba signin) -> https://localhost/
@@ -124,7 +146,10 @@ FEATURES = {
                        '0041C78424EC0300002000000031D24C89E7C3')]),
 }
 # bap32 and expansion32 stay last: DEFAULT[:-2] is the patch without the 32-team switch (xmlpatch.expansion32_off)
-DEFAULT = ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'ledger_cap', 'bap32', 'expansion32')
+DEFAULT = ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'ledger_cap', 'bap32', 'expansion32')
+# what earlier versions wrote: repoint takes such a file as its own and writes today's DEFAULT (a player's next Play
+# brings new blocks in without Patch)
+EARLIER = (('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'ledger_cap', 'bap32', 'expansion32'),)
 
 _HOST = re.compile(r'[A-Za-z0-9.-]+\Z')
 _URL = re.compile(r'(https?)://([A-Za-z0-9.-]+(?::\d{1,5})?)/\Z')
@@ -172,7 +197,7 @@ def build(host, nucleus_url=None, features=DEFAULT, newline='\r\n'):
             lines.append(f'      <Line Type="bytes" Address="{addr}" Value="{value}"/>\n')
         out.append(Template(f.comment).safe_substitute(subs) + '\n')
         out.append(f'  <Metadata Name="{Template(f.title).substitute(subs)}" AppVer="{APP_VER}" AppElf="eboot.bin" '
-                   f'isEnabled="true">\n    <PatchList>\n')
+                   f'isEnabled="{"true" if f.enabled else "false"}">\n    <PatchList>\n')
         out.extend(lines)
         out.append('    </PatchList>\n  </Metadata>\n')
     out.append(FOOTER)
@@ -250,6 +275,21 @@ def bap32(text):
     return any(b['enabled'] and b['name'] == BAP32_TITLE for b in parse(text))
 
 
+def res1440(text):
+    """Whether a patch file renders at 2560x1440 (its res1440 block is there and enabled)."""
+    return any(b['enabled'] and b['name'] == RES1440_TITLE for b in parse(text))
+
+
+def with_res1440(text, on):
+    """The patch file with the 1440p block on or off (1080p, the game's own). A file without the block comes back as it
+    is when `on` is False; asking for 1440p there is a PatchError (an earlier version's file: repoint brings it up)."""
+    want = 'true' if on else 'false'
+    out = re.sub(f'(<Metadata Name="{re.escape(RES1440_TITLE)}"[^>]*?isEnabled=")(?:true|false)"', rf'\g<1>{want}"', text)
+    if res1440(out) != bool(on):
+        raise PatchError('the patch file has no resolution block this tool can switch')
+    return out
+
+
 def _switched(text, e32, bap):
     """`text` (a build) with the 32-team switch / Be a Pro block as a patch file had them (patch_ctl.one_click)."""
     if not e32:
@@ -268,11 +308,16 @@ def repoint(text, host, nucleus_url=None):
     own = f"https://{old['redirector']}/"
     nucleus = next((u for u in old['nucleus'] if u != own), None)
     newline = '\r\n' if '\r\n' in text else '\n'
-    e32, bap = expansion32(text), bap32(text)
-    try:
-        same = _switched(build(old['redirector'], nucleus, newline=newline), e32, bap) == text
-    except PatchError:
-        same = False
+    e32, bap, res = expansion32(text), bap32(text), res1440(text)
+    plain = with_res1440(text, False)
+    same = False
+    for features in (DEFAULT,) + EARLIER:
+        try:
+            same = _switched(build(old['redirector'], nucleus, features, newline), e32, bap) == plain
+        except PatchError:
+            same = False
+        if same:
+            break
     if not same:
         raise PatchError('the patch file is not the one this Overtime writes; Patch the game again')
-    return _switched(build(host, nucleus_url, newline=newline), e32, bap)
+    return with_res1440(_switched(build(host, nucleus_url, newline=newline), e32, bap), res)

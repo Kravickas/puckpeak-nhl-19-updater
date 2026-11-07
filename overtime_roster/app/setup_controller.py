@@ -147,7 +147,7 @@ class SetupController(Part):
              'setup_check_updates': 'check_updates', 'setup_check_updates_now': 'check_now',
              'setup_patch': 'setup_patch', 'setup_unpatch': 'setup_unpatch', 'setup_verify': 'setup_verify',
              'setup_play': 'setup_play', 'setup_boost': 'setup_boost',
-             'setup_boost_source': 'setup_boost_source'}
+             'setup_boost_source': 'setup_boost_source', 'setup_resolution': 'setup_resolution'}
     TAB = 'setup'
 
     def __init__(self, ctl):
@@ -172,14 +172,17 @@ class SetupController(Part):
         self.asked = set()      # the core asset switches (patch_ctl.PACK_KEYS) switched on here: their packs download
         self.boost = prefs.get('boost') or {}   # Boost performance: {sha256, emulator, selected}, what comes back when off
         self.boost_part = None  # how far its download is (0..1)
+        self.resolution = 1440 if prefs.get('resolution') == 1440 else 1080   # the eboot patch's res1440 block
 
     # --- helpers -------------------------------------------------------------------------------------------
     def _remember(self):
         self.ctl.remember(setup={'emulator': self.emulator, 'skipped': self.skipped, 'boost': self.boost,
+                                 'resolution': self.resolution,
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
 
     def _xml(self):
-        return xmlpatch.build(self.server['host'], self.server.get('nucleus_url'))
+        return xmlpatch.with_res1440(xmlpatch.build(self.server['host'], self.server.get('nucleus_url')),
+                                     self.resolution == 1440)
 
     def _wait(self):
         """True (and the Help bar says so) while another job runs."""
@@ -801,7 +804,33 @@ class SetupController(Part):
         else:
             text, tone = 'Not available for download yet.', 'caution'
         return {'on': on, 'newer': newer, 'text': text, 'tone': tone, 'progress': part,
-                'can': (on or pub is not None) and not c.busy}
+                'can': (on or pub is not None) and not c.busy, 'resolution': self.resolution}
+
+    def setup_resolution(self, value):
+        """The Resolution choice (Boost performance card): 1080 (the game's own) or 1440 (Kravickas's res1440 block, with
+        Additional DMem 3500 MB). A patched game takes it now, or at its next Play while shadPS4 runs; no Patch."""
+        value = 1440 if int(value or 0) == 1440 else 1080
+        with self.ctl.lock:
+            changed = value != self.resolution
+            self.resolution = value
+            self._remember()
+        if not changed:
+            return {'ok': True}
+        self.ctl.host.log(f'Resolution: {value}p')
+        try:
+            put = patch_ctl.refresh_network(self)
+        except (gamesetup.SetupError, OSError, ValueError) as err:
+            self.ctl.host.log(f'The resolution was not put into the game: {err}')
+            put = None
+        if put in ('written', 'later', 'same'):
+            then = 'NHL 19 uses it from its next start.'
+        elif gamesetup.load_manifest() is None:
+            then = 'Patch the game to use it.'
+        else:
+            then = 'Patch the game again to use it.'
+        self.ctl.say(f'Resolution set to {value}p. {then}'.strip(), 'good')
+        self.ctl.changed('setup')
+        return {'ok': True}
 
     # --- Updated assets: a switch per pack, as in Legacy (v0.70.0: the team art, photos and 3D jerseys too) -----------
     def _extra_off(self, name):

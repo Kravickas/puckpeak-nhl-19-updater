@@ -578,3 +578,36 @@ def test_config_json_copy_with_network_section(world):
     assert gamesetup.network_on(str(world['user']))
     made = json.loads((world['user'] / 'custom_configs' / 'CUSA11126.json').read_text())
     assert made['Network'] == {'connected_to_network': True, 'shad_net_enabled': True, **gamesetup.SERVERS}
+
+
+def test_1440p_sets_additional_dmem_and_1080p_or_remove_puts_the_players_own_back(world):
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    path.write_text(json.dumps({'General': {'extra_dmem_in_mbytes': 512}}))
+    emu, base = str(world['emu']), xmlpatch.build('localhost')
+    hi = xmlpatch.with_res1440(base, True)
+
+    def dmem():
+        return json.loads(path.read_text())['General'].get('extra_dmem_in_mbytes')
+    gamesetup.install(emu, base, running=lambda: False)
+    assert dmem() == 512                                    # 1080p: not touched
+    gamesetup.install(emu, hi, running=lambda: False)
+    assert dmem() == gamesetup.DMEM_1440
+    gamesetup.install(emu, base, running=lambda: False)
+    assert dmem() == 512                                    # back to 1080p: the player's own value
+    gamesetup.install(emu, hi, running=lambda: False)
+    gamesetup.remove(running=lambda: False)
+    assert dmem() == 512
+
+
+def test_1440p_keeps_a_bigger_dmem_and_a_first_install_at_1440p_is_undone(world):
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    path.write_text(json.dumps({'General': {'extra_dmem_in_mbytes': 6000}}))
+    hi = xmlpatch.with_res1440(xmlpatch.build('localhost'), True)
+    gamesetup.install(str(world['emu']), hi, running=lambda: False)
+    assert json.loads(path.read_text())['General']['extra_dmem_in_mbytes'] == 6000
+    path.write_text(json.dumps({'General': {}}))
+    gamesetup.remove(running=lambda: False)
+    gamesetup.install(str(world['emu']), hi, running=lambda: False)
+    assert json.loads(path.read_text())['General']['extra_dmem_in_mbytes'] == gamesetup.DMEM_1440
+    gamesetup.remove(running=lambda: False)
+    assert 'extra_dmem_in_mbytes' not in json.loads(path.read_text())['General']

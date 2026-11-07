@@ -29,9 +29,9 @@ def test_targets_and_blocks():
     assert [b['name'] for b in blocks] == [
         'ProtoHttp: accept EAGAIN while waiting for the status code', 'Redirector host: ot.puckpeak.com',
         'QoS coordinator: skip TLS cert validation', 'Nucleus hosts: ot.puckpeak.com, 91.98.195.150',
-        'R1: cap check on the Franchise per-team list append', 'BAP32: Seattle in Be a Pro',
+        '60 FPS replays (Kravickas)', 'Resolution 2560x1440 (Kravickas)', 'R1: cap check on the Franchise per-team list append', 'BAP32: Seattle in Be a Pro',
         'E32: 32 teams in every mode']
-    assert all(b['enabled'] and b['app_ver'] == '01.60' for b in blocks)
+    assert all(b['enabled'] == (b['name'] != xmlpatch.RES1440_TITLE) and b['app_ver'] == '01.60' for b in blocks)
 
 
 def test_feature_subset_keeps_order():
@@ -309,3 +309,69 @@ def test_repoint_refuses_a_file_this_version_did_not_write():
             xmlpatch.repoint(bad, '192.168.1.15')
     with pytest.raises(xmlpatch.PatchError):
         xmlpatch.repoint(xmlpatch.build('a', features=('eagain',)), 'b')    # names no server
+
+
+# sha256[:16] of the stock bytes the replays60 lines overwrite (flat address = patch address - 0x400000)
+REPLAYS60_STOCK = {0x28ec8df: 'f0488a92c0aef001', 0x28ec8ef: '89a1ed29b83479f4'}
+# res1440's in-place lines; its cave 0x4a35077 must be zero (text padding)
+RES1440_STOCK = {0x293bd70: 'd86c53287702c1c8', 0x293bd75: '81dcac42b93e253a', 0x293bd7a: '399d8cd08536b989',
+                 0x293bd7f: '97223e3ccb756b2d', 0x293bdaa: 'b46c03f95fc84025', 0x1736ea: '9fe9e18db3722a8d'}
+
+
+@pytest.mark.game
+def test_replays60_matches_the_stock_eboot(game_dir):
+    import hashlib
+    import struct
+    path = os.path.join(game_dir, 'eboot.bin-decrypted')
+    if not os.path.exists(path):
+        pytest.skip('no decrypted eboot')
+    with open(path, 'rb') as f:
+        elf = f.read()
+    phoff, phnum = struct.unpack_from('<Q', elf, 0x20)[0], struct.unpack_from('<H', elf, 0x38)[0]
+    text = [h for h in (struct.unpack_from('<IIQQQQQQ', elf, phoff + k * 56) for k in range(phnum))
+            if h[0] == 1 and h[1] & 1][0]
+    _t, _fl, off, va, *_ = text
+    for name, stock in (('replays60', REPLAYS60_STOCK), ('res1440', RES1440_STOCK)):
+        lines = {int(a, 16) - 0x400000: bytes.fromhex(v) for a, v in xmlpatch.FEATURES[name].lines}
+        caves = set(lines) - set(stock)
+        assert caves == ({0x4a35077} if name == 'res1440' else set())
+        for at, sha in stock.items():
+            assert hashlib.sha256(elf[off + at - va:off + at - va + len(lines[at])]).hexdigest()[:16] == sha, hex(at)
+        for at in caves:
+            assert elf[off + at - va:off + at - va + len(lines[at])] == bytes(len(lines[at])), hex(at)
+
+
+def test_replays60_is_on_by_default():
+    block = next(b for b in xmlpatch.parse(xmlpatch.build('localhost')) if b['name'].startswith('60 FPS replays'))
+    assert block['enabled'] and block['lines'] == [('0x2CEC8DF', 'BB01000000'), ('0x2CEC8EF', '909090')]
+
+
+def test_repoint_brings_an_earlier_versions_file_up_to_date():
+    nucleus = 'https://91.98.195.150/'
+    for newline in ('\r\n', '\n'):
+        for make in (lambda t: t, xmlpatch.bap32_off, xmlpatch.expansion32_off):
+            old = make(xmlpatch.build('ot.puckpeak.com', nucleus, xmlpatch.EARLIER[0], newline))
+            assert 'replays' not in old
+            new = xmlpatch.repoint(old, 'ot.puckpeak.com', nucleus)        # same server: Play upgrades the file
+            assert new == make(xmlpatch.build('ot.puckpeak.com', nucleus, newline=newline))
+            assert (xmlpatch.expansion32(new), xmlpatch.bap32(new)) == (xmlpatch.expansion32(old), xmlpatch.bap32(old))
+
+
+def test_res1440_is_written_off_and_switches():
+    text = xmlpatch.build('localhost')
+    assert not xmlpatch.res1440(text)
+    on = xmlpatch.with_res1440(text, True)
+    assert xmlpatch.res1440(on) and xmlpatch.with_res1440(on, False) == text
+    block = next(b for b in xmlpatch.parse(on) if b['name'] == xmlpatch.RES1440_TITLE)
+    assert block['lines'][0] == ('0x2D3BD70', 'B8000A0000') and len(block['lines']) == 7
+    old = xmlpatch.build('localhost', features=xmlpatch.EARLIER[0])
+    assert xmlpatch.with_res1440(old, False) == old
+    with pytest.raises(xmlpatch.PatchError):
+        xmlpatch.with_res1440(old, True)
+
+
+def test_repoint_keeps_the_resolution():
+    on = xmlpatch.with_res1440(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/'), True)
+    moved = xmlpatch.repoint(on, '192.168.1.15')
+    assert xmlpatch.res1440(moved) and xmlpatch.targets(moved)['redirector'] == '192.168.1.15'
+    assert xmlpatch.repoint(moved, 'ot.puckpeak.com', 'https://91.98.195.150/') == on

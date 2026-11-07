@@ -2,6 +2,20 @@
 
 What changed in each version, for players.
 
+## 0.70.3 (2026-11-07)
+
+### Added
+
+- **60 fps replays, menus and cutscenes.** NHL 19 dropped to 30 fps on its own for menus, goal replays, celebrations and
+  close-up cutscenes (live play was already 60). Kravickas's "60 FPS replays" patch is now part of the Overtime patch,
+  on for everyone.
+- **Resolution: 1080p or 1440p** (Setup, Boost performance card). 1080p is the game's own; 1440p renders at 2560x1440
+  (Kravickas's resolution patch), sharper, needs a stronger GPU, and sets shadPS4's Additional DMem to 3500 MB. Back to
+  1080p, or Unpatch, puts your own value back. Works with any shadPS4 build.
+- **No re-patching:** update the app and press Play; the game picks up both on its next start.
+
+Both patches are Kravickas's work (github.com/Kravickas/ps4_cheats), shipped with his OK.
+
 ## 0.70.2 (2026-11-07)
 
 ### Added
