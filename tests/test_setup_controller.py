@@ -151,10 +151,10 @@ def test_find_game_takes_the_games_eboot(sc, tmp_path, monkeypatch):
     """Find game (owner 2026-11-07): NHL 19's eboot.bin sets the game folder and the shadPS4 the player runs."""
     game = sc.world['game']                         # a game read_game accepts (a broken one is not kept)
     sc.ctl.game_dir = ''
-    monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2: [str(sc.world['emu'])])
+    monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2, near=(): [str(sc.world['emu'])])
     assert sc.setup_set_emulator(str(game / 'eboot.bin')) == {'ok': True}
     assert sc.ctl.game_dir == str(game) and sc.ctl.prefs['setup']['emulator'] == str(sc.world['emu'])
-    monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2: [])
+    monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2, near=(): [])
     out = sc.setup_set_emulator(str(game))          # the folder works too; no shadPS4 found: says what to pick
     assert 'shadPS4QtLauncher.exe' in out['error'] and sc.ctl.game_dir == str(game)
 
@@ -946,3 +946,97 @@ def test_clubart_roster_order(monkeypatch, tmp_path):
     assert pick('DB', 'embedded') == ('DB', 'shipped', None)
     ctl.save_dir = None
     assert pick(None, None) == (None, None, None)
+
+
+# --- Folders list: found, or set by hand (owner 2026-11-07: "either find the shadps4 paths or pick a custom path") ---
+def _portable(tmp_path):
+    """A portable shadPS4 elsewhere, its data in V/ShadPS4/user (a tester's layout)."""
+    data = tmp_path / 'V' / 'ShadPS4' / 'user'
+    (data / 'home' / '1000' / 'savedata' / 'CUSA11126').mkdir(parents=True)
+    (data / 'config.json').write_text(json.dumps({'General': {'install_dirs': []}}), encoding='utf-8')
+    return data
+
+
+def test_folders_list_shows_what_was_found(sc):
+    sc.setup_refresh()
+    rows = {r['key']: r for r in sc._folders()}
+    assert list(rows) == ['emulator', 'game', 'data', 'saves']
+    assert rows['emulator']['path'] == str(sc.world['emu']) and not rows['emulator']['custom']
+    assert rows['game']['ok'] and rows['data']['path'] == str(sc.world['user']) and rows['data']['ok']
+
+
+def test_data_folder_set_by_hand_is_used_and_kept(sc, tmp_path):
+    data = _portable(tmp_path)
+    assert 'error' in sc.folder_set('data', str(tmp_path))                  # no config.json there
+    assert sc.folder_set('data', str(data)) == {'ok': True}
+    assert gamesetup.emu_user_dir(str(sc.world['emu'])) == str(data)        # patch, config, log all go there
+    assert sc.ctl.prefs['setup']['custom'] == {'data': str(data)}
+    rows = {r['key']: r for r in sc._folders()}
+    assert rows['data']['path'] == str(data) and rows['data']['custom']
+    again = SC.SetupController(sc.ctl)                                      # the next start keeps it
+    assert again.custom == {'data': str(data)} and gamesetup.custom_data() == str(data)
+    sc.folder_auto('data')
+    assert gamesetup.emu_user_dir(str(sc.world['emu'])) == str(sc.world['user']) and 'data' not in sc.custom
+
+
+def test_boost_exe_keeps_appdata_with_a_custom_data_folder(sc, tmp_path):
+    from overtime_roster.app import boost
+    sc.folder_set('data', str(_portable(tmp_path)))
+    assert gamesetup.emu_user_dir(boost.exe_path()) != gamesetup.custom_data()
+
+
+def test_game_set_by_hand_is_not_replaced_by_a_look(sc, tmp_path):
+    other = tmp_path / 'Other'
+    other.mkdir()
+    assert 'error' in sc.folder_set('game', str(other))                     # no NHL 19 there
+    broken = tmp_path / 'Mine' / 'NHL 19'
+    (broken / 'sce_sys').mkdir(parents=True)
+    from test_gamesetup import _sfo
+    (broken / 'sce_sys' / 'param.sfo').write_bytes(_sfo(app_ver='01.00'))  # NHL 19, but not 1.60
+    assert sc.folder_set('game', str(broken)) == {'ok': True}
+    sc.setup_refresh()                                                      # a good NHL 19 is found: not taken
+    assert sc.ctl.game_dir == str(broken)
+    sc.folder_auto('game')
+    assert sc.ctl.game_dir == str(sc.world['game'])
+
+
+def test_saves_set_by_hand_and_auto(sc, tmp_path, monkeypatch):
+    monkeypatch.delenv('OVERTIME_SAVE_DIR', raising=False)
+    sc.ctl.save_dir = ''
+    sc.ctl.set_save_dir = lambda p: setattr(sc.ctl, 'save_dir', p)
+    savedata = tmp_path / 'S' / 'savedata'
+    (savedata / 'CUSA11126').mkdir(parents=True)
+    assert sc.folder_set('saves', str(savedata)) == {'ok': True}            # the savedata folder: its CUSA11126
+    assert sc.ctl.save_dir == str(savedata / 'CUSA11126') and sc.custom['saves']
+    found = gamesetup.save_dir(str(sc.world['user']))
+    os.makedirs(found)
+    sc.setup_refresh()
+    assert sc.ctl.save_dir == str(savedata / 'CUSA11126')                   # kept
+    sc.folder_auto('saves')
+    assert sc.ctl.save_dir == found
+
+
+def test_shadps4_picked_by_hand_is_marked_and_auto_finds_it_again(sc):
+    sc.setup_set_emulator(str(sc.world['emu']))
+    assert sc.custom.get('emulator')
+    sc.folder_auto('emulator')
+    assert not sc.custom.get('emulator') and sc.known_emulator() == str(sc.world['emu'])
+
+
+def test_custom_data_folder_refused_while_boost_is_on(sc, tmp_path, monkeypatch):
+    """The Boost exe reads %APPDATA%: another data folder would be shown as "yours" and not used."""
+    from overtime_roster.app import boost
+    exe = boost.exe_path()
+    with open(exe, 'wb') as f:
+        f.write(b'MZ')
+    sc.emulator = exe
+    out = sc.folder_set('data', str(_portable(tmp_path)))
+    assert 'Disable Boost performance' in out['error'] and 'data' not in sc.custom
+
+
+def test_saves_pick_of_shadps4s_home_folder_finds_the_games_saves(sc, tmp_path):
+    sc.ctl.save_dir = ''
+    sc.ctl.set_save_dir = lambda p: setattr(sc.ctl, 'save_dir', p)
+    data = _portable(tmp_path)
+    sc.folder_set('saves', str(data / 'home'))                              # Paths tab, Home Folder Location
+    assert sc.ctl.save_dir == str(data / 'home' / '1000' / 'savedata' / 'CUSA11126')

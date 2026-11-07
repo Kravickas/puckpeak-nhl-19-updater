@@ -89,8 +89,30 @@ def _refuse_while_running(running=None):
 
 # ---- finding things ---------------------------------------------------------------------------------------------
 
+_CUSTOM = {'data': ''}      # the data folder the player set in Setup's Folders list ('' = found)
+
+
+def set_custom_data(path):
+    """The shadPS4 data folder the player set (Setup, Folders, shadPS4 data); '' goes back to finding it."""
+    _CUSTOM['data'] = os.path.normpath(path) if path else ''
+
+
+def custom_data():
+    return _CUSTOM['data']
+
+
+def is_data_dir(path):
+    """A shadPS4 data folder: it holds config.json (and is where shadPS4 keeps patches, custom_configs, home, log)."""
+    return bool(path) and os.path.isfile(os.path.join(path, 'config.json'))
+
+
 def emu_user_dir(emu_exe):
-    """The emulator's data folder: `user\\` next to it (portable; we start it from its own folder), else %APPDATA%."""
+    """The emulator's data folder: the one the player set (for their own shadPS4; the Boost exe in the app's folder
+    always uses %APPDATA%), else `user\\` next to it (portable; we start it from its own folder), else %APPDATA%."""
+    custom = _CUSTOM['data']
+    if custom and not (emu_exe and os.path.normcase(os.path.abspath(emu_exe)).startswith(
+            os.path.normcase(os.path.abspath(paths.app_home())) + os.sep)):
+        return custom
     portable = os.path.join(os.path.dirname(os.path.abspath(emu_exe)), 'user')
     if os.path.isdir(portable):
         return portable
@@ -243,13 +265,45 @@ def resolve_emulator(path):
     return next(iter(find_emulators([path])), '')
 
 
-def find_emulators(roots=None, depth=2):
+def _update_only(base):
+    """True when the game's archives (base and update folder together) are all `patch_*.big`: the update without
+    the base game. The art and the database then have nowhere to go (a tester's "art layer: ... its archive is unknown")."""
+    names = []
+    for root in gamefiles.roots(base):
+        try:
+            names += [n.lower() for n in os.listdir(os.path.join(root, 'databigs')) if n.lower().endswith('.big')] \
+                if root else []
+        except OSError:
+            continue
+    return bool(names) and all(n.startswith('patch_') for n in names)
+
+
+def around(path, up=1):
+    """`path` (a folder, or a file's folder) and up to `up` folders above it: where to look for shadPS4 or NHL 19 next
+    to what the player pointed at (a tester, 2026-11-07: "search from the folder i point to, i have nothing in appdata")."""
+    if not path:
+        return []
+    folder = os.path.abspath(path if os.path.isdir(path) else os.path.dirname(path))
+    out = [folder]
+    for _ in range(up):
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        out.append(parent)
+        folder = parent
+    return out
+
+
+def find_emulators(roots=None, depth=2, near=()):
     """shadPS4 executables (not the Qt launcher) under `roots`, newest first. The default roots are the folders
     the emulator's own config lists for games (and their parents), the user's Desktop and Downloads, with QtLauncher's
-    versions first: that is the shadPS4 the player runs."""
-    first = []
+    versions first: that is the shadPS4 the player runs. `near` (folders around what the player pointed at) comes
+    next, before the rest (with nothing in %APPDATA%, the shadPS4 beside the game picked is the one)."""
+    first = launcher_emulators() if roots is None else []
+    if near:
+        known = {os.path.normcase(p) for p in first}
+        first += [p for p in find_emulators(list(near), depth) if os.path.normcase(p) not in known]
     if roots is None:
-        first = launcher_emulators()
         roots = []
         for d in install_dirs(emu_user_dir('')):
             roots += [d, os.path.dirname(d.rstrip('\\/'))]
@@ -313,6 +367,9 @@ def read_game(game_dir):
         info['problem'] = f"NHL 19 version {info['app_ver']}; Overtime needs update {APP_VER}"
     elif not os.path.isfile(os.path.join(game_dir, 'eboot.bin')):
         info['problem'] = 'eboot.bin is missing'
+    elif _update_only(base):
+        info['problem'] = (f"only NHL 19's update files are in {base}: the base game's archives (databigs\\inxp_10.big "
+                           "and others) are missing. Pick the folder with the base game, or copy the update into it")
     else:
         info['ok'] = True
     return info
@@ -517,8 +574,15 @@ def shadnet_why(log):
 
 
 def save_dir(user_dir, user_id=1000):
-    """The game's save folder in shadPS4's data folder (paths.SAVE_SUBDIR's place for this emulator)."""
-    return os.path.join(user_dir, 'home', str(user_id), 'savedata', active_title())
+    """The game's save folder: in shadPS4's home folder, `home\\` in its data folder unless its settings move it
+    (Paths tab, "Home Folder Location": config.json General.home_dir; a tester keeps it on another drive)."""
+    try:
+        with open(os.path.join(user_dir, 'config.json'), encoding='utf-8-sig') as f:
+            home = ((json.load(f).get('General') or {}).get('home_dir') or '').strip()
+    except (OSError, ValueError, AttributeError):
+        home = ''
+    return os.path.join(os.path.normpath(home) if home else os.path.join(user_dir, 'home'), str(user_id), 'savedata',
+                        active_title())
 
 
 # ---- which shadPS4 build (its exe carries the version block the log prints at start) -------------------------

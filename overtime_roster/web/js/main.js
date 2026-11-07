@@ -1,6 +1,7 @@
 // The window: header, [L1] nine tabs [R1], the stage, the Help bar. Legacy's frame; each tab is its own module
 // (js/tabs/<id>.js, loaded at start, drawn the first time it shows), so one tab's error never stops the others.
 import { html, useState, useEffect, useRef, cls } from './lib.js';
+import { useLobbyChimes } from './chime.js';
 import { useSlice, useMeta, onEvent } from './store.js';
 import { connect, call } from './bridge.js';
 import { Backdrop, Header, TabBar, HelpBar, Details, Question } from './shell.js';
@@ -77,6 +78,7 @@ function App() {
   const save = useSlice('save');
   const question = useSlice('question');
   const update = useSlice('update');
+  useLobbyChimes(useSlice('multiplayer'));
   const short = useShort();
   const asked = OLD_NAMES[params.get('tab')] || params.get('tab');
   const [tab, setTab] = useState(IDS.includes(asked) ? asked : null);

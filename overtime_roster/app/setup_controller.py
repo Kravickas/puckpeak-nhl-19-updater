@@ -67,6 +67,8 @@ def patch_cache():
 
 # Find game's picker: the launcher, the emulator or the game itself
 FIND_KINDS = 'shadPS4 or NHL 19 (*.exe;eboot.bin)'
+# Setup's Folders list, in its order: key -> label
+FOLDERS = {'emulator': 'shadPS4', 'game': 'NHL 19', 'data': 'shadPS4 data', 'saves': 'Saves'}
 
 
 def _game_of(path):
@@ -147,7 +149,8 @@ class SetupController(Part):
              'setup_check_updates': 'check_updates', 'setup_check_updates_now': 'check_now',
              'setup_patch': 'setup_patch', 'setup_unpatch': 'setup_unpatch', 'setup_verify': 'setup_verify',
              'setup_play': 'setup_play', 'setup_boost': 'setup_boost',
-             'setup_boost_source': 'setup_boost_source', 'setup_resolution': 'setup_resolution'}
+             'setup_boost_source': 'setup_boost_source', 'setup_resolution': 'setup_resolution',
+             'setup_folder_pick': 'folder_pick', 'setup_folder_set': 'folder_set', 'setup_folder_auto': 'folder_auto'}
     TAB = 'setup'
 
     def __init__(self, ctl):
@@ -173,11 +176,15 @@ class SetupController(Part):
         self.boost = prefs.get('boost') or {}   # Boost performance: {sha256, emulator, selected}, what comes back when off
         self.boost_part = None  # how far its download is (0..1)
         self.resolution = 1440 if prefs.get('resolution') == 1440 else 1080   # the eboot patch's res1440 block
+        # Folders list: what the player set by hand ({'emulator': bool, 'game': bool, 'saves': bool, 'data': path}); a
+        # folder set here is never replaced by what a look finds (a tester's portable shadPS4, 2026-11-07)
+        self.custom = {k: v for k, v in (prefs.get('custom') or {}).items() if k in FOLDERS and v}
+        gamesetup.set_custom_data(self.custom.get('data') or '')
 
     # --- helpers -------------------------------------------------------------------------------------------
     def _remember(self):
         self.ctl.remember(setup={'emulator': self.emulator, 'skipped': self.skipped, 'boost': self.boost,
-                                 'resolution': self.resolution,
+                                 'resolution': self.resolution, 'custom': dict(self.custom),
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
 
     def _xml(self):
@@ -229,16 +236,18 @@ class SetupController(Part):
         return None
 
     # --- the look ------------------------------------------------------------------------------------------
-    def _scan(self, announce=False, picked=False):
+    def _scan(self, announce=False, picked=False, auto=None):
         """Look at everything again (a job: the firewall check takes a second or two, the server a few). announce:
         the Help bar walks through the steps and ends with the first thing still wrong (Check again, a pick);
-        picked: shadPS4 was just picked (the saves folder follows it)."""
+        picked: shadPS4 was just picked (the saves folder follows it); auto: 'game' / 'saves' was put back to Auto
+        in the Folders list (it takes what this look finds)."""
         ctl = self.ctl
         with ctl.lock:
             self._looks += 1
             look = self._looks
             self.checking = True
             emulator, host, game_dir = self.emulator, self.server['host'], ctl.game_dir
+            custom_game = bool(self.custom.get('game'))
             announce = announce and not ctl.busy
 
         def step(n):
@@ -257,15 +266,17 @@ class SetupController(Part):
             worker = threading.Thread(target=look_packs, daemon=True, name='packs-look')
             worker.start()
             step(0)
-            emus = gamesetup.find_emulators()
+            emus = gamesetup.find_emulators(near=gamesetup.around(game_dir, 2) if game_dir else ())
             emu = emulator if emulator and os.path.isfile(emulator) else (emus[0] if emus else '')
             user = gamesetup.emu_user_dir(emu) if emu else ''
             build = gamesetup.emulator_build(emu) if emu else None
             step(1)
-            games = gamesetup.find_games(user, extra=[os.path.dirname(game_dir)]) if user else []
+            # NHL 19 beside the folder set and beside shadPS4 too, not only in the folders shadPS4's config lists
+            extra = ([os.path.dirname(game_dir)] if game_dir else []) + (gamesetup.around(emu) if emu else [])
+            games = gamesetup.find_games(user, extra=extra) if user else []
             game = gamesetup.read_game(game_dir) if game_dir else None
             follow = None
-            if not (game and game['ok']) and 'OVERTIME_GAME_DIR' not in os.environ:
+            if not (game and game['ok']) and 'OVERTIME_GAME_DIR' not in os.environ and not custom_game:
                 ok = [g for g in games if g['ok']]
                 if ok:
                     follow, game = ok[0]['path'], ok[0]
@@ -306,7 +317,7 @@ class SetupController(Part):
                 if not self.known_emulator() and found['emulator']:
                     self.emulator = found['emulator']   # found: remembered
                     self._remember()
-            self._follow(found, picked)
+            self._follow(found, picked, auto)
             if announce:
                 text, tone = self._outcome()
                 ctl.say(text, tone, 1)
@@ -321,20 +332,27 @@ class SetupController(Part):
         ctl.changed('setup')
         jobs.run(work, done, failed)
 
-    def _follow(self, found, picked):
+    def _follow(self, found, picked, auto=None):
         """The game and saves folders follow shadPS4: NHL 19 found in its game folders when the folder set does not
         hold it; its saves folder when the one set is not there, or shadPS4 was just picked and no roster is open.
-        OVERTIME_GAME_DIR and OVERTIME_SAVE_DIR (tests, the owner's runs) are never overruled."""
+        A folder the player set in the Folders list is never overruled, nor OVERTIME_GAME_DIR and OVERTIME_SAVE_DIR
+        (tests, the owner's runs). `auto` ('game' / 'saves', just put back to Auto) takes what was found."""
         c = self.ctl
-        if found.get('follow_game') and callable(getattr(c, 'set_game_dir', None)):
-            c.host.log(f"NHL 19 found in {found['follow_game']}: the game folder follows shadPS4.")
-            c.set_game_dir(found['follow_game'])
+        follow = found.get('follow_game')
+        if auto == 'game' and not follow and 'OVERTIME_GAME_DIR' not in os.environ:
+            ok = [g['path'] for g in found.get('games') or [] if g.get('ok')]
+            follow = ok[0] if ok and os.path.normcase(ok[0]) != os.path.normcase(c.game_dir or '') else None
+        if follow and not self.custom.get('game') and callable(getattr(c, 'set_game_dir', None)):
+            c.host.log(f"NHL 19 found in {follow}: the game folder follows shadPS4.")
+            c.set_game_dir(follow)
         saves, now = found.get('saves') or '', getattr(c, 'save_dir', None)
-        if not saves or now is None or 'OVERTIME_SAVE_DIR' in os.environ or not os.path.isdir(saves):
+        if not saves or now is None or 'OVERTIME_SAVE_DIR' in os.environ or self.custom.get('saves'):
+            return
+        if not os.path.isdir(saves) and auto != 'saves':
             return
         if os.path.normcase(os.path.normpath(saves)) == os.path.normcase(os.path.normpath(now or '.')):
             return
-        if not os.path.isdir(now or '') or (picked and getattr(c, 'session', None) is None):
+        if auto == 'saves' or not os.path.isdir(now or '') or (picked and getattr(c, 'session', None) is None):
             if callable(getattr(c, 'set_save_dir', None)):
                 c.host.log(f'Saves folder: {saves} (shadPS4\'s).')
                 c.set_save_dir(saves)
@@ -377,11 +395,12 @@ class SetupController(Part):
     def setup_set_emulator(self, path):
         picked = (path or '').strip().strip('"')
         game = _game_of(picked)
+        by_hand = bool(picked) and not game      # shadPS4 itself picked (not found from the game)
         if game:
             # NHL 19 itself: the game folder is that one, and shadPS4 is the one the player runs (QtLauncher's
             # selected version, else the newest found where the emulator keeps its games)
             self.ctl.set_game_dir(game)
-            found = gamesetup.find_emulators()
+            found = gamesetup.find_emulators(near=gamesetup.around(game, 2))
             if not found:
                 text = ('Found NHL 19. Now point Find game at shadPS4QtLauncher.exe or shadPS4.exe, so the program '
                         'knows which emulator starts it.')
@@ -398,6 +417,8 @@ class SetupController(Part):
             return {'error': text}
         with self.ctl.lock:
             self.emulator = path
+            if by_hand:
+                self.custom['emulator'] = True
             self._remember()
         if path:
             self.ctl.host.log(f'shadPS4: {path}')
@@ -582,6 +603,110 @@ class SetupController(Part):
         if not path:
             return {'cancelled': True}
         return self.setup_set_emulator(path)
+
+    # --- Folders: each one found, or set by hand (Change...), and back to found (Auto) ---------------------------------
+    def _folder_now(self, key):
+        f = self.found or {}
+        emu = self.known_emulator()
+        data = (gamesetup.emu_user_dir(emu) if emu else gamesetup.custom_data()) or f.get('user_dir') or ''
+        return {'emulator': emu, 'game': self.ctl.game_dir or '', 'data': data,
+                'saves': getattr(self.ctl, 'save_dir', '') or ''}[key]
+
+    def _boosted(self):
+        emu = self.known_emulator()
+        return bool(emu) and boost.same(emu, boost.exe_path())
+
+    def folder_pick(self, key):
+        """Change...: Windows' picker (a file for shadPS4, a folder for the rest), then folder_set. {type: true} in
+        browser mode (the page asks for the path)."""
+        if key not in FOLDERS:
+            return {'error': f'no folder {key}'}
+        if key == 'emulator':
+            return self.pick_emulator()
+        if self._wait():
+            return None
+        pick = getattr(self.ctl.host, 'pick', None)
+        now = self._folder_now(key)
+        path = pick(True, now if os.path.isdir(now) else os.path.dirname(now)) if pick else None
+        if path is None:
+            return {'type': True}
+        if not path:
+            return {'cancelled': True}
+        return self.folder_set(key, path)
+
+    def _check_folder(self, key, path):
+        """(folder to use, None) or (None, why not) for a folder the player picked."""
+        if key == 'game':
+            game = _game_of(path) or path
+            info = gamesetup.read_game(game) if os.path.isdir(game) else None
+            if not info or info['title_id'] not in gamesetup.TITLE_IDS:
+                return None, (f'No NHL 19 in {path}. Pick the game folder: the one holding eboot.bin and sce_sys.')
+            return os.path.abspath(game), None
+        if key == 'data':
+            if not gamesetup.is_data_dir(path):
+                return None, (f'No config.json in {path}. Pick shadPS4\'s data folder: "user" beside shadPS4.exe, or '
+                              '%APPDATA%\\shadPS4.')
+            if self._boosted() and os.path.normcase(os.path.abspath(path)) != os.path.normcase(
+                    gamesetup.emu_user_dir(boost.exe_path())):
+                return None, ('Boost performance is on, and it uses %APPDATA%\\shadPS4. Disable Boost performance '
+                              'first to use another data folder.')
+            return os.path.abspath(path), None
+        if not os.path.isdir(path):           # saves: the game's save folder, or a folder above it
+            return None, f'{path} is not a folder.'
+        title = gamesetup.active_title()      # shadPS4's Home folder, home, savedata or the game's folder itself
+        for inner in (os.path.join(path, 'home', '1000', 'savedata', title), os.path.join(path, '1000', 'savedata', title),
+                      os.path.join(path, title)):
+            if os.path.isdir(inner):
+                return os.path.abspath(inner), None
+        return os.path.abspath(path), None
+
+    def folder_set(self, key, path):
+        """A folder of the Folders list set by hand: checked, remembered, never replaced by a look until Auto."""
+        path = (path or '').strip().strip('"')
+        if key == 'emulator':
+            return self.setup_set_emulator(path)
+        if key not in FOLDERS or not path:
+            return {'error': 'Pick a folder.'}
+        use, why = self._check_folder(key, path)
+        if why:
+            self.ctl.say(why, 'bad')
+            return {'error': why}
+        with self.ctl.lock:
+            self.custom[key] = use if key == 'data' else True
+            if key == 'data':
+                gamesetup.set_custom_data(use)
+            self._remember()
+        self.ctl.host.log(f'{FOLDERS[key]} folder set by hand: {use}')
+        if key == 'game':
+            self.ctl.set_game_dir(use)
+        elif key == 'saves':
+            self.ctl.set_save_dir(use)
+        self._scan(announce=True, picked=key == 'data')
+        return {'ok': True}
+
+    def folder_auto(self, key):
+        """Auto: the folder is found again (shadPS4: the one QtLauncher selects, else the newest found)."""
+        if key not in FOLDERS:
+            return {'error': f'no folder {key}'}
+        with self.ctl.lock:
+            self.custom.pop(key, None)
+            if key == 'data':
+                gamesetup.set_custom_data('')
+            if key == 'emulator':
+                self.emulator = ''
+            self._remember()
+        self._scan(announce=True, picked=key in ('emulator', 'data'), auto=key if key in ('game', 'saves') else None)
+        return {'ok': True}
+
+    def _folders(self):
+        """The Folders list: each row's path, whether the player set it, and whether it is all right."""
+        rows = []
+        for key, label in FOLDERS.items():
+            path = self._folder_now(key)
+            ok = {'emulator': bool(path), 'game': bool(((self.found or {}).get('game') or {}).get('ok')),
+                  'data': gamesetup.is_data_dir(path), 'saves': os.path.isdir(path)}[key]
+            rows.append({'key': key, 'label': label, 'path': path, 'custom': bool(self.custom.get(key)), 'ok': ok})
+        return rows
 
     # --- Downloads: the picture packs --------------------------------------------------------------------------------
     def _pack_row(self, name):
@@ -1439,6 +1564,7 @@ class SetupController(Part):
                 'emulator': {'path': emulator, 'build': (f"{build['branch']} · {build['version']}" if build else
                                                          'shadPS4' if emulator else '')},
                 'checks': checks,
+                'folders': self._folders(),
                 'state': self._state(first, checks, f.get('firewall'), rosters.open_roster() is not None),
                 'checking': bool(self.checking),
                 'running': running,

@@ -5,7 +5,7 @@
 import { html, cls, useState, useEffect, useRef } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, PathText, Checkbox, Info, Segmented } from '../ui.js';
+import { Card, Button, PathText, Checkbox, Info, Segmented, Tag } from '../ui.js';
 
 export const tip = 'Pick shadPS4 and the roster you work on. Everything else follows them.';
 
@@ -36,11 +36,14 @@ function LinkRow() {
   </div>`;
 }
 
-// --- 1 Where is shadPS4? ---------------------------------------------------------------------------------------------------
+// --- 1 Where is NHL 19? ---------------------------------------------------------------------------------------------------
 const WHERE_INFO = [
   { head: 'What to pick', items: ['Press Find game and pick shadPS4QtLauncher.exe, shadPS4.exe, or NHL 19\'s eboot.bin. Any shadPS4 will do.',
     'With QtLauncher, the version selected in it is used.',
     'The program finds the rest from there: NHL 19, the emulator and your roster saves.'] },
+  { head: 'Folders', items: ['Shows where shadPS4, NHL 19, shadPS4\'s data and your saves are.',
+    'Change... picks one yourself (a portable shadPS4, another drive). The program never changes a folder you set.',
+    'Auto lets the program find it again.'] },
   { head: 'The checks', items: ['shadPS4: found, and its version.', 'NHL 19: the game (CUSA11126 or CUSA11116) with update 1.60.',
     'ShadNet: you are signed in inside shadPS4.', 'Network: the Overtime server answers.',
     'Hold the mouse on a check to read all of it.'] },
@@ -55,11 +58,45 @@ async function findGame(path) {
   if (typed && typed.trim()) call('setup_set_emulator', typed.trim());
 }
 
+// Folders: each one found or set by hand (Change...), Auto finds it again. In a browser Python answers {type: true}
+// and the path is typed
+const FOLDER_ASK = {
+  game: "The full path of NHL 19's folder (the one holding eboot.bin):",
+  data: "The full path of shadPS4's data folder (\"user\" beside shadPS4.exe, or %APPDATA%\\shadPS4):",
+  saves: 'The full path of the saves folder (...\\home\\1000\\savedata\\CUSA11126):',
+};
+async function changeFolder(f) {
+  if (f.key === 'emulator') return findGame(f.path);
+  const reply = await call('setup_folder_pick', f.key);
+  if (!reply || !reply.type) return;
+  const typed = window.prompt(FOLDER_ASK[f.key], f.path || '');
+  if (typed && typed.trim()) call('setup_folder_set', f.key, typed.trim());
+}
+
+function Folders({ folders, busy }) {
+  if (!folders || !folders.length) return null;
+  const mine = folders.filter((f) => f.custom).length;
+  const wrong = folders.some((f) => !f.ok);
+  return html`<details class="su-folders" open=${wrong || mine > 0}>
+    <summary>Folders <span class="su-fsum">${mine ? `${mine} set by you` : 'all found'}</span></summary>
+    ${folders.map((f) => html`<div key=${f.key} class=${cls('su-folder', !f.ok && 'bad')}>
+      <span class="su-fl">${f.label}</span>
+      <${PathText} path=${f.path} unset="Not found"/>
+      <${Tag} tone=${f.custom ? 'info' : (f.ok ? '' : 'bad')}
+        title=${f.custom ? 'You set this one. Checks never change it.' : 'Found by the program'}>${f.custom ? 'yours' : (f.ok ? 'found' : 'not found')}<//>
+      <${Button} small disabled=${busy} onClick=${() => changeFolder(f)}
+        title=${f.key === 'emulator' ? 'Pick shadPS4QtLauncher.exe or shadPS4.exe' : 'Pick this folder yourself'}>Change...<//>
+      ${f.custom ? html`<${Button} small disabled=${busy} onClick=${() => call('setup_folder_auto', f.key)}
+        title="Let the program find it again">Auto<//>` : html`<span class="su-fauto"></span>`}
+    </div>`)}
+  </details>`;
+}
+
 function WhereCard({ s }) {
   const st = s.state;
   const busy = s.busy;
-  return html`<${Card} n="1" title="Where is shadPS4?" className="su-where"
-      aside=${html`<${Info} title="Where is shadPS4?" sections=${WHERE_INFO}/>`}>
+  return html`<${Card} n="1" title="Where is NHL 19?" className="su-where"
+      aside=${html`<${Info} title="Where is NHL 19?" sections=${WHERE_INFO}/>`}>
     <div class="card-body">
       <div class="row">
         <${PathText} path=${s.emulator.path} unset="Not picked yet"/>
@@ -72,6 +109,7 @@ function WhereCard({ s }) {
           <span class="su-ct"><span class="su-cl">${c.label}</span><span class="su-cv">${c.value}</span></span>
         </div>`)}
       </div>
+      <${Folders} folders=${s.folders} busy=${busy}/>
       <div class=${cls('su-state', st.tone)}>
         <span class="su-st">${st.text}</span>
         ${st.get && html`<${Button} small onClick=${() => call('setup_emulator_page')}>Get shadPS4<//>`}

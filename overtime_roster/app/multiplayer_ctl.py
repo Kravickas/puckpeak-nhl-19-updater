@@ -808,7 +808,7 @@ class MultiplayerCtl(Part):
             return
         except LC.LobbyRefused as err:
             if err.status in (403, 404):
-                self._left('The lobby is gone (it was idle for too long, or closed). Make a new one.')
+                self._left('The lobby closed (nobody joined it for 30 minutes, or it was idle too long). Make a new one.')
             else:
                 self._set_error(err.text)
             return

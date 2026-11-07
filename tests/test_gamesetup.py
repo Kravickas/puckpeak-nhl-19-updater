@@ -68,6 +68,76 @@ def test_wrong_game_refused(tmp_path, kw, problem):
     assert not info['ok'] and problem in info['problem']
 
 
+def test_update_without_the_base_game_is_refused(tmp_path):
+    """A tester's "art layer: ...hutcardheritage/t1.gnf: neither the texture nor its folder is in the game": the folder
+    held only the update's patch_*.big, so the base game's inxp_10.big was never seen. Said at the scan, not mid-patch."""
+    g = _game(tmp_path)
+    (g / 'databigs' / 'game_60.big').unlink()
+    (g / 'databigs' / 'patch_inxp_56.big').write_bytes(b'x')
+    info = gamesetup.read_game(str(g))
+    assert not info['ok'] and 'update files' in info['problem'] and 'inxp_10.big' in info['problem']
+
+
+def test_base_with_its_update_beside_it_is_fine(tmp_path):
+    base = _game(tmp_path, 'CUSA11126', app_ver='01.00')
+    upd = _game(tmp_path, 'CUSA11126-UPDATE')
+    (upd / 'databigs' / 'game_60.big').unlink()
+    (upd / 'databigs' / 'patch_inxp_56.big').write_bytes(b'x')
+    assert gamesetup.read_game(str(base))['ok'] and gamesetup.read_game(str(upd))['ok']
+
+
+def test_shadps4_is_found_beside_the_game_picked(tmp_path, monkeypatch):
+    """Nothing in %APPDATA% (a tester: "search from the folder i point to"): shadPS4 next to the game is found."""
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'empty'))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path / 'home'))
+    emu = tmp_path / 'Emu' / 'shadPS4' / 'shadPS4.exe'
+    emu.parent.mkdir(parents=True)
+    emu.write_bytes(b'MZ')
+    game = _game(tmp_path / 'Emu', 'NHL 19')
+    assert gamesetup.find_emulators() == []
+    assert gamesetup.find_emulators(near=gamesetup.around(str(game))) == [str(emu)]
+
+
+def test_a_testers_portable_layout(tmp_path, monkeypatch):
+    """A tester's setup (2026-11-07 screenshot of shadPS4's Paths tab): V:\\ShadPS4\\shadPS4.exe, its data in
+    V:\\ShadPS4\\user, games in V:\\ShadPS4\\game installs\\<game>, saves in a Home Folder set there, %APPDATA% empty."""
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'empty'))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path / 'home'))
+    root = tmp_path / 'V' / 'ShadPS4'
+    (root / 'user').mkdir(parents=True)
+    emu = root / 'shadPS4.exe'
+    emu.write_bytes(b'MZ')
+    game = _game(root / 'game installs', 'CUSA11126')
+    cfg = {'General': {'install_dirs': [{'enabled': True, 'path': str(root / 'game installs')}],
+                       'home_dir': str(root / 'user' / 'home')}}
+    (root / 'user' / 'config.json').write_text(json.dumps(cfg), encoding='utf-8')
+    assert gamesetup.find_emulators(near=gamesetup.around(str(game), 2)) == [str(emu)]    # Find game at eboot.bin
+    user = gamesetup.emu_user_dir(str(emu))
+    assert user == str(root / 'user')
+    assert [g['path'] for g in gamesetup.find_games(user)] == [str(game)] and gamesetup.find_games(user)[0]['ok']
+    assert gamesetup.save_dir(user) == str(root / 'user' / 'home' / '1000' / 'savedata' / 'CUSA11126')
+
+
+def test_game_is_found_beside_a_portable_shadps4(tmp_path, monkeypatch):
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'empty'))
+    emu = tmp_path / 'Emu' / 'shadPS4' / 'shadPS4.exe'
+    (emu.parent / 'user').mkdir(parents=True)          # portable, its config lists no game folder
+    emu.write_bytes(b'MZ')
+    game = _game(tmp_path / 'Emu', 'NHL 19')
+    user = gamesetup.emu_user_dir(str(emu))
+    assert gamesetup.find_games(user) == []
+    assert [g['path'] for g in gamesetup.find_games(user, extra=gamesetup.around(str(emu)))] == [str(game)]
+
+
+def test_saves_follow_shadps4s_home_folder_setting(world, tmp_path):
+    user = str(world['user'])
+    assert gamesetup.save_dir(user) == os.path.join(user, 'home', '1000', 'savedata', 'CUSA11126')
+    cfg = json.loads((world['user'] / 'config.json').read_text())
+    cfg['General']['home_dir'] = str(tmp_path / 'V' / 'home')       # Paths tab, Home Folder Location
+    (world['user'] / 'config.json').write_text(json.dumps(cfg), encoding='utf-8')
+    assert gamesetup.save_dir(user) == str(tmp_path / 'V' / 'home' / '1000' / 'savedata' / 'CUSA11126')
+
+
 def test_shadnet_secrets_never_read_out(world):
     users = gamesetup.shadnet_users(str(world['user']))
     assert users == [{'user_id': 1000, 'name': 'shadPS4', 'shadnet': True, 'npid': 'skater',

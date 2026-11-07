@@ -2,6 +2,32 @@
 
 What changed in each version, for players.
 
+## 0.70.4 (2026-11-07)
+
+### Fixed
+
+- **Portable shadPS4 is found.** Find game looks for shadPS4 next to the NHL 19 folder you pick (up to two folders
+  above it), and for NHL 19 next to the shadPS4 you pick, instead of relying on `%APPDATA%` (empty when shadPS4 keeps a
+  `user\` folder beside its exe). Saves follow shadPS4's Home Folder setting (shadPS4 Settings, Paths tab).
+- **Texture mods on the EU game (CUSA11116).** Patch stopped with "art layer: ...teamlogos/hutcardheritage/t1.gnf ...
+  archive is unknown" while applying logo packs. A texture whose folder this game lacks now goes into the archive of its
+  nearest parent folder.
+- **A game folder with only the update in it** is refused at the start with a clear message (the base game's
+  `databigs\inxp_10.big` and others are missing), instead of the patch stopping halfway.
+
+### Added
+
+- **Folders list** (Setup, "Where is NHL 19?" card): shadPS4, NHL 19, shadPS4 data and Saves, each "found" or "yours".
+  Change... sets one yourself (checked first), Auto finds it again. A folder you set is never replaced by what the
+  program finds.
+- **Lobby chimes:** a soft tone when your lobby opens, another when somebody joins, a third when you leave or the lobby
+  closes.
+- **MULTIPLAYER tab shines in gold**, and the Setup card is now called "Where is NHL 19?".
+
+### Changed
+
+- A lobby nobody joins closes after 30 minutes.
+
 ## 0.70.3 (2026-11-07)
 
 ### Added

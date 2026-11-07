@@ -81,8 +81,11 @@ def test_route_into_new_archives_per_family(game):
                                'textures': 2},
                       'inxp': {'archive': 'databigs/patch_inxp_57.big', 'archives': ['databigs/patch_inxp_57.big'],
                                'textures': 3}}
+    # a folder this game lacks (CUSA11116 has no teamlogos/hutcardheritage): the nearest parent folder's family
+    edits, _ = art.edits(game, {'nhl/ui/kettle_assets/teamlogos/nowhere/t1.gnf': gnf('x')})
+    assert list(edits) == [inxp]
     with pytest.raises(art.ArtError, match='unknown'):
-        art.edits(game, {'nhl/ui/kettle_assets/nowhere/t1.gnf': gnf('x')})
+        art.edits(game, {'zzz/nowhere/t1.gnf': gnf('x')})
     assert art.family('patch_inxp_56.big') == 'inxp' and art.family('game_90.big') == 'game'
     assert art.family('boot.big') == 'boot'
 

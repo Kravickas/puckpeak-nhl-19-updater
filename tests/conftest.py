@@ -84,3 +84,12 @@ def no_running_emulator(monkeypatch):
 def no_real_art_packs(monkeypatch):
     """The art switch is on by default: no test may pick up the owner's real packs/ (a test sets its own folder)."""
     monkeypatch.setenv('OVERTIME_ART_PACKS', 'off')
+
+
+@pytest.fixture(autouse=True)
+def no_custom_data_folder():
+    """The shadPS4 data folder set in Setup's Folders list is process-wide (gamesetup): none leaks between tests."""
+    from overtime_roster.app import gamesetup
+    gamesetup.set_custom_data('')
+    yield
+    gamesetup.set_custom_data('')

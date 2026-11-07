@@ -291,9 +291,14 @@ def game_index(game_dir):
         if fam not in FAMILIES:
             continue
         with eb.EbArchive(big) as arc:
+            seen = set()
             for p in arc.entries:
                 where.setdefault(p, set()).add(fam)
-                folders.setdefault(p.rsplit('/', 1)[0], set()).add(fam)
+                folder = p.rsplit('/', 1)[0]
+                while folder and folder not in seen:     # the folder and every folder above it
+                    seen.add(folder)
+                    folders.setdefault(folder, set()).add(fam)
+                    folder = folder.rsplit('/', 1)[0] if '/' in folder else ''
     return where, folders
 
 
@@ -310,14 +315,25 @@ def targets(game_dir):
     return {f: f'databigs/patch_{f}_{top[f] + 1}.big' for f in FAMILIES}
 
 
+def _family_of_folder(folder, folders):
+    """The families of `folder`, else of its nearest parent folder the game has. CUSA11116 (EU) lays its archives out
+    differently from CUSA11126: two testers' art stopped on teamlogos/hutcardheritage, a folder their game does not
+    have, though teamlogos is there (docs/notes/cusa11116-network.md)."""
+    while folder:
+        if folder in folders:
+            return folders[folder]
+        folder = folder.rsplit('/', 1)[0] if '/' in folder else ''
+    return None
+
+
 def route(files, where, folders):
     """{family: {path: bytes}}: each path into every family whose archives hold it, a new path into the family that
-    holds its folder (both, when both do)."""
+    holds its folder (both, when both do), or its nearest parent folder."""
     out = {}
     for p, data in files.items():
-        fams = where.get(p) or folders.get(p.rsplit('/', 1)[0])
+        fams = where.get(p) or _family_of_folder(p.rsplit('/', 1)[0], folders)
         if not fams:
-            raise ArtError(f'{p}: neither the texture nor its folder is in the game, so its archive is unknown')
+            raise ArtError(f'{p}: neither the texture nor any of its folders is in the game, so its archive is unknown')
         for fam in fams:
             out.setdefault(fam, {})[p] = data
     return out

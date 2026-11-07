@@ -46,7 +46,7 @@ export function TabBar({ tabs, tab, onTab }) {
     <div class="tabset" ref=${box} role="tablist">
       ${thumb && html`<span class="thumb" style=${{ width: thumb.w + 'px', transform: `translateX(${thumb.x}px)` }}></span>`}
       ${tabs.map((t, k) => html`<button type="button" key=${t.id} role="tab" aria-selected=${t.id === tab}
-          class=${t.id === tab ? 'on' : ''} title=${`Ctrl+${k + 1}`} onClick=${() => onTab(t.id)}>${t.label}</button>`)}
+          class=${cls(t.id === tab && 'on', `tab-${t.id}`)} title=${`Ctrl+${k + 1}`} onClick=${() => onTab(t.id)}>${t.label}</button>`)}
     </div>
     <${Keycap} k="R1" title="Ctrl+Page Down" onClick=${() => step(1)}/>
   </nav>`;

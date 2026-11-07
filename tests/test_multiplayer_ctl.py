@@ -356,7 +356,7 @@ def test_a_gone_lobby_is_left_with_a_note(mp):
     mp.service.fail = LC.LobbyRefused(404, 'no such lobby')
     mp.poll_once()
     v = mp.view()
-    assert v['lobby'] is None and 'gone' in v['error'] and mp.token is None
+    assert v['lobby'] is None and '30 minutes' in v['error'] and mp.token is None
     assert mp.create() == {'ok': True}                    # free to start another
 
 

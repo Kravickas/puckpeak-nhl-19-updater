@@ -11,7 +11,7 @@
 :is(.tab-setup, .tab-multiplayer) .su-mark.caution { background: rgba(248, 191, 0, .16); color: var(--caution); }
 :is(.tab-setup, .tab-multiplayer) .su-mark.info { background: rgba(0, 126, 236, .18); color: #6fb6ff; }
 
-/* --- 1 Where is shadPS4?: the path, four check tiles, what to do next ------------------------------------------------ */
+/* --- 1 Where is NHL 19?: the path, four check tiles, what to do next ------------------------------------------------ */
 .tab-setup .su-where .card-body { container-type: inline-size; }
 .tab-setup .su-checks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
 .tab-setup .su-check { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 6px 9px; background: var(--tile);
@@ -162,3 +162,14 @@
   /* the row's buttons on their own line, so the saved line under the name stays whole */
   .tab-setup .su-acts { flex-basis: 100%; justify-content: flex-end; }
 }
+
+/* Folders: shadPS4, NHL 19, shadPS4 data, Saves; each found or set by hand */
+.tab-setup .su-folders { margin-top: 10px; }
+.tab-setup .su-folders > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text-2); text-transform: uppercase;
+  letter-spacing: .04em; padding: 2px 0; user-select: none; }
+.tab-setup .su-folders .su-fsum { margin-left: 6px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text-3); }
+.tab-setup .su-folder { display: grid; grid-template-columns: 104px minmax(0, 1fr) auto auto 52px; align-items: center; gap: 8px;
+  margin-top: 5px; }
+.tab-setup .su-folder .su-fl { font-size: 13px; color: var(--text-soft); white-space: nowrap; }
+.tab-setup .su-folder .field.path { min-width: 0; height: 28px; font-size: 13px; }
+.tab-setup .su-folder.bad .field.path { box-shadow: inset 3px 0 0 var(--bad); }
