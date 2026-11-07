@@ -646,6 +646,9 @@ class SetupController(Part):
             if not gamesetup.is_data_dir(path):
                 return None, (f'No config.json in {path}. Pick shadPS4\'s data folder: "user" beside shadPS4.exe, or '
                               '%APPDATA%\\shadPS4.')
+            if not gamesetup.reachable_data_dir(path):
+                return None, (f'shadPS4 cannot use {path}: it reads the "user" folder inside the folder it starts '
+                              'from, or %APPDATA%\\shadPS4. Pick a folder named "user", or %APPDATA%\\shadPS4.')
             if self._boosted() and os.path.normcase(os.path.abspath(path)) != os.path.normcase(
                     gamesetup.emu_user_dir(boost.exe_path())):
                 return None, ('Boost performance is on, and it uses %APPDATA%\\shadPS4. Disable Boost performance '

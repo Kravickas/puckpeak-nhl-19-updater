@@ -398,6 +398,35 @@ def test_launch_command_and_refusals(world):
         launch.start(str(world['emu']), str(bad), running=lambda: False, popen=None)
 
 
+def _cwd_of_play(world):
+    calls = []
+    launch.start(str(world['emu']), str(world['game']), running=lambda: False,
+                 popen=lambda cmd, **kw: calls.append(kw) or 'proc')
+    return calls[0]['cwd']
+
+
+def test_play_starts_where_shadps4_finds_the_data_folder(world, tmp_path):
+    """shadPS4 reads `user` inside the folder it starts from (lab 2026-11-07), so Play starts from that folder's parent:
+    a tester's QtLauncher layout (data V/ShadPS4/user, exe deeper) ran on fresh %APPDATA% data from the exe's folder."""
+    emu_dir = str(world['emu'].parent)
+    assert gamesetup.start_dir(str(world['emu'])) == emu_dir == _cwd_of_play(world)          # %APPDATA%: exe folder
+    (world['emu'].parent / 'user').mkdir()                                                # portable beside the exe
+    assert _cwd_of_play(world) == emu_dir
+    shared = tmp_path / 'V' / 'ShadPS4' / 'user'
+    shared.mkdir(parents=True)
+    gamesetup.set_custom_data(str(shared))
+    try:
+        assert _cwd_of_play(world) == str(shared.parent)                                  # QtLauncher's shared folder
+        gamesetup.set_custom_data(str(world['user']))                                     # %APPDATA% by hand, though a
+        assert _cwd_of_play(world) == str(world['user'])                                  # user\ sits beside the exe
+        gamesetup.set_custom_data(str(tmp_path / 'V' / 'data'))                           # never reachable
+        assert gamesetup.start_dir(str(world['emu'])) is None
+        with pytest.raises(launch.LaunchError, match='cannot use the data folder'):
+            _cwd_of_play(world)
+    finally:
+        gamesetup.set_custom_data('')
+
+
 def test_read_log():
     text = ('[Loader] <Info> memory_patcher.cpp:1 PatchMemory: Applied patch: Nucleus hosts: localhost, '
             'Offset: 0x526e089, Value: 6874\n'

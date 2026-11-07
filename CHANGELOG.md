@@ -2,6 +2,22 @@
 
 What changed in each version, for players.
 
+## 0.70.5 (2026-11-07)
+
+### Fixed
+
+- **Play uses the shadPS4 data folder you set.** shadPS4 reads the `user` folder inside the folder it is started from.
+  With QtLauncher's layout (shadPS4 in `...\ShadPS4\NHL`, its data in `...\ShadPS4\user`) Play started it from the
+  exe's folder, so shadPS4 made a fresh `%APPDATA%\shadPS4`: no Overtime patch, network and ShadNet off, no saves. The
+  game asked to set NHL up again, showed no ShadNet id and never reached the server. Play now starts shadPS4 from the
+  folder above `user`, as QtLauncher does. A data folder shadPS4 cannot use (not named `user`, not
+  `%APPDATA%\shadPS4`) is refused in Setup and at Play.
+
+### Changed
+
+- **Faster Patch** (thanks to Kravickas): each pack and game archive stays open while the art layer reads it, instead
+  of being opened again for every texture. Reading the people pack's 5,900 portraits went from 59 s to 2 s here.
+
 ## 0.70.4 (2026-11-07)
 
 ### Fixed

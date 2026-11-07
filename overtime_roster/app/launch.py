@@ -1,6 +1,7 @@
 """Play: start NHL 19 in shadPS4 and read back from the emulator's log whether the Overtime patch and ShadNet took.
 
-The game starts from the emulator's own folder (so a portable `user\\` folder there is the one it uses), with the
+The game starts from the folder whose `user\\` is the emulator's data folder (gamesetup.start_dir: the exe's own
+folder for a portable `user\\` beside it or %APPDATA%, the parent of a `user` data folder set by hand), with the
 patch from its patches folder (gamesetup.install), or with `-p <file>` when one is given (that skips the folder).
 """
 import os
@@ -34,10 +35,15 @@ def start(emu_exe, game_dir, patch_file=None, running=None, popen=subprocess.Pop
     game = gamesetup.read_game(game_dir)
     if not game['ok']:
         raise LaunchError(f'cannot start {game_dir}: {game["problem"]}')
+    cwd = gamesetup.start_dir(emu_exe)
+    if not cwd:
+        raise LaunchError(f'shadPS4 cannot use the data folder {gamesetup.emu_user_dir(emu_exe)}: it reads the "user" '
+                          'folder inside the folder it starts from, or %APPDATA%\\shadPS4. Pick one of those in Setup, '
+                          'Folders, shadPS4 data.')
     flags = 0
     if sys.platform == 'win32':
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    return popen(command(emu_exe, game_dir, patch_file), cwd=os.path.dirname(os.path.abspath(emu_exe)),
+    return popen(command(emu_exe, game_dir, patch_file), cwd=cwd,
                  creationflags=flags, close_fds=True, env=selfupdate.clean_environment())
 
 

@@ -27,11 +27,13 @@ path, and a pack whose base does not match that copy (another game version, a mo
 Stdlib only: the textures are made when the pack is built, never here (overtime_core.photos draws with Pillow).
 """
 import collections
+import contextlib
 import hashlib
 import json
 import os
 import re
 import shutil
+import threading
 import zipfile
 from functools import partial
 
@@ -82,20 +84,71 @@ def check_file(path, data):
         raise ArtError(f'{path}: not a {"DDS" if magic == DDS_MAGIC else "GNF"} texture')
 
 
+_local = threading.local()
+
+
+@contextlib.contextmanager
+def reading():
+    """Keep each pack zip and game archive that Stored files read from open until the block ends: reopening one per
+    texture re-parses the zip's whole central directory (or the archive's whole table) every time, which made the
+    art layer quadratic in its texture count. Nests; per thread; the handles close when the outer block ends, so no
+    file stays locked (Windows) after it."""
+    if getattr(_local, 'handles', None) is not None:
+        yield
+        return
+    _local.handles = {}
+    try:
+        yield
+    finally:
+        handles, _local.handles = _local.handles, None
+        for h in handles.values():
+            h.close()
+
+
+def release():
+    """Close the reading() block's handles now (the block goes on, opening again on the next read): before a file one
+    of them holds is replaced, which Windows refuses while it is open."""
+    handles = getattr(_local, 'handles', None)
+    if handles:
+        for h in handles.values():
+            h.close()
+        handles.clear()
+
+
+@contextlib.contextmanager
+def _opened(kind, path):
+    """`kind(path)` (zipfile.ZipFile / eb.EbArchive), the reading() block's shared one when inside a block."""
+    handles = getattr(_local, 'handles', None)
+    if handles is None:
+        with kind(path) as h:
+            yield h
+        return
+    key = (kind, os.path.abspath(path))
+    if key not in handles:
+        handles[key] = kind(path)
+    yield handles[key]
+
+
 class Stored:
     """A file of a pack, read only when it is written: with every jersey pack on the art layer is over 10 GB, more than
     a PC can hold in memory. Stands for its bytes: `len`, `==` and read()."""
-    __slots__ = ('size', 'read')
+    __slots__ = ('size', 'read', 'sha')
     __hash__ = None
 
-    def __init__(self, size, read):
-        self.size, self.read = size, read
+    def __init__(self, size, read, sha=None):
+        self.size, self.read, self.sha = size, read, sha
 
     def __len__(self):
         return self.size
 
     def __eq__(self, other):
-        return self.read() == (other.read() if isinstance(other, Stored) else other)
+        if isinstance(other, Stored):
+            if self.sha and other.sha:
+                return self.size == other.size and self.sha == other.sha
+            return self.read() == other.read()
+        if self.sha and isinstance(other, (bytes, bytearray, memoryview)):
+            return len(other) == self.size and _sha(other) == self.sha     # read() checks this same sha256
+        return self.read() == other
 
 
 class Pack:
@@ -167,14 +220,14 @@ def game_reader(game_dir, paths):
     def read(p):
         if p not in where:
             raise ArtError(f'{p} is not in the game, so its delta has no base')
-        with eb.EbArchive(where[p]) as arc:
+        with _opened(eb.EbArchive, where[p]) as arc:
             return arc.read(p)
     return read
 
 
 def _zip_member(path, name):
     try:
-        with zipfile.ZipFile(path) as z:
+        with _opened(zipfile.ZipFile, path) as z:
             return z.read(name)
     except (zipfile.BadZipFile, KeyError, OSError) as err:
         raise ArtError(f'{path}: {err}') from err
@@ -199,7 +252,7 @@ def load_pack(path, game_dir=None):
     """Read and check an art pack zip, keeping none of it in memory (Stored); a delta pack needs `game_dir` (its bases).
     Raises ArtError when anything is off."""
     try:
-        with zipfile.ZipFile(path) as z:
+        with reading(), zipfile.ZipFile(path) as z:
             try:
                 info = json.loads(z.read(MANIFEST).decode('utf-8'))
             except KeyError:
@@ -216,7 +269,7 @@ def load_pack(path, game_dir=None):
                 if _sha(data) != sha:
                     raise ArtError(f'{path}: {p} does not match its checksum')
                 check_file(p, data)
-                files[p], shas[p] = Stored(len(data), partial(_read_zipped, path, p, sha)), sha
+                files[p], shas[p] = Stored(len(data), partial(_read_zipped, path, p, sha), sha), sha
             deltas = info.get('deltas') or {}
             if deltas and game_dir is None:
                 raise ArtError(f'{path}: a delta pack is read with the game folder')
@@ -235,7 +288,7 @@ def load_pack(path, game_dir=None):
                 if _sha(data) != rec.get('sha256'):
                     raise ArtError(f'{path}: {p} does not match its checksum')
                 check_file(p, data)
-                files[p] = Stored(len(data), partial(_read_delta, path, p, rec['sha256'], read))
+                files[p] = Stored(len(data), partial(_read_delta, path, p, rec['sha256'], read), rec['sha256'])
                 shas[p] = rec['sha256']
     except (zipfile.BadZipFile, OSError, ValueError) as err:
         raise ArtError(f'{path}: {err}') from err

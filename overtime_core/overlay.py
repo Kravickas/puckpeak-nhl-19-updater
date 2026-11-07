@@ -490,7 +490,7 @@ def _current_art(game_dir, state):
 
 
 def _read_entry(archive, entry):
-    with eb.EbArchive(archive) as arc:
+    with art_mod._opened(eb.EbArchive, archive) as arc:
         return arc.read(entry)
 
 
@@ -634,7 +634,11 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
     wins); without them the art the patch already serves is kept. Returns the new state."""
     if (running or emulator_running)():
         raise PatchError('shadPS4 is running: close the game first')
-    layers = tuple(layers)
+    with art_mod.reading():     # one handle per pack zip / archive the art is read from, not one per texture
+        return _apply(game_dir, tuple(layers), pack, database, lang, menus, art)
+
+
+def _apply(game_dir, layers, pack, database, lang, menus, art):
     old = _load_state(game_dir)
     if 'database' in layers and database is None:
         database = _current_database(game_dir, old)
@@ -658,6 +662,7 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
             raise PatchError(f'{_backup(game_dir, rel)} is in the way: check it and delete it by hand')
     written = {}
     tmps = []
+    hashed = {}     # rel: sha256 of a new archive, taken as eb.new_archive wrote it
 
     def save(files, layers_info):
         """The state as it is on disk now: every file of ours listed, so undo always reaches stock."""
@@ -678,7 +683,7 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
             tmps.append((tmp, target, rel))
             new = not os.path.exists(archive)
             if new:  # the art layer's own archive: only its entries
-                eb.new_archive(tmp, entries)
+                hashed[rel] = eb.new_archive(tmp, entries)     # hashed as it was written: no second read of it
             else:
                 _base_copy(archive, tmp)
                 for entry, data in entries.items():
@@ -693,6 +698,7 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
                 st = os.stat(archive)
                 written[rel] = {'source_size': st.st_size, 'source_mtime': int(st.st_mtime),
                                 'entries': sorted(entries)}
+        art_mod.release()   # the served art read back (_current_art) is in the archives replaced below
         partial = dict((old or {}).get('layers', {}), partial=True)
         for tmp, target, rel in tmps:
             if (old or {}).get('files', {}).get(rel, {}).get('backup'):
@@ -705,7 +711,7 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
             ours[rel] = dict(written[rel])
             save(ours, partial)
             os.replace(tmp, target)
-            written[rel]['sha256'] = ours[rel]['sha256'] = _sha256(target)
+            written[rel]['sha256'] = ours[rel]['sha256'] = hashed.get(rel) or _sha256(target)
             save(ours, partial)
     except art_mod.ArtError as err:     # a pack changed after it was read (art.Stored)
         raise PatchError(f'art layer: {err}') from err

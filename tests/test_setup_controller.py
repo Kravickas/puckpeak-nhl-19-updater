@@ -979,6 +979,14 @@ def test_data_folder_set_by_hand_is_used_and_kept(sc, tmp_path):
     assert gamesetup.emu_user_dir(str(sc.world['emu'])) == str(sc.world['user']) and 'data' not in sc.custom
 
 
+def test_data_folder_shadps4_cannot_reach_is_refused(sc, tmp_path):
+    """shadPS4 only uses `user` inside its start folder or %APPDATA%\\shadPS4: another name is refused at once."""
+    other = tmp_path / 'V' / 'emudata'
+    other.mkdir(parents=True)
+    (other / 'config.json').write_text('{}', encoding='utf-8')
+    assert 'error' in sc.folder_set('data', str(other)) and not gamesetup.custom_data()
+
+
 def test_boost_exe_keeps_appdata_with_a_custom_data_folder(sc, tmp_path):
     from overtime_roster.app import boost
     sc.folder_set('data', str(_portable(tmp_path)))

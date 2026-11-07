@@ -116,7 +116,33 @@ def emu_user_dir(emu_exe):
     portable = os.path.join(os.path.dirname(os.path.abspath(emu_exe)), 'user')
     if os.path.isdir(portable):
         return portable
+    return appdata_dir()
+
+
+def appdata_dir():
     return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'shadPS4')
+
+
+def reachable_data_dir(path):
+    """shadPS4 can be made to use `path`: a folder named `user` (started from its parent) or %APPDATA%\\shadPS4."""
+    path = os.path.normcase(os.path.abspath(path))
+    return os.path.basename(path) == 'user' or path == os.path.normcase(os.path.abspath(appdata_dir()))
+
+
+def start_dir(emu_exe):
+    """The folder to start shadPS4 from so that it uses emu_user_dir(emu_exe), or None when it cannot. shadPS4 takes
+    `user\\` inside the folder it starts from, else %APPDATA%\\shadPS4 (lab 2026-11-07: a start folder's `user\\` wins
+    even over one beside the exe). A tester's QtLauncher layout (shadPS4 in V:\\ShadPS4\\ShadPS4\\NHL, data in
+    V:\\ShadPS4\\user) started from the exe's folder ran on fresh %APPDATA% data: no patch, ShadNet off, no saves."""
+    data = os.path.abspath(emu_user_dir(emu_exe))
+    exe_dir = os.path.dirname(os.path.abspath(emu_exe))
+    if os.path.basename(os.path.normcase(data)) == 'user':
+        return os.path.dirname(data)
+    if os.path.normcase(data) == os.path.normcase(os.path.abspath(appdata_dir())):
+        for folder in (exe_dir, data):       # a folder without its own `user` folder
+            if not os.path.isdir(os.path.join(folder, 'user')):
+                return folder
+    return None
 
 
 def _is_emulator(name):

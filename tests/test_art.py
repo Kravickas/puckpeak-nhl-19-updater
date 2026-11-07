@@ -430,3 +430,29 @@ def test_cached_alternates_only_count_the_families_switched_on(tmp_path):
     assert [p.name for p in art.cached_alternates(str(tmp_path), ['nhl', 'hometown'])] == [
         'kitlayers_nhl', 'kitlayers_hometown']                  # the family order: the last wins a row
     assert art.cached_alternates(str(tmp_path), []) == []
+
+
+def test_stored_reads_share_one_zip_handle_and_compare_by_sha(tmp_path, monkeypatch):
+    """Patch speed: a pack's textures are read through one open zip in a reading() block (not one ZipFile per
+    texture), and a read-back compare against bytes hashes them instead of reading the pack again."""
+    import zipfile
+    files = {f'nhl/ui/kettle_assets/playerportraits/p{i}.gnf': b'GNF ' + bytes([i]) * 64 for i in range(20)}
+    path = str(tmp_path / 'photos.zip')
+    art.write_pack(path, 'photos', files)
+    pack = art.load_pack(path)
+    opened = []
+    real = zipfile.ZipFile
+
+    def counting(*a, **k):
+        opened.append(a[0])
+        return real(*a, **k)
+    monkeypatch.setattr(zipfile, 'ZipFile', counting)
+    with art.reading():
+        for p, stored in pack.files.items():
+            assert stored.read() == files[p]
+    assert len(opened) == 1
+    reads = []
+    s = pack.files[next(iter(files))]
+    s.read = lambda: reads.append(1) or b''
+    assert s == files[next(iter(files))] and not (s != files[next(iter(files))]) and not reads
+    assert s != b'GNF ' + b'\xff' * 64
