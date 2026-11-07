@@ -41,7 +41,7 @@ HOMEPAGE_PATH = 'nhl/ui/features/homepage/vvms/homepage.lua'
 LAYOUT_PATH = 'nhl/ui/features/homepage/vvms/homepage.layout'
 HUB_PATH = 'nhl/ui/features/online/vvms/hub/hub.lua'
 PATHS = (HOMEPAGE_PATH, LAYOUT_PATH)
-LAUNCH_PATHS = PATHS + (HUB_PATH, rules.RULES_PATH)   # what a launch (set_menus) adds, and a clear takes off again
+LAUNCH_PATHS = PATHS + (HUB_PATH,) + tuple(rules.PATHS.values())   # what a launch (set_menus) adds, and a clear takes off again
 
 DEAD = ('ULTIMATETEAM', 'HOCKEYDRAFT', 'EASHL')  # MODES_NAMES keys: Hockey Ultimate Team, Draft Champions, WOC
 OPTIONS = {'chel': False, 'news': True}  # chel = bring back World of Chel; news = keep the news tile (Puck Peak)
@@ -122,30 +122,34 @@ HOME_END_ANCHOR = (b'    self:_PublishIsTutorialAvailable()\r\nend\r\n\r\n'
 HUB_END_ANCHOR = b'    self.im.Publish(BINDINGS.BUTTONS_FONT_STYLE, self.mButtonsState)\r\nend\r\n'
 HUB_STOCK = (b'function Hub:PublishData()', b'MODE_SHOOTOUT_ONLINE', b'function Hub:_OnAdvance(evt)')
 HUB_MODE = 'MODE_PLAY_NOW_ONLINE_QUICKMATCH'  # gameMode of the Online Versus hub (playonline.nav, OnlineHub)
+HUB_MODES = {rules.VERSUS: HUB_MODE, rules.SHOOTOUT: 'MODE_SHOOTOUT_ONLINE'}   # ... and of the Online Shootout hub
+# The homepage tile's nav event per game: Versus' own (what _OnAdvanceAction sends), and the one the Shootout tile's
+# Offline / Online popup sends for its Online choice (_ShootoutPopUpCallBack, EVENTS.GOTO_ONLINE_SHOOTOUT).
+HOME_EVENTS = {rules.VERSUS: 'evt_playonline', rules.SHOOTOUT: 'evt_goto_online_shootout'}
 
 
 def _lines(*lines):
     return ('\r\n'.join(lines) + '\r\n').encode('ascii')
 
 
-def home_hook(until):
+def home_hook(until, mode=rules.VERSUS):
     return _lines(
-        '    -- Overtime autoplay: one jump into Online Versus per launch, while the clock is before the window ends',
+        '    -- Overtime autoplay: one jump into Online %s per launch, while the clock is before the window ends' % mode.title(),
         '    pcall(function()',
         f'        if _G.OvertimeAutoplay == nil and os.time() <= {int(until)} then',
         "            _G.OvertimeAutoplay = 'home'",
         '            self.nav.Event(nil, AvatarEnum.EVENTS.CHANGE_AVATAR_STATE, { state = AvatarEnum.STATES.DISABLE_AVATAR_INPUT })',
         '            self.nav.Event(nil, EVENTS.CHECK_MOVIE_ELIGIBILITY, { controllerid = 0, LinkTarget = nil, movieType = nil,',
-        '                                                                   afterMovieTarget = "evt_playonline" })',
+        '                                                                   afterMovieTarget = "%s" })' % HOME_EVENTS[mode],
         '        end',
         '    end)')
 
 
-def hub_hook(until):
+def hub_hook(until, mode=rules.VERSUS):
     return _lines(
-        '    -- Overtime autoplay: the Online Versus hub presses PLAY once, right after the homepage jumped here',
+        '    -- Overtime autoplay: the Online %s hub presses PLAY once, right after the homepage jumped here' % mode.title(),
         '    pcall(function()',
-        f"        if _G.OvertimeAutoplay == 'home' and self.mGameMode == GAMEMODES.{HUB_MODE} and os.time() <= {int(until)}",
+        f"        if _G.OvertimeAutoplay == 'home' and self.mGameMode == GAMEMODES.{HUB_MODES[mode]} and os.time() <= {int(until)}",
         '           and self.mData.RankedQuickMatch ~= nil and self.mData.PlayersOnline ~= nil then',
         "            _G.OvertimeAutoplay = 'hub'",
         '            self:_OnAdvance(EVENTS.PLAYNOW_ONLINE)',
@@ -161,8 +165,8 @@ DIAG_TITLE = _lines(
     '    end')
 
 
-def edit_hub(raw, until):
-    """hub.lua with the PLAY hook at the end of Hub:PublishData."""
+def edit_hub(raw, until, mode=rules.VERSUS):
+    """hub.lua with the PLAY hook (of `mode`'s hub) at the end of Hub:PublishData."""
     path = HUB_PATH
     if MARK in raw:
         raise MenuError(f'{path} is already edited')
@@ -172,7 +176,7 @@ def edit_hub(raw, until):
     if missing:
         raise MenuError(f'{path} is not the hub.lua this patch knows ({missing[0][:60]!r})')
     _once(raw, HUB_END_ANCHOR, path)
-    new = HUB_END_ANCHOR[:-len(b'end\r\n')] + hub_hook(until) + b'end\r\n'
+    new = HUB_END_ANCHOR[:-len(b'end\r\n')] + hub_hook(until, mode) + b'end\r\n'
     return raw.replace(HUB_END_ANCHOR, new)
 
 
@@ -193,7 +197,7 @@ def edit_homepage(raw, chel=False, news=False, launch=None):
         edits.append((NEWS_ANCHOR, NEWS_EMPTY))
     if launch:
         edits.append((HOME_END_ANCHOR,
-                      HOME_END_ANCHOR.replace(b'end\r\n', home_hook(launch['until']) + b'end\r\n', 1)))
+                      HOME_END_ANCHOR.replace(b'end\r\n', home_hook(launch['until'], launch_mode(launch)) + b'end\r\n', 1)))
         if launch.get('diag'):
             edits[2] = (TITLES_ANCHOR, TITLES_ANCHOR + TITLES_DROP + DIAG_TITLE)
     for anchor, _new in edits:
@@ -231,16 +235,26 @@ def options(given=None, served=None):
     return out
 
 
+def launch_mode(launch):
+    """The game a launch jumps into: 'versus' (the default) or 'shootout'."""
+    mode = (launch or {}).get('mode') or rules.VERSUS
+    if mode not in HUB_MODES:
+        raise MenuError(f'unknown game mode: {str(mode)[:20]}')
+    return mode
+
+
 def edits(read, opts, launch=None):
-    """{path: new bytes} for the two files, plus hub.lua with `launch` ({'until': unix seconds, 'diag': bool, 'rules':
-    {rule: value}}) and the rules file when it names rules; `read(path)` gives the game's own bytes."""
+    """{path: new bytes} for the two files, plus hub.lua with `launch` ({'until': unix seconds, 'diag': bool, 'mode':
+    versus|shootout, 'rules': {rule: value}}) and that mode's rules file when it names rules; `read(path)` gives the
+    game's own bytes."""
     out = {HOMEPAGE_PATH: edit_homepage(read(HOMEPAGE_PATH), chel=opts['chel'], news=opts['news'], launch=launch),
            LAYOUT_PATH: edit_layout(read(LAYOUT_PATH))}
     if launch:
-        out[HUB_PATH] = edit_hub(read(HUB_PATH), launch['until'])
+        mode = launch_mode(launch)
+        out[HUB_PATH] = edit_hub(read(HUB_PATH), launch['until'], mode)
         if launch.get('rules'):
             try:
-                out[rules.RULES_PATH] = rules.edit(read(rules.RULES_PATH), launch['rules'])
+                out[rules.path(mode)] = rules.edit(read(rules.path(mode)), launch['rules'], mode)
             except rules.RulesError as err:
                 raise MenuError(str(err)) from err
     return out
@@ -253,6 +267,7 @@ def record(opts, launch=None):
            'news': bool(opts['news']), 'grid_columns': 5}
     if launch:
         rec['autoplay_until'] = int(launch['until'])
+        rec['autoplay_mode'] = launch_mode(launch)
         if launch.get('rules'):
-            rec['rules'] = rules.validate(launch['rules'], partial=True)
+            rec['rules'] = rules.validate(launch['rules'], partial=True, mode=launch_mode(launch))
     return rec

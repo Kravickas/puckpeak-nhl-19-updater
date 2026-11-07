@@ -61,7 +61,7 @@ def match_row(m, you, now):
         sa = c.get('against', r['scores'].get(other['pid']))
         entry = {'opponent': other['name'], 'team': c.get('team') or r['teams'].get(you) or '',
                  'score_for': sf, 'score_against': sa, 'again': bool(c)}
-    return {'id': m['id'], 'ago': ago(now - m['started']), 'rules': m.get('rules') or '', 'status': r['status'],
+    return {'id': m['id'], 'ago': ago(now - m['started']), 'mode': m.get('mode') or 'versus', 'rules': m.get('rules') or '', 'status': r['status'],
             'tone': tone, 'text': text, 'mine': bool(mine), 'players': [_side(p, r, you) for p in order], 'entry': entry,
             'delta': (m.get('deltas') or {}).get(you) if mine and r['status'] == H.CONFIRMED else None}
 
@@ -88,6 +88,16 @@ def ladder(mine):
     return [{'name': n, 'min': low, 'blurb': b, 'you': n == now} for n, low, b in reversed(R.TIERS)]
 
 
+def modes_view(modes):
+    """[{mode, name, record}] per game this player has played (Versus and Shootout share one rating); [] for a server that
+    does not split them or before the first Shootout game, so the strip stays as it was."""
+    shootout = (modes or {}).get('shootout') if isinstance(modes, dict) else None
+    if not isinstance(shootout, dict) or not shootout.get('w', 0) + shootout.get('l', 0):
+        return []
+    return [{'mode': k, 'name': k.title(), 'record': '%s–%s' % (modes[k].get('w', 0), modes[k].get('l', 0))}
+            for k in ('versus', 'shootout') if isinstance(modes.get(k), dict)]
+
+
 def rating_view(r):
     """My rating line (the server's `rating`), None for a server without ratings or before my first confirmed match."""
     if not isinstance(r, dict):
@@ -95,7 +105,8 @@ def rating_view(r):
     ranked = r.get('rank') is not None
     return {'rating': r['rating'], 'tier': r['tier'], 'ranked': ranked, 'placing': r.get('placing') or 0,
             'rank': r.get('rank'), 'of': r.get('of') or 0, 'change': r.get('last_change'), 'streak': r.get('streak') or 0,
-            'record': f"{r.get('w', 0)}\u2013{r.get('l', 0)}", 'hidden': bool(r.get('hidden')), 'next': next_tier(r['rating'])}
+            'record': f"{r.get('w', 0)}\u2013{r.get('l', 0)}", 'modes': modes_view(r.get('modes')), 'hidden': bool(r.get('hidden')),
+            'next': next_tier(r['rating'])}
 
 
 def banner_for(matches, seen):
@@ -193,11 +204,24 @@ def games_view(d, now):
                              if st['rates'].get(k) is not None]}
     games = [{'id': m['id'], 'ago': ago(now - m['started']), 'status': m['status'], 'result': m['result'],
               'opponent': m['opponent']['name'], 'team': m['team'], 'opp_team': m['opp_team'], 'for': m['for'],
-              'against': m['against'], 'rules': m.get('rules') or '',
+              'against': m['against'], 'rules': m.get('rules') or '', 'mode': m.get('mode') or 'versus',
               'box': [{'label': r['label'], 'me': _shown(r['key'], r['me']), 'them': _shown(r['key'], r['them'])}
                       for r in m.get('box') or []]} for m in d['recent']]
     return {'w': d['w'], 'l': d['l'], 'played': d['played'], 'gf': d['gf'], 'ga': d['ga'], 'overall': overall,
-            'games': games, 'with_stats': sum(1 for g in games if g['box'])}
+            'shootout': shootout_view(d.get('shootout')), 'games': games, 'with_stats': sum(1 for g in games if g['box'])}
+
+
+def shootout_view(so):
+    """My Shootout numbers: {games, line, rates}, or None before a Shootout with the game's numbers."""
+    if not so:
+        return None
+    line = f"Scored {so['goals']} on {so['shots']} attempts"
+    if so['faced']:
+        line += f", allowed {so['allowed']} on {so['faced']}"
+    return {'games': so['games'], 'line': line,
+            'rates': [{'label': label, 'value': f"{so['rates'][k]:g}%"} for k, label in (('shooting', 'Scoring'),
+                                                                                      ('saving', 'Saves'))
+                      if so['rates'].get(k) is not None]}
 
 
 def review_view(rv):

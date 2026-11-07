@@ -85,9 +85,10 @@ class LobbyClient:
         return LobbyRefused(status, text or f'the lobby service answered {status}')
 
     # --- the API ----------------------------------------------------------------------------------------------------
-    def create(self, name, ext, public=False, roster_crc=None):
+    def create(self, name, ext, public=False, roster_crc=None, mode=None):
         return self._call('POST', '/api/lobby', {'name': name, 'ext': ext, 'public': bool(public),
-                                                  **({'roster_crc': roster_crc} if roster_crc else {})})
+                                                  **({'roster_crc': roster_crc} if roster_crc else {}),
+                                                  **({'mode': mode} if mode else {})})
 
     def join(self, code, name, ext, roster_crc=None):
         return self._call('POST', f'/api/lobby/{_code(code)}/join',
@@ -96,6 +97,10 @@ class LobbyClient:
     def ready(self, code, token, value=True, patch=None):
         return self._call('POST', f'/api/lobby/{_code(code)}/ready', {'token': token, 'ready': bool(value),
                                                                       **({'patch': patch} if patch else {})})
+
+    def mode(self, code, token, mode):
+        """The host picks the game, 'versus' or 'shootout' (a server before 0.71 has no such call: 404)."""
+        return self._call('POST', f'/api/lobby/{_code(code)}/mode', {'token': token, 'mode': mode})
 
     def roster_mode(self, code, token, mode):
         return self._call('POST', f'/api/lobby/{_code(code)}/roster_mode', {'token': token, 'mode': mode})

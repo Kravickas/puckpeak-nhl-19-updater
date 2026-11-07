@@ -77,9 +77,16 @@ class FakeService:
         self._go('ready', code, token, value)
         return {**self.lobby, 'you': 0}
 
+    def mode(self, code, token, mode):
+        self._go('mode', code, token, mode)
+        self.lobby = {**self.lobby, 'mode': mode, 'rules': RU.defaults(mode)}
+        for p in self.lobby['players']:
+            p['ready'] = False
+        return {**self.lobby, 'you': 0}
+
     def settings(self, code, token, rules):
         self._go('settings', code, token, rules)
-        self.lobby = {**self.lobby, 'rules': {**RU.DEFAULTS, **(self.lobby.get('rules') or {}), **rules}}
+        self.lobby = {**self.lobby, 'rules': {**RU.defaults(self.lobby.get('mode') or 'versus'), **(self.lobby.get('rules') or {}), **rules}}
         for p in self.lobby['players']:
             p['ready'] = False
         return {**self.lobby, 'you': 0}
@@ -905,3 +912,53 @@ def test_the_guest_cannot_pick_the_roster(mp):
     mp.service.calls.clear()
     assert 'host' in mp.set_roster_mode('host')['error'] and mp.service.calls == []
     assert mp.view()['lobby']['roster_mode'] is None      # a server without the roster choice shows none
+
+
+# --- Online Shootout ------------------------------------------------------------------------------------------------
+
+def test_the_host_picks_shootout_and_the_card_greys_out_the_rules_it_has_not(mp):
+    start_lobby(mp)
+    assert mp.view()['lobby']['mode'] == 'versus' and not any(r['off'] for r in mp.view()['lobby']['rules']['rows'])
+    assert mp.set_mode('shootout') == {'ok': True}
+    assert mp.service.calls[-1] == ('mode', 'K7M2Q', 'secret-token', 'shootout')
+    view = mp.view()['lobby']
+    assert view['mode'] == 'shootout' and view['game'] == 'Shootout'
+    rows = {r['key']: r for r in view['rules']['rows']}
+    assert [k for k, r in rows.items() if not r['off']] == [r[0] for r in RU.SHOOTOUT_RULES]
+    assert all(not r['can_edit'] for r in rows.values() if r['off']) and rows['goaliecontrol']['can_edit']
+    assert view['rules']['is_default'] and view['rules']['summary'] == 'Default rules'
+    assert mp.set_rule('goaliecontrol', 0) == {'ok': True}
+    assert mp.service.calls[-1][3] == {'goaliecontrol': '0'}
+    assert 'Unknown' in mp.set_rule('periodlength', 10)['error'] or 'periodlength' in mp.set_rule('periodlength', 10)['error']
+
+
+def test_only_the_host_picks_the_game_and_not_once_it_is_starting(mp):
+    start_lobby(mp)
+    assert 'Pick' in mp.set_mode('hockey')['error'] and mp.service.calls[-1][0] != 'mode'
+    mp.me = 1
+    assert 'host' in mp.set_mode('shootout')['error']
+    mp.me = 0
+    mp.lobby = dict(mp.lobby, state='launching')
+    assert 'fixed' in mp.set_mode('shootout')['error']
+
+
+def test_a_server_before_shootout_is_told_so_and_the_lobby_stays_versus(mp):
+    start_lobby(mp)
+    mp.service.fail = LC.LobbyRefused(404, 'not found')
+    assert 'does not offer Online Shootout' in mp.set_mode('shootout')['error']
+    assert mp.view()['lobby']['mode'] == 'versus'
+
+
+def test_a_shootout_launch_hooks_the_shootout_hub_and_bakes_its_rules(mp, monkeypatch):
+    good_checks(mp)
+    start_lobby(mp)
+    mp.set_mode('shootout')
+    rig = Rig(mp, monkeypatch)
+    mp._launch_job()
+    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS, 'mode': 'shootout'})   # defaults: no rules baked
+    mp.set_rule('goaliecontrol', 0)
+    rig = Rig(mp, monkeypatch)
+    mp._launch_job()
+    assert rig.events[0][1]['mode'] == 'shootout' and set(rig.events[0][1]['rules']) == {r[0] for r in RU.SHOOTOUT_RULES} and rig.events[0][1]['rules']['goaliecontrol'] == '0'
+    mp.game = {'phase': 'running', 'note': '', 'manual': False}
+    assert mp.view()['game']['steps'][4]['text'] == 'Online Shootout, searching for your friend'

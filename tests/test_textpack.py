@@ -10,7 +10,7 @@ from overtime_core import eb, gamefiles, textpack
 def make_eb(path, files):
     """Minimal EB v3 archive: `files` = [(folder, name, data)], one folder table, 16-byte aligned data."""
     folders = sorted({f for f, _, _ in files})
-    fnl, dnl = 32, 64
+    fnl, dnl = max(32, (max(len(n) for _, n, _ in files) + 2 + 15) // 16 * 16), 64   # a name field fits its longest name
     names = b''.join(struct.pack('>H', folders.index(f)) + n.encode().ljust(fnl - 2, b'\0') for f, n, _ in files)
     names = names.ljust((len(names) + 15) // 16 * 16, b'\0') + b''.join(f.encode().ljust(dnl, b'\0') for f in folders)
     names_off = (0x30 + 20 * len(files) + 15) // 16 * 16

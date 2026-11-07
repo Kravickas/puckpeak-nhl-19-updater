@@ -636,9 +636,9 @@ def test_update_passes_the_pack_and_reports_it(tmp_path, monkeypatch, pack):
                                                            'minors': 1, 'estimated': 2, 'cleared': 4})
     lines = update.details(U.Plan(), rep, lambda team, table: str(team))
     text = {what: new for what, _old, new in lines}
-    assert text['NHL 27 ratings and player types'] == '5 player(s), 100 value(s), 2 type(s)'
+    assert text['Updated ratings and player types'] == '5 player(s), 100 value(s), 2 type(s)'
     assert text['EA ratings'] == '20 value(s)'
-    assert text['Contracts (NHL 27)'] == '3 club, 1 minors' and text['2018 NHL contracts ended'] == '4 player(s)'
+    assert text['Contracts'] == '3 club, 1 minors' and text['2018 NHL contracts ended'] == '4 player(s)'
 
 
 def test_overlay_rows_take_nhl27_after_the_fixed_years():

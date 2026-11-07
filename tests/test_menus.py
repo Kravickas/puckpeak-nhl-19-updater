@@ -5,7 +5,7 @@ import difflib
 import pytest
 
 from overtime_core import gamefiles, menus, rules
-from test_rules import fake as fake_rules
+from test_rules import fake as fake_rules, shootout_file
 
 
 def fake_homepage():
@@ -148,7 +148,7 @@ def test_launch_off_changes_nothing_and_serves_no_hub():
 def test_launch_on_hooks_the_homepage_and_the_hub_inside_pcall():
     files = fake_files()
     on = menus.edits(files.__getitem__, menus.options(), {'until': UNTIL})
-    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - {rules.RULES_PATH})  # the rules file only when rules are named
+    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()))  # the rules file only when rules are named
     home, hub = on[menus.HOMEPAGE_PATH], on[menus.HUB_PATH]
     for lua in (home, hub):
         assert b'pcall(function()' in lua and b'os.time() <= %d' % UNTIL in lua
@@ -166,9 +166,9 @@ def test_launch_on_hooks_the_homepage_and_the_hub_inside_pcall():
 def test_launch_rules_serve_the_rules_file_with_those_defaults():
     files = {**fake_files(), rules.RULES_PATH: fake_rules()}
     on = menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {'periodlength': 10, 'icing': 1}})
-    assert sorted(on) == sorted(menus.LAUNCH_PATHS)
+    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - {rules.SHOOTOUT_PATH})
     assert rules.read(on[rules.RULES_PATH])['periodlength'] == '10' and rules.read(on[rules.RULES_PATH])['icing'] == '1'
-    assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {}}).keys() ==         set(menus.LAUNCH_PATHS) - {rules.RULES_PATH}
+    assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {}}).keys() ==         set(menus.LAUNCH_PATHS) - set(rules.PATHS.values())
     with pytest.raises(menus.MenuError, match='pick one'):
         menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {'periodlength': 7}})
     with pytest.raises(menus.MenuError, match='0 times'):
@@ -218,3 +218,28 @@ def test_launch_on_the_games_own_files_is_only_insertions(game_dir):
     home = menus.edit_homepage(read(menus.HOMEPAGE_PATH), launch={'until': UNTIL, 'diag': True})
     plain = menus.edit_homepage(read(menus.HOMEPAGE_PATH))
     assert [tag for tag, _a, _b in changes(plain, home)] == ['insert', 'insert']
+
+
+def test_a_shootout_launch_jumps_into_the_shootout_hub():
+    files = fake_files()
+    on = menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'mode': 'shootout'})
+    home, hub = on[menus.HOMEPAGE_PATH], on[menus.HUB_PATH]
+    assert b'afterMovieTarget = "evt_goto_online_shootout"' in home and b'evt_playonline' not in home
+    assert b'GAMEMODES.MODE_SHOOTOUT_ONLINE' in hub and menus.HUB_MODE.encode() not in hub
+    assert b"_G.OvertimeAutoplay == 'home'" in hub and b'self:_OnAdvance(EVENTS.PLAYNOW_ONLINE)' in hub
+    assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'mode': 'versus'})[menus.HUB_PATH] ==         menus.edits(files.__getitem__, menus.options(), {'until': UNTIL})[menus.HUB_PATH]
+    with pytest.raises(menus.MenuError, match='unknown game mode'):
+        menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'mode': 'hut'})
+
+
+def test_shootout_launch_rules_serve_the_shootout_file_only():
+    files = {**fake_files(), rules.SHOOTOUT_PATH: shootout_file()}
+    launch = {'until': UNTIL, 'mode': 'shootout', 'rules': {'skilllevel': 4, 'goaliecontrol': 0}}
+    on = menus.edits(files.__getitem__, menus.options(), launch)
+    assert rules.RULES_PATH not in on and rules.SHOOTOUT_PATH in on
+    assert rules.read(on[rules.SHOOTOUT_PATH])['skilllevel'] == '4' and b'"defaultvalue": "5"' in on[rules.SHOOTOUT_PATH]
+    rec = menus.record(menus.options(), launch)
+    assert rec['rules'] == {'skilllevel': '4', 'goaliecontrol': '0'} and rec['autoplay_mode'] == 'shootout'
+    with pytest.raises(menus.MenuError, match='pick one|Unknown'):
+        menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'mode': 'shootout', 'rules': {'periodlength': 10}})
+    assert menus.record(menus.options(), {'until': UNTIL})['autoplay_mode'] == 'versus'

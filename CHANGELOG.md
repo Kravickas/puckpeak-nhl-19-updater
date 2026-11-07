@@ -2,6 +2,22 @@
 
 What changed in each version, for players.
 
+## 0.70.7 (2026-11-07)
+
+### Added
+
+- **Online Shootout.** MULTIPLAYER, Match rules has **VERSUS | SHOOTOUT** left of Roster: the lobby host picks the game
+  before Ready. SHOOTOUT greys out the rules a shootout does not use and keeps skill level, game style and goalie
+  control. Once both are ready the game opens Online Shootout by itself; pick a team, READY, play.
+- Searching from the game's own Online Shootout menu with the default settings meets other shootout players only.
+- **My games** shows Shootout numbers on their own (attempts, goals, scoring % and save %); the Versus per-game numbers
+  count Versus games only, and game rows say "Shootout".
+- One rating over Versus and Shootout; the win-loss record is kept per game.
+
+### Known
+
+- Played in the lab (two games on one network), not yet between two players over the internet.
+
 ## 0.70.6 (2026-11-07)
 
 ### Changed

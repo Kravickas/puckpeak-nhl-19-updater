@@ -28,9 +28,9 @@ server, Seattle and Utah, the real 2026-27 calendars and a full roster editor. A
 
 - **Offline**: start NHL 19 from shadPS4. Seattle and Utah are in Play Now, Be a Pro and the 32 Team Expansion Draft
   Franchise.
-- **Online Versus**: press PLAY in Online Versus. The game downloads the current online roster when yours is older.
+- **Online Versus / Online Shootout**: press PLAY in either. The game downloads the current online roster when yours is older.
 - **Multiplayer tab (closed beta)**: one player presses **Create lobby** and shares the code, the other joins with
-  it. The host picks the rules, both press **Ready**, and the app starts the game.
+  it. The host picks Versus or Shootout and the rules, both press **Ready**, and the app starts the game.
 
 ## Edit your roster
 

@@ -176,3 +176,7 @@
 .tab-multiplayer .mp-signin a.mp-quiet { color: var(--text-2); margin-left: 6px; }
 .tab-multiplayer .mp-roster-pick { display: grid; gap: 6px; margin-bottom: 10px; }
 .tab-multiplayer .mp-roster-pick .mp-rule { max-width: 360px; }
+.tab-multiplayer .mp-pick-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
+.tab-multiplayer .mp-pick-row .mp-roster-pick { margin-bottom: 0; flex: 1; min-width: 220px; }
+.tab-multiplayer .mp-mode-pick { flex: 0 0 auto; }
+.tab-multiplayer .mp-rule.off { opacity: .4; filter: grayscale(1); box-shadow: inset 3px 0 0 var(--text-off); }

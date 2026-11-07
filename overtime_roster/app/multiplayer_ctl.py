@@ -66,7 +66,8 @@ EXPECTED = (LC.LobbyError, gamesetup.SetupError, launch.LaunchError, overlay.Pat
 
 # the step list of the launch card (docs/ui/multiplayer.md)
 STEPS = ('Online start set', 'NHL 19 started', 'Pressing the title screen', 'Game Setup: pressing READY',
-         'Online Versus, searching for {partner}', 'Match found: pick your team')
+         'Online {game}, searching for {{partner}}', 'Match found: pick your team')
+GAME_NAMES = {RU.VERSUS: 'Versus', RU.SHOOTOUT: 'Shootout'}
 PHASES = {'hook': 0, 'starting': 1, 'title': 2, 'ready': 3, 'running': 4}
 
 
@@ -75,7 +76,7 @@ class MultiplayerCtl(Part):
     CALLS = {'mp_set_name': 'set_name', 'mp_set_ext': 'set_ext', 'mp_set_press': 'set_press', 'mp_refresh': 'refresh',
              'mp_create': 'create', 'mp_join': 'join', 'mp_ready': 'ready', 'mp_leave': 'leave',
              'mp_launch_now': 'launch_now', 'mp_set_rule': 'set_rule', 'mp_roster_mode': 'set_roster_mode',
-             'mp_reset_rules': 'reset_rules', 'mp_history_refresh': 'history_refresh',
+             'mp_reset_rules': 'reset_rules', 'mp_set_mode': 'set_mode', 'mp_history_refresh': 'history_refresh',
              'mp_history_player': 'history_player', 'mp_history_close': 'history_close',
              'mp_result_open': 'result_open', 'mp_result_close': 'result_close', 'mp_result': 'send_result',
              'mp_review_open': 'review_open', 'mp_review_close': 'review_close', 'mp_set_hidden': 'set_hidden',
@@ -517,17 +518,47 @@ class MultiplayerCtl(Part):
         self._apply(lobby)
         return {'ok': True}
 
+    def _mode(self):
+        """The game the lobby plays: 'versus' (also for a server before 0.71, which has no choice) or 'shootout'."""
+        with self.mlock:
+            mode = (self.lobby or {}).get('mode')
+        return mode if mode in RU.MODES else RU.VERSUS
+
+    def set_mode(self, mode):
+        """The host picks the game, Versus or Shootout (before Ready; the rules go back to that game's defaults)."""
+        if mode not in RU.MODES:
+            return self._fail('Pick Versus or Shootout.')
+        with self.mlock:
+            code, token, me = self.code, self.token, self.me
+            state = (self.lobby or {}).get('state')
+        if not code:
+            return {'ok': False}
+        if me != 0:
+            return self._fail('Only the host picks the game.')
+        if state in LAUNCHING:
+            return self._fail('The game is starting: the game is fixed now.')
+        try:
+            lobby = self.client().mode(code, token, mode)
+        except LC.LobbyRefused as err:
+            if err.status == 404:
+                return self._fail('This server does not offer Online Shootout yet.')
+            return self._lobby_error(err)
+        except LC.LobbyError as err:
+            return self._lobby_error(err)
+        self._apply(lobby)
+        return {'ok': True}
+
     def set_rule(self, key, value):
         """The host picks one match rule (before Ready; the server clears both ready flags on a change)."""
         try:
-            wanted = RU.validate({key: value}, partial=True)
+            wanted = RU.validate({key: value}, partial=True, mode=self._mode())
         except RU.RulesError as err:
             return self._fail(str(err))
         return self._send_rules(wanted)
 
     def reset_rules(self):
         """The host puts every match rule back to the game's own."""
-        return self._send_rules(dict(RU.DEFAULTS))
+        return self._send_rules(RU.defaults(self._mode()))
 
     def _send_rules(self, wanted):
         with self.mlock:
@@ -925,7 +956,7 @@ class MultiplayerCtl(Part):
         self._signin_ready(user)
         rules = self._launch_rules()
         if self.running():
-            note = 'NHL 19 is already running. Press PLAY in Online Versus to meet your friend.'
+            note = 'NHL 19 is already running. Press PLAY in Online %s to meet your friend.' % GAME_NAMES[self._mode()]
             if rules:
                 note += ' It keeps the rules it started with: close the game and Ready again to play the lobby\'s.'
             self._phase('rematch', note)
@@ -934,7 +965,12 @@ class MultiplayerCtl(Part):
             return
         until = int(self.now()) + HOOK_SECONDS
         self._phase('hook')
-        overlay.set_menus(game_dir, dict({'until': until}, **({'rules': rules} if rules else {})))
+        launch_opts = {'until': until}
+        if self._mode() != RU.VERSUS:
+            launch_opts['mode'] = self._mode()
+        if rules:
+            launch_opts['rules'] = rules
+        overlay.set_menus(game_dir, launch_opts)
         before = (gamesetup.shadnet_log(user) or {}).get('when')
         try:
             self._phase('starting')
@@ -953,11 +989,12 @@ class MultiplayerCtl(Part):
             return self.rules
         if not isinstance(lobby, dict):
             return None
+        mode = self._mode()
         try:
-            picked = RU.validate(lobby)
+            picked = RU.validate(lobby, mode=mode)
         except RU.RulesError:
             return None             # a server speaking other rules than this app knows: the game's own
-        return picked if picked != RU.DEFAULTS else None
+        return picked if picked != RU.defaults(mode) else None
 
     @staticmethod
     def _signin_ready(user):
@@ -1147,6 +1184,8 @@ class MultiplayerCtl(Part):
         host = self.me == 0
         rules = self._rules_view(lobby, host) if isinstance(lobby.get('rules'), dict) else None   # None: a server before M3b
         return {'code': lobby.get('code'), 'public': bool(lobby.get('public')), 'state': lobby.get('state'),
+                'mode': self._mode(), 'game': GAME_NAMES[self._mode()], 'mode_pick': (
+                    {'edit': host and lobby.get('state') not in LAUNCHING} if 'mode' in lobby else None),
                 'waiting': lobby.get('waiting'), 'players': players, 'rules': rules,
                 'roster_mode': (None if 'roster_mode' not in lobby else
                                 {'mode': lobby.get('roster_mode'), 'uploaded': bool(lobby.get('host_roster')),
@@ -1161,16 +1200,21 @@ class MultiplayerCtl(Part):
     @staticmethod
     def _rules_view(lobby, host):
         """The Match rules card: one row per rule with the choices, the lobby's pick, and whether this player may change
-        it (the host, until the game is starting); `summary` names what differs from the defaults."""
+        it (the host, until the game is starting); `summary` names what differs from the defaults. In Shootout the
+        rules that game has not are listed greyed out (`off`), at their defaults and not editable."""
+        mode = lobby.get('mode') if lobby.get('mode') in RU.MODES else RU.VERSUS
         try:
-            picked = RU.validate(lobby.get('rules') or {})
+            picked = RU.validate(lobby.get('rules') or {}, mode=mode)
         except RU.RulesError:
-            picked = dict(RU.DEFAULTS)
+            picked = RU.defaults(mode)
         edit = host and lobby.get('state') not in LAUNCHING
-        rows = [{'key': key, 'label': name, 'value': picked[key], 'default': default, 'can_edit': edit,
+        used = {row[0] for row in RU.table(mode)}
+        rows = [{'key': key, 'label': name, 'value': picked.get(key, default), 'default': default,
+                 'can_edit': edit and key in used, 'off': key not in used,
                  'options': [{'value': v, 'label': text} for v, text in options]}
                 for key, name, options, default in RU.RULES]
-        return {'rows': rows, 'summary': RU.summary(picked), 'is_default': picked == RU.DEFAULTS, 'can_edit': edit}
+        return {'rows': rows, 'summary': RU.summary(picked, mode), 'is_default': picked == RU.defaults(mode),
+                'can_edit': edit}
 
     def _game_view(self, lobby):
         game = self.game
@@ -1184,13 +1228,14 @@ class MultiplayerCtl(Part):
         if phase in PHASES:
             now = (5 if matched else 4) if phase == 'running' else PHASES[phase]
             for i, text in enumerate(STEPS):
-                text = text.format(partner=partner)
+                text = text.format(game=GAME_NAMES[self._mode()]).format(partner=partner)
                 if i == 2 and (game.get('manual') or not self.press_title):
                     text = 'Press ✕ on the title screen'
                 if i == 3 and (game.get('ready_manual') or not self.press_title):
                     text = 'Press ✕ (READY) on Game Setup'
                 steps.append({'text': text, 'state': 'done' if i < now else 'now' if i == now else 'todo'})
-        return {'phase': phase, 'note': game.get('note') or '', 'manual': bool(game.get('manual')), 'steps': steps,
+        return {'phase': phase, 'game': GAME_NAMES[self._mode()], 'note': game.get('note') or '',
+                'manual': bool(game.get('manual')), 'steps': steps,
                 'again': phase in ('failed', 'ended') and bool(lobby) and lobby['state'] in LAUNCHING}
 
 

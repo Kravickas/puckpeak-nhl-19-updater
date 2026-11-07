@@ -66,18 +66,21 @@ BOX = (('shots', 'Shots'), ('hits', 'Hits'), ('pims', 'Penalty minutes'), ('ppg'
        ('ppo', 'Power play chances'), ('fow', 'Faceoffs won'), ('passc', 'Passes completed'),
        ('passa', 'Passes tried'), ('toa', 'Time on attack'), ('bs', 'Blocked shots'), ('bag', 'Breakaway goals'),
        ('bao', 'Breakaways'))
+# A Shootout's report (NHLSOReportBase::PlayerReport, lab 2026-11-07) holds gf, ga, shots and shotsa: the goals are the
+# score, so its box score is the attempts alone, and its numbers stay out of the Versus totals.
+SHOOTOUT_BOX = (('shots', 'Attempts'),)
 
 
 def _pct(part, whole):
     return round(100.0 * part / whole, 1) if whole else None
 
 
-def box_score(mine, theirs):
+def box_score(mine, theirs, mode='versus'):
     """The rows of one game's box score, [{key, label, me, them}]: a side with no number shows None. `mine`, `theirs`:
-    the two claims' stats (clean_stats) or None."""
+    the two claims' stats (clean_stats) or None; a Shootout shows its attempts only."""
     mine, theirs = mine or {}, theirs or {}
     out = []
-    for key, label in BOX:
+    for key, label in (SHOOTOUT_BOX if mode == 'shootout' else BOX):
         me, them = mine.get(key), theirs.get(key)
         if key == 'shots' and them is None:
             them = mine.get('shotsa')
@@ -109,6 +112,19 @@ def stat_summary(games):
                       'faceoffs': _pct(sum(s['fow'] for s in faceoffs), sum(s['fow'] + s['fol'] for s in faceoffs)),
                       'passing': _pct(t('passc', 0), t('passa', 0)),
                       'power_play': _pct(t('ppg', 0), t('ppo', 0))}}
+
+
+def shootout_summary(games):
+    """A player's Shootout numbers over `games` (as stat_summary's, Shootout games only): {games, shots, goals, faced,
+    allowed, rates: {shooting, saving}}. None for no game."""
+    if not games:
+        return None
+    shot = [g for g in games if g['stats'].get('shots')]
+    faced = [g for g in games if g['stats'].get('shotsa')]
+    shots, goals = sum(g['stats']['shots'] for g in shot), sum(g['for'] for g in shot)
+    seen, allowed = sum(g['stats']['shotsa'] for g in faced), sum(g['against'] for g in faced)
+    return {'games': len(games), 'shots': shots, 'goals': goals, 'faced': seen, 'allowed': allowed,
+            'rates': {'shooting': _pct(goals, shots), 'saving': _pct(max(0, seen - allowed), seen)}}
 
 
 def team_code(value):
@@ -170,6 +186,19 @@ def resolve(match):
     return out
 
 
+def mode_records(matches, pid):
+    """{mode: {w, l}} of the confirmed matches of `pid` in each game mode (versus, shootout): the numbers the game's own
+    hubs show per mode, while the rating is one over all of them."""
+    out = {'versus': {'w': 0, 'l': 0}, 'shootout': {'w': 0, 'l': 0}}
+    for m in matches:
+        r = m.get('result') or resolve(m)
+        if r['status'] != CONFIRMED or pid not in r['scores']:
+            continue
+        rec = out.setdefault(m.get('mode') or 'versus', {'w': 0, 'l': 0})
+        rec['w' if r['winner'] == pid else 'l'] += 1
+    return out
+
+
 def _blank(name):
     return {'name': name, 'w': 0, 'l': 0, 'gf': 0, 'ga': 0}
 
@@ -211,7 +240,7 @@ def player_detail(matches, who, limit=20):
     status, newest first) seen from this player's side. None when the player is in no match."""
     name = None
     record = _blank('')
-    opponents, with_team, against_team, recent, played = {}, {}, {}, [], []
+    opponents, with_team, against_team, recent, played, shootouts = {}, {}, {}, [], [], []
     for m in matches:
         mine = next((p for p in m['players'] if p['pid'] == who), None)
         if mine is None:
@@ -231,12 +260,14 @@ def player_detail(matches, who, limit=20):
                 _bump(against_team, r['teams'][theirs['pid']], won)
         mine_stats = ((m.get('claims') or {}).get(who) or {}).get('stats')
         their_stats = ((m.get('claims') or {}).get(theirs['pid']) or {}).get('stats')
+        mode = m.get('mode') or 'versus'
         if won is not None and mine_stats:
-            played.append({'stats': with_opponent(mine_stats, their_stats), 'for': r['scores'][who],
-                           'against': r['scores'][theirs['pid']]})
+            (shootouts if mode == 'shootout' else played).append(
+                {'stats': with_opponent(mine_stats, their_stats), 'for': r['scores'][who],
+                 'against': r['scores'][theirs['pid']]})
         if len(recent) < limit:
             recent.append({'id': m['id'], 'started': m['started'], 'status': r['status'], 'rules': m.get('rules'),
-                           'box': box_score(mine_stats, their_stats),
+                           'mode': mode, 'box': box_score(mine_stats, their_stats, mode),
                            'opponent': theirs, 'team': r['teams'][who], 'opp_team': r['teams'][theirs['pid']],
                            'for': r['scores'][who], 'against': r['scores'][theirs['pid']],
                            'result': None if won is None else 'W' if won else 'L'})
@@ -247,4 +278,4 @@ def player_detail(matches, who, limit=20):
             'opponents': _by_games({'pid': k[0], 'name': k[1], **v} for k, v in opponents.items()),
             'teams': _by_games({'team': k, **v} for k, v in with_team.items()),
             'against': _by_games({'team': k, **v} for k, v in against_team.items()),
-            'recent': recent, 'stats': stat_summary(played)}
+            'recent': recent, 'stats': stat_summary(played), 'shootout': shootout_summary(shootouts)}

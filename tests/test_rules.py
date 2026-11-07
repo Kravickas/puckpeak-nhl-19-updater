@@ -65,3 +65,47 @@ def test_edit_refuses_another_shape():
         rules.edit(raw.replace(block, block + b',\r\n' + block), {'fighting': 0})
     with pytest.raises(rules.RulesError):
         rules.edit(raw, {'periodlength': 7})
+
+
+def shootout_file(**values):
+    """The Online Shootout rules file's shape: the rules the game lists, with its shootoutrules / shootoutshots too."""
+    keys = ('gametype', 'shootoutrules', 'goaliecontrol', 'shootoutshots', 'skilllevel', 'gamestyle')
+    base = {'gametype': '25', 'shootoutrules': '1', 'shootoutshots': '5', **rules.SHOOTOUT_DEFAULTS}
+    body = [('                {\r\n'
+             f'                    "rulename": "{k}",\r\n'
+             f'                    "attributename": "NHL_{k.title()}",\r\n'
+             f'                    "sagameattributetag": "SA_GAMEATTRIBUTE_{k.upper()}",\r\n'
+             f'                    "defaultvalue": "{values.get(k, base[k])}"\r\n'
+             '                }') for k in keys]
+    return ('{\r\n    "rules":\r\n    {\r\n        "custom":\r\n        {\r\n            "game":\r\n            [\r\n'
+            + ',\r\n'.join(body) + '\r\n            ]\r\n        }\r\n    }\r\n}\r\n').encode()
+
+
+def test_shootout_table_is_the_short_one():
+    assert [r[0] for r in rules.table(rules.SHOOTOUT)] == ['skilllevel', 'gamestyle', 'goaliecontrol']
+    assert rules.defaults(rules.SHOOTOUT) == {'skilllevel': '3', 'gamestyle': '2', 'goaliecontrol': '1'}
+    assert rules.path(rules.SHOOTOUT) != rules.path(rules.VERSUS) and 'shootout' in rules.path(rules.SHOOTOUT)
+    assert rules.table() is rules.RULES and rules.defaults() == rules.DEFAULTS
+    with pytest.raises(rules.RulesError):
+        rules.table('hut')
+
+
+def test_validate_per_mode_refuses_rules_the_mode_lacks():
+    assert rules.validate({'goaliecontrol': 0}, mode=rules.SHOOTOUT) == {**rules.SHOOTOUT_DEFAULTS, 'goaliecontrol': '0'}
+    assert set(rules.validate({}, mode=rules.SHOOTOUT)) == {'skilllevel', 'gamestyle', 'goaliecontrol'}
+    for bad in ({'periodlength': 10}, {'icing': 0}, {'tiebreaker': 1}):
+        with pytest.raises(rules.RulesError):
+            rules.validate(bad, mode=rules.SHOOTOUT)
+    assert rules.validate({'periodlength': 10})['periodlength'] == '10'      # Versus is as before
+
+
+def test_shootout_summary_and_edit():
+    assert rules.summary(rules.SHOOTOUT_DEFAULTS, rules.SHOOTOUT) == 'Default rules'
+    assert rules.summary({'skilllevel': '4', 'goaliecontrol': '0'}, rules.SHOOTOUT) == 'Superstar · Goalie in shootout off'
+    raw = shootout_file()
+    new = rules.edit(raw, {'skilllevel': 4, 'goaliecontrol': 0}, mode=rules.SHOOTOUT)
+    assert rules.read(new)['skilllevel'] == '4' and rules.read(new)['goaliecontrol'] == '0'
+    assert b'"defaultvalue": "5"' in new and b'"defaultvalue": "25"' in new       # shots per round and game type stay
+    assert rules.edit(raw, {}, mode=rules.SHOOTOUT) == raw
+    with pytest.raises(rules.RulesError):
+        rules.edit(raw, {'periodlength': 10}, mode=rules.SHOOTOUT)

@@ -258,23 +258,42 @@ function RosterPick({ roster, host, hostName }) {
         : html`<span class="mp-rule-value">${picked ? picked.label : roster.mode}</span>`}
     </label>
     ${own && host && html`<div class="mp-note">The roster open in Overtime Roster (with your edits and lines; none open: the one
-      Patch put on your game) is sent when you press Ready. Both games download it in Online Versus.</div>`}
+      Patch put on your game) is sent when you press Ready. Both games download it online.</div>`}
     ${own && !host && html`<div class="mp-note">${hostName || 'The host'} plays their own roster.
       ${roster.uploaded ? 'Your game downloads it when you press PLAY.' : 'It is sent when they press Ready.'}</div>`}
   </div>`;
 }
 
-function Rules({ rules, host, hostName, roster }) {
+// the game the lobby plays: Online Versus or Online Shootout (the host picks; Shootout greys out the rules it has not)
+const MODE_OPTIONS = [
+  { value: 'versus', label: 'VERSUS' },
+  { value: 'shootout', label: 'SHOOTOUT' },
+];
+
+function ModePick({ mode, pick }) {
+  return html`<div class="mp-rule mp-mode-pick">
+    <span class="mp-rule-label caps">Game</span>
+    <${Segmented} options=${MODE_OPTIONS} value=${mode} disabled=${!pick.edit} onChange=${(v) => call('mp_set_mode', v)}/>
+  </div>`;
+}
+
+function Rules({ rules, host, hostName, roster, mode, modePick }) {
   const edit = rules.can_edit;
   return html`<${Card} n=${3} title="Match rules"
       aside=${html`<${Tag} tone=${rules.is_default ? 'info' : 'accent'}>${rules.summary}<//>`}>
     <div class="mp-body">
-      ${roster && html`<${RosterPick} roster=${roster} host=${host} hostName=${hostName}/>`}
+      ${(modePick || roster) && html`<div class="mp-pick-row">
+        ${modePick && html`<${ModePick} mode=${mode} pick=${modePick}/>`}
+        ${roster && html`<${RosterPick} roster=${roster} host=${host} hostName=${hostName}/>`}
+      </div>`}
+      ${mode === 'shootout' && html`<div class="mp-note">Online Shootout: a penalty shootout, 1 against 1. The greyed rules do not apply.
+        Shootout games count in the same rating as Versus.</div>`}
       <div class="mp-rules">${rules.rows.map((r) => {
         const picked = r.options.find((o) => o.value === r.value);
-        return html`<label key=${r.key} class=${cls('mp-rule', r.value !== r.default && 'changed')}>
+        return html`<label key=${r.key} class=${cls('mp-rule', r.value !== r.default && 'changed', r.off && 'off')}
+            title=${r.off ? 'Does not apply to Shootout' : null}>
           <span class="mp-rule-label caps">${r.label}</span>
-          ${edit
+          ${edit && !r.off
             ? html`<${Select} value=${r.value} options=${r.options} onChange=${(v) => call('mp_set_rule', r.key, v)}/>`
             : html`<span class="mp-rule-value">${picked ? picked.label : r.value}</span>`}
         </label>`;
@@ -297,7 +316,7 @@ function Game({ game }) {
       ${failed && html`<div class="mp-steps"><div class="mp-step fail"><span class="n">!</span>${game.note}</div></div>`}
       ${!failed && game.note && html`<div class="mp-note">${game.note}</div>`}
       ${game.manual && !failed && html`<div class="mp-manual">Not moving? Press <b>✕</b> on the title screen (twice if the
-        first only wakes the window). The game then goes to Online Versus by itself.</div>`}
+        first only wakes the window). The game then goes to Online ${game.game || 'Versus'} by itself.</div>`}
       ${game.again && html`<div class="mp-row"><${Button} small onClick=${() => call('mp_launch_now')}>Start the game again<//></div>`}
     </div>
   </${Card}>`;
@@ -323,7 +342,7 @@ function MatchRow({ m }) {
     </div>
     <div class="mp-match-sub">
       <${Tag} tone=${STATUS_TONE[m.tone] || 'info'}>${m.text}<//>
-      <span class="mp-ago">${m.ago}${m.rules && m.rules !== 'Default rules' ? ` \u00b7 ${m.rules}` : ''}</span>
+      <span class="mp-ago">${m.ago}${m.mode === 'shootout' ? ' · Shootout' : ''}${m.rules && m.rules !== 'Default rules' ? ` \u00b7 ${m.rules}` : ''}</span>
       ${m.delta != null && html`<span class=${cls('mp-delta', m.delta > 0 && 'plus', m.delta < 0 && 'minus')}>${signed(m.delta)}</span>`}
       <span class="sp"></span>
       ${m.mine && m.status === 'confirmed' && html`<${Button} small kind="ghost" onClick=${() => call('mp_review_open', m.id)}>Review<//>`}
@@ -353,6 +372,7 @@ function RatingStrip({ r }) {
       <span class="mp-rating-tier"><${Tag} tone=${r.ranked ? 'good' : 'info'}>${r.ranked ? r.tier : `Placing ${5 - r.placing}/5`}<//>
         <span class="mp-note">${r.ranked ? `#${r.rank} of ${r.of}` : `${r.placing} more rated ${r.placing === 1 ? 'game' : 'games'} to get your rank`}</span></span></div>
     <div class="mp-rating-sub">${r.change != null && html`<span class=${cls('mp-delta', r.change > 0 && 'plus', r.change < 0 && 'minus')}>${signed(r.change)} last game</span>`}
+      ${r.modes && r.modes.length > 0 && html`<span class="mp-note">${r.modes.map((m) => `${m.name} ${m.record}`).join(' · ')}</span>`}
       <span class="mp-note">${r.record}${Math.abs(r.streak) >= 2 ? ` \u00b7 ${Math.abs(r.streak)} ${r.streak > 0 ? 'wins' : 'losses'} in a row` : ''}</span></div>
     ${r.next && r.ranked && html`<div class="mp-progress" title=${`${r.next.to_go} to ${r.next.name}`}><span style=${{ width: `${Math.round((r.next.progress || 0) * 100)}%` }}></span></div>
       <span class="mp-note mp-progress-n">${r.next.to_go} to ${r.next.name} (${r.next.at})</span>`}
@@ -367,12 +387,15 @@ function MyGames({ g }) {
     <div class="mp-tally"><span class="mp-tally-n">${g.w}–${g.l}</span>
       <span class="mp-note">${g.played} confirmed ${g.played === 1 ? 'game' : 'games'}, goals ${g.gf}–${g.ga}</span></div>
     ${o
-      ? html`<div class="caps mp-sub">Per game over ${o.games} ${o.games === 1 ? 'game' : 'games'} with the game's numbers</div>
+      ? html`<div class="caps mp-sub">Per Versus game over ${o.games} ${o.games === 1 ? 'game' : 'games'} with the game's numbers</div>
         <div class="mp-avg">${o.avg.map((a) => html`<div class="mp-avg-cell" key=${a.key} title=${`Total ${a.total}`}>
           <span class="mp-avg-v">${a.value}</span><span class="mp-note">${a.label}</span></div>`)}</div>
         ${o.rates.length > 0 && html`<div class="mp-rates">${o.rates.map((r) => html`<span key=${r.label}><b>${r.value}</b> <span class="mp-note">${r.label}</span></span>`)}</div>`}`
-      : html`<div class="mp-empty">No numbers yet. They come from the game's own match report after an online game;
+      : !g.shootout && html`<div class="mp-empty">No numbers yet. They come from the game's own match report after an online game;
         a result typed in the app has no numbers.</div>`}
+    ${g.shootout && html`<div class="caps mp-sub">Shootout over ${g.shootout.games} ${g.shootout.games === 1 ? 'game' : 'games'}</div>
+      <div class="mp-note">${g.shootout.line}</div>
+      ${g.shootout.rates.length > 0 && html`<div class="mp-rates">${g.shootout.rates.map((r) => html`<span key=${r.label}><b>${r.value}</b> <span class="mp-note">${r.label}</span></span>`)}</div>`}`}
     <div class="caps mp-sub">My games</div>
     <div class="mp-recent">${g.games.map((m) => html`<details class=${cls('mp-game', m.result)} key=${m.id}>
       <summary class=${cls('mp-recent-row', m.result)}>
@@ -380,7 +403,7 @@ function MyGames({ g }) {
         <span class="mp-recent-main">${m.for != null && m.status === 'confirmed'
           ? html`${m.team || '?'} ${m.for}–${m.against} ${m.opp_team || '?'}<span class="mp-note"> against ${m.opponent}</span>`
           : html`Against ${m.opponent}`}</span>
-        <span class="mp-ago">${m.status === 'confirmed' ? '' : m.status + ' · '}${m.ago}</span></summary>
+        <span class="mp-ago">${m.status === 'confirmed' ? '' : m.status + ' · '}${m.ago}${m.mode === 'shootout' ? ' · Shootout' : ''}</span></summary>
       ${m.box.length
         ? html`<div class="mp-box"><div class="mp-box-row head caps"><span></span><span>Me</span><span>Them</span></div>
             ${m.box.map((r) => html`<div class="mp-box-row" key=${r.label}><span>${r.label}</span><b>${r.me}</b><span>${r.them}</span></div>`)}</div>`
@@ -538,7 +561,7 @@ export default function Multiplayer({ go }) {
               : html`<div class="mp-body"><div class="mp-empty">Sign in to ShadNet first (left): a lobby is tied to your game's own sign-in.</div></div>`}
           </${Card}>`}
       ${s.lobby && s.lobby.rules && html`<${Rules} rules=${s.lobby.rules} host=${s.lobby.host} hostName=${s.lobby.host_name}
-          roster=${s.lobby.roster_mode}/>`}
+          roster=${s.lobby.roster_mode} mode=${s.lobby.mode} modePick=${s.lobby.mode_pick}/>`}
       ${s.game && html`<${Game} game=${s.game}/>`}
       ${s.history && s.history.supported && html`<${History} h=${s.history}/>`}
     </div>

@@ -19,9 +19,9 @@ Questions, news and help: **[gg.puckpeak.com](https://gg.puckpeak.com)**
 ## ✨ Highlights
 
 - 🌐 **Online again.** EA switched NHL 19's servers off. The game patch points NHL 19 at the Overtime community server,
-  so Online Versus works again. The game downloads the current online roster by itself, so both players play the same
+  so Online Versus and Online Shootout work again. The game downloads the current online roster by itself, so both players play the same
   one.
-- 🎮 **Multiplayer (closed beta).** Host or join a lobby, the host picks the match rules (Competitive, Full Sim,
+- 🎮 **Multiplayer (closed beta).** Host or join a lobby, the host picks Versus or Shootout and the match rules (Competitive, Full Sim,
   Continuous OT, ...), and one press starts the game. You get ranks, a leaderboard, match history, lobby chat and an
   in-game overlay.
 - 🏟 **32 teams.** The Seattle Kraken and Utah join the league: in Play Now, in Be a Pro (a career as a Kraken) and in a

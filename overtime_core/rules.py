@@ -9,6 +9,11 @@ and defaults here are ids the game's files use; the labels follow the words the 
 import re
 
 RULES_PATH = 'nhl/data/common/gamemodes/matchmaking/online_playnow_casual_h2h.json'
+SHOOTOUT_PATH = 'nhl/data/common/gamemodes/matchmaking/online_shootout_competitive.json'
+# The two Online modes of the Multiplayer tab. Shootout searches with its own scenario (online_shootout_competitive:
+# NHL_GameType 25) and a shorter list of rules (docs/notes/online-shootout.md).
+VERSUS, SHOOTOUT = 'versus', 'shootout'
+MODES = (VERSUS, SHOOTOUT)
 
 
 class RulesError(ValueError):
@@ -35,19 +40,46 @@ RULES = (
                                       (5, 'Single OT 5 on 5')), '0'),
     ('goaliecontrol', 'Goalie in shootout', _opts((0, 'Off'), (1, 'On')), '1'),
 )
+# The rules of an Online Shootout game: the game's file also holds shootoutrules (1) and shootoutshots (5), which stay as
+# the game ships them (their other values and labels are not known). Skill level, game style and goalie control are the
+# same rules as Versus', so one row means the same in both tables.
+_SHOOTOUT_KEYS = ('skilllevel', 'gamestyle', 'goaliecontrol')
+SHOOTOUT_RULES = tuple(r for k in _SHOOTOUT_KEYS for r in RULES if r[0] == k)
+TABLES = {VERSUS: RULES, SHOOTOUT: SHOOTOUT_RULES}
+PATHS = {VERSUS: RULES_PATH, SHOOTOUT: SHOOTOUT_PATH}
 KEYS = tuple(r[0] for r in RULES)
 DEFAULTS = {key: default for key, _label, _options, default in RULES}
+SHOOTOUT_DEFAULTS = {key: default for key, _label, _options, default in SHOOTOUT_RULES}
 _BY_KEY = {r[0]: r for r in RULES}
 
 
-def validate(settings, partial=False):
-    """The rules as {key: value string}, every key present (missing ones take the default unless `partial`, which returns
-    only the given ones). Values may be numbers or strings; an unknown key or value is refused with a text."""
+def table(mode=VERSUS):
+    """The rows ((key, label, options, default)) of one mode's rules."""
+    try:
+        return TABLES[mode]
+    except KeyError:
+        raise RulesError('The game mode is versus or shootout.') from None
+
+
+def defaults(mode=VERSUS):
+    return {key: default for key, _label, _options, default in table(mode)}
+
+
+def path(mode=VERSUS):
+    table(mode)
+    return PATHS[mode]
+
+
+def validate(settings, partial=False, mode=VERSUS):
+    """The rules of `mode` as {key: value string}, every key present (missing ones take the default unless `partial`, which
+    returns only the given ones). Values may be numbers or strings; an unknown key (one the mode does not have) or value
+    is refused with a text."""
     if not isinstance(settings, dict):
         raise RulesError('The match rules are a list of choices.')
-    out = {} if partial else dict(DEFAULTS)
+    rows = {r[0]: r for r in table(mode)}
+    out = {} if partial else defaults(mode)
     for key, value in settings.items():
-        rule = _BY_KEY.get(key)
+        rule = rows.get(key)
         if rule is None:
             raise RulesError(f'Unknown match rule: {str(key)[:30]}.')
         if isinstance(value, bool) or not isinstance(value, (int, str)):
@@ -67,10 +99,10 @@ def label(key, value):
     return str(value)
 
 
-def summary(settings):
+def summary(settings, mode=VERSUS):
     """'10 min · Full sim · Fighting off' in the card's words: only what differs from the defaults, 'Default rules' else."""
     parts = []
-    for key, name, _options, default in RULES:
+    for key, name, _options, default in table(mode):
         value = str(settings.get(key, default))
         if value == default:
             continue
@@ -95,10 +127,11 @@ def read(raw):
     return out
 
 
-def edit(raw, settings):
-    """The rules file with each given rule's `defaultvalue` set; every other byte stays. A rule missing from the file
-    or present twice, or a value the table does not know, is refused: the game's file is not the one this edit knows."""
-    wanted = validate(settings, partial=True)
+def edit(raw, settings, mode=VERSUS):
+    """The rules file (of `mode`) with each given rule's `defaultvalue` set; every other byte stays. A rule missing from
+    the file or present twice, or a value the table does not know, is refused: the game's file is not the one this edit
+    knows."""
+    wanted = validate(settings, partial=True, mode=mode)
     for key, value in wanted.items():
         found = _pattern(key).findall(raw)
         if len(found) != 1:
