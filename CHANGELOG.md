@@ -26,13 +26,16 @@ What changed in each version, for players.
 - **Sharper jerseys, club logos and photos made on this PC.** They were compressed with Pillow's own BCn writer, which
   picks a block's two colours badly, never gives BC3 alpha its own ends and cannot write BC7. A new encoder (numpy,
   in the exe) does it properly, checked against two decoders. Every texture keeps the game's own size, format, mips and
-  header (checked byte for byte on the game's Czech jerseys). Measured on the national team pack's pictures (10 of each
-  kind, at the game's sizes):
-  - 3D jerseys (2048, BC1) 35.3 to 43.4 dB on average, socks 35.5 to 47.3, the numbers (BC3) 32.4 to 44.6;
-  - UI jerseys, logos and photos (the game's BC7 art) stay BC7 instead of turning into BC3: UI jerseys 38.6 to 47.3 dB,
-    a photo 32.7 to 45.1, a logo with soft edges 29.3 to 36.0 (what shows: colour times alpha);
-  - the Czech chest logo on the game's own jersey textures 32.1 to 37.0 dB (home), 32.6 to 35.5 (away): no stair steps,
-    specks or pink white.
+  header (checked byte for byte on the game's Czech jerseys). How close a made texture is to its picture (100 % =
+  identical, from the average difference of every colour value), and how much smaller that difference got, measured on
+  the national team pack (10 of each kind, at the game's sizes):
+  - 3D jerseys 98.7 % to 99.8 % (the difference 84 % smaller), socks 98.6 % to 99.9 % (93 % smaller), the numbers
+    99.2 % to 99.9 % (85 % smaller);
+  - UI jerseys, logos and photos (the game's BC7 art) stay BC7 instead of turning into BC3: UI jerseys 99.7 % to 99.8 %
+    (45 % smaller), a photo 98.9 % to 99.7 % (73 % smaller), a logo with soft edges 98.9 % to 99.6 % (61 % smaller);
+  - the Czech chest logo on the game's own jersey textures 98.2 % to 99.5 % (home, 71 % smaller), 98.8 % to 99.4 %
+    (away, 48 % smaller): no stair steps, specks or pink white;
+  - a block of one colour (three quarters of a jersey) gets the best colour pair there is, from a table.
 - **Mips made like the game's own.** Measured on NHL 19's own Czech jerseys, their mips are their full size scaled
   down with a bicubic filter in the stored colour numbers; the made ones were box-filtered, which is softer. The mips
   (what shows a few metres away: the screenshot's chest logo is mip 2) are now made that way, weighted by alpha, and
@@ -63,12 +66,8 @@ What changed in each version, for players.
 - Making a texture takes longer: a jersey colour map (2048 x 2048, its mips included) about 2.7 s instead of 0.5 s
   on one core, a 512 x 340 BC7 photo about 1.4 s. A photo is made once and kept in the photo cache, next to its
   picture.
-- **Jerseys made 2.7 times faster than the first 0.80.1 build** (7.4 to 2.7 s for a Czech jersey colour map here),
-  and a little sharper: three quarters of a jersey's blocks are one colour, and those now take the best colour pair
-  there is from a table instead of a search (their error about halved; the Czech jersey 43.1 to 43.3 dB). The search
-  of the other blocks no longer tries blocks it has made exact (the same bytes, faster).
 - **The art archive is read on every core while Patch writes it**: each texture is unpacked and checked against its
-  pack on its own thread, written in order (the archive is byte for byte the same). The game's normal and colour
+  pack on its own thread, written in order (byte for byte the archive one core writes). The game's normal and colour
   maps the jerseys cover are unpacked on the workers too, not on the one thread that reads the archives.
 - The exe is about 10 MB larger (numpy).
 - **A faster Update**: each team's look at the roster reads a table's column in one pass instead of one field at a
