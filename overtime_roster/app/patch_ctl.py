@@ -730,6 +730,31 @@ def refresh_network(setup):
     return 'written'
 
 
+def online_minimum(setup):
+    """The least a game needs to play online, for an online Ready on a game without the patch (multiplayer_ctl; owner
+    2026-11-08: "only the bare minimum for online ... so it doesnt take a lot of time"): the eboot patch file of this
+    version (server, network fixes, the 32-team switch on), shadPS4's network keys and, on a game
+    with no data patch at all, the menus layer alone (the online start the lobby's launch needs; 0.1 s to build). No
+    roster, text, art or clean-game record: those are Patch's, and an online match plays the lobby's roster. About a
+    second. Returns the manifest (gamesetup.install).
+    The 32-team switch is on as in every fully patched game (its roster has an active Seattle), so the two patches hash
+    the same (xmlpatch.netplay_fingerprint counts it). Off-line, a New Season on the stock roster with the switch on can
+    crash (ws8 run7a): Patch sets it by the roster then."""
+    emu, game_dir = setup.known_emulator(), setup.ctl.game_dir
+    if not emu:
+        raise gamesetup.SetupError('Pick shadPS4 in Setup first.')
+    layers = (overlay.status(game_dir) or {}).get('layers') or {} if game_dir else {}
+    if game_dir and not layers:
+        overlay.apply(game_dir, ('menus',), menus={'news': True})
+    xml = setup._xml()
+    if 'league' not in layers:
+        xml = xmlpatch.bap32_off(xml)           # Seattle in Be a Pro needs the league layer's Lua (local only)
+    manifest = gamesetup.install(emu, xml)
+    setup.ctl.host.log('Online: the eboot patch, network keys%s put in for online play (no full Patch).'
+                       % ('' if layers else ' and the online start'))
+    return manifest
+
+
 def _refresh_before_start(setup):
     """refresh_network before a start; a failure is logged and the game starts as it is."""
     try:

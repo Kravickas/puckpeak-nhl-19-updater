@@ -94,9 +94,10 @@ class LobbyClient:
         return self._call('POST', f'/api/lobby/{_code(code)}/join',
                           {'name': name, 'ext': ext, **({'roster_crc': roster_crc} if roster_crc else {})})
 
-    def ready(self, code, token, value=True, patch=None):
+    def ready(self, code, token, value=True, patch=None, game=None):
         return self._call('POST', f'/api/lobby/{_code(code)}/ready', {'token': token, 'ready': bool(value),
-                                                                      **({'patch': patch} if patch else {})})
+                                                                      **({'patch': patch} if patch else {}),
+                                                                      **({'game': game} if game else {})})
 
     def mode(self, code, token, mode):
         """The host picks the game, 'versus' or 'shootout' (a server before 0.71 has no such call: 404)."""

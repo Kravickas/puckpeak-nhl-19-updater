@@ -17,6 +17,8 @@ const STATE_CHIP = {
 };
 const STAGE_TEXT = { lobby: 'game starting', setup: 'Game Setup', searching: 'searching', matched: 'matched' };
 const GO_TEXT = { setup: 'Setup', patch: 'Game patch', update: 'Update' };
+const GAME_TEXT = { title: 'NHL 19 release (title id)', data: 'game data', layers: 'Game patch switches', emu: 'shadPS4 build revision',
+  timing: 'shadPS4 vblank / PS4 Pro mode' };
 
 function copy(text) {
   try {
@@ -171,6 +173,10 @@ function Pick({ s }) {
 function Player({ p, launching }) {
   const roster = p.roster === 'ok' ? html`<${Tag} tone="good">roster ok<//>`
     : p.roster === 'mismatch' ? html`<${Tag} tone="bad">roster differs<//>` : null;
+  // live 2026-11-08: installs that differ (title id, game data, data patch layers) may desync; the server only warns
+  const game = p.game && p.game.length
+    ? html`<span title=${'Not the same as the other game: ' + p.game.map((k) => GAME_TEXT[k] || k).join(', ')
+        + '. This may end the match early. Compare Setup on both PCs.'}><${Tag} tone="caution">game differs<//></span>` : null;
   return html`<div class=${cls('mp-player', p.ready && 'ready')}>
     <span class="mp-player-name">${p.name}${p.you && html`<span class="you caps">you</span>`}</span>
     <div class="mp-marks">
@@ -178,6 +184,7 @@ function Player({ p, launching }) {
         ? html`<${Tag} tone="info">${STAGE_TEXT[p.stage] || p.stage}<//>`
         : html`<${Tag} tone=${p.ready ? 'good' : 'caution'}>${p.ready ? 'ready' : 'not ready'}<//>`}
       ${roster}
+      ${game}
     </div>
   </div>`;
 }
@@ -226,12 +233,14 @@ function Lobby({ s }) {
         on both PCs, then launch again.</div>`}
       ${!launching && html`<div class="mp-row">
         ${l.state === 'open' && html`<${Button} kind="gold" big disabled>Waiting for a friend<//>`}
-        ${l.state === 'full' && !l.me_ready && html`<${Button} kind="gold" big onClick=${() => call('mp_ready', true)}>Ready<//>`}
+        ${l.state === 'full' && !l.me_ready && html`<${Button} kind="gold" big disabled=${!!s.busy}
+          onClick=${() => call('mp_ready', true)}>${s.prep ? 'Getting ready...' : 'Ready'}<//>`}
         ${l.state === 'full' && l.me_ready && html`<${Button} kind="gold" big disabled>Waiting for ${l.partner}<//>
           <${Button} small kind="ghost" onClick=${() => call('mp_ready', false)}>Not ready<//>`}
         <span class="sp"></span>
         <${Button} small kind="ghost" onClick=${() => call('mp_leave')}>Leave<//>
       </div>`}
+      ${s.prep && html`<div class="mp-note">${s.prep}</div>`}
       ${!launching && l.state === 'open' && html`<div class="mp-note">Give your friend the code. Both press Ready, then the game starts by itself.</div>`}
       ${launching && html`<div class="mp-row"><span class="sp"></span><${Button} small kind="ghost" onClick=${() => call('mp_leave')}>Leave<//></div>`}
       ${l.players.length > 1 && l.chat && html`<${Chat} chat=${l.chat} hud=${s.you.hud}/>`}

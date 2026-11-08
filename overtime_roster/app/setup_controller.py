@@ -865,9 +865,7 @@ class SetupController(Part):
 
     def _boost_on(self, current):
         c = self.ctl
-        keep = dict(self.boost)     # what QtLauncher had before stays, also when a shadPS4 was picked by hand since
-        if not boost.same(current, boost.exe_path()):
-            keep['emulator'] = current
+        keep = self._boost_keep(current)
 
         def progress(_name, done, total):
             part = min(1.0, done / total) if total else 0.0
@@ -880,20 +878,72 @@ class SetupController(Part):
             return boost.enable(patch_cache(), progress)
 
         def said(out):
-            exe, sha, selected = out
-            with c.lock:
-                self.boost = {**keep, 'sha256': sha}
-                if 'selected' not in keep and selected is not None:
-                    self.boost['selected'] = selected
-                self.emulator = exe
-                self._remember()
-            c.host.log(f'Boost performance on: {exe}')
+            self._boost_applied(keep, out)
             return 'Boost performance is on: NHL 19 now plays on the Kravickas build.', 'good'
 
         def after():
             with c.lock:
                 self.boost_part = None
         return self._job('Turning on Boost performance...', work, said, expected=(boost.BoostError,), after=after)
+
+    def _boost_keep(self, current):
+        keep = dict(self.boost)     # what QtLauncher had before stays, also when a shadPS4 was picked by hand since
+        if current and not boost.same(current, boost.exe_path()):
+            keep['emulator'] = current
+        return keep
+
+    def _boost_applied(self, keep, out):
+        exe, sha, selected = out
+        with self.ctl.lock:
+            self.boost = {**keep, 'sha256': sha}
+            if 'selected' not in keep and selected is not None:
+                self.boost['selected'] = selected
+            self.emulator = exe
+            self._remember()
+        self.ctl.host.log(f'Boost performance on: {exe}')
+
+    def online_boost(self, note=None):
+        """Before an online Ready (multiplayer_ctl): NHL 19 on the published Kravickas build, switched on or brought up
+        to date with no click (owner 2026-11-08: "we just handle all things for him"). Lockstep play needs the same
+        shadPS4 on both PCs: sonku's other build desynced with gr4vity's through both relays. Waits for the download.
+        Returns what it did: 'on', 'already', or why not ('none published', a refusal); the lobby compares what is
+        there either way."""
+        c = self.ctl
+        pub = (self.boost_table or {}).get(boost.PACK)
+        current = self.known_emulator()
+        on = boost.same(current, boost.exe_path()) and os.path.isfile(current)
+        if on and (pub is None or pub.digest == self.boost.get('sha256')):
+            return 'already'
+        if pub is None:
+            return 'none published'
+        no = boost.refused(current, True)
+        with c.lock:
+            if not no and c.busy:
+                no = waiting(c.busy)
+            if not no:
+                c.busy = 'Getting the NHL 19 build of shadPS4 for online play...'
+        if no:
+            c.host.log(f'Online: the Kravickas build not switched on ({no})')
+            return no
+        keep = self._boost_keep(current)
+
+        def progress(_name, done, total):
+            part = min(1.0, done / total) if total else 0.0
+            with c.lock:
+                self.boost_part = part
+            if note:
+                note(f'Getting the NHL 19 build of shadPS4 for online play... {round(part * 100)} %')
+            c.changed('setup')
+        try:
+            self._boost_applied(keep, boost.enable(patch_cache(), progress))
+            return 'on'
+        except (boost.BoostError, OSError, ValueError) as err:
+            c.host.log(f'Online: the Kravickas build did not download ({err})')
+            return str(err) or 'download failed'
+        finally:
+            with c.lock:
+                c.busy, self.boost_part = None, None
+            c.changed('setup')
 
     def _boost_off(self):
         c = self.ctl

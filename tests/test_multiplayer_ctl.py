@@ -72,8 +72,8 @@ class FakeService:
         self.lobby['players'].insert(0, {'name': 'Bo', 'ready': False, 'launch': False, 'roster': 'unknown', 'stage': 'lobby'})
         return {'token': 'secret-token', 'you': 1, 'lobby': self.lobby}
 
-    def ready(self, code, token, value=True, patch=None):
-        self.patch = patch
+    def ready(self, code, token, value=True, patch=None, game=None):
+        self.patch, self.game = patch, game
         self._go('ready', code, token, value)
         return {**self.lobby, 'you': 0}
 
@@ -380,6 +380,39 @@ def test_leaving_shows_the_public_list_again(mp):
     assert mp.lobbies == []
     mp.leave()
     assert [r['code'] for r in mp.view()['lobbies']] == ['AB123'] and mp.ctl.pushed[-1] == 'multiplayer'
+
+
+def test_ready_first_makes_the_game_fit_for_online_with_no_click(mp, monkeypatch):
+    # owner 2026-11-08: the Kravickas build and the bare-minimum patch go in by themselves before the lobby is told
+    start_lobby(mp)
+    done, prints = [], iter(['none', 'f' * 20])
+    mp.ctl.setup.online_boost = lambda note: done.append('boost') or note('Getting...') or 'on'
+    monkeypatch.setattr(MC.patch_ctl, '_refresh_before_start', lambda setup: done.append('refresh'))
+    monkeypatch.setattr(MC.patch_ctl, 'online_minimum', lambda setup: done.append('minimum'))
+    monkeypatch.setattr(MC.overlay, 'status', lambda game_dir: {'layers': {}})
+    monkeypatch.setattr(MC.gamesetup, 'patch_fingerprint', lambda emu: next(prints))
+    mp.service.lobby['players'].append({'name': 'Bo', 'ready': False, 'launch': False, 'roster': 'unknown', 'stage': 'lobby'})
+    mp.service.lobby.update(state='full')
+    assert mp.ready(True) == {'ok': True}
+    assert done == ['boost', 'refresh', 'minimum'] and mp.busy == '' and mp.prep == ''
+    assert mp.service.calls[-1][0] == 'ready'
+    # the same lobby never patches twice (a game that stays unpatched is the lobby's to refuse)
+    prints = iter(['none', 'none'])
+    mp.ready(True)
+    assert done.count('minimum') == 1
+
+
+def test_a_lobby_refusal_says_what_ready_could_not_do_here(mp, monkeypatch):
+    start_lobby(mp)
+    mp.ctl.setup.online_boost = lambda note: 'Close shadPS4 first.'
+    monkeypatch.setattr(MC.patch_ctl, '_refresh_before_start', lambda setup: None)
+    monkeypatch.setattr(MC.overlay, 'status', lambda game_dir: {'layers': {'menus': {}}})
+    monkeypatch.setattr(MC.gamesetup, 'patch_fingerprint', lambda emu: 'f' * 20)
+    mp.service.lobby['players'].append({'name': 'Bo', 'ready': False, 'launch': False, 'roster': 'unknown', 'stage': 'lobby'})
+    mp.service.lobby.update(state='full')
+    mp.service.fail = LC.LobbyRefused(409, 'two shadPS4 builds')
+    got = mp.ready(True)
+    assert 'two shadPS4 builds (here: the NHL 19 build of shadPS4 could not be switched on (Close shadPS4 first))'         == got['error']
 
 
 def test_ready_and_the_launch_trigger(mp):

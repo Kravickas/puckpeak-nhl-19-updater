@@ -27,6 +27,7 @@ A string slot holds as many characters as the stock string it replaces (its NUL 
 `https://ot.puckpeak.com/` (24) fits only the accounts slot, `https://91.98.195.150/` (22) fits all three
 (docs/notes/remaster-recon.md). Addresses are eboot vaddr + 0x400000 (docs/notes/shadps4-network.md).
 """
+import hashlib
 import re
 import xml.etree.ElementTree as ET
 from string import Template
@@ -321,3 +322,19 @@ def repoint(text, host, nucleus_url=None):
     if not same:
         raise PatchError('the patch file is not the one this Overtime writes; Patch the game again')
     return with_res1440(_switched(build(host, nucleus_url, newline=newline), e32, bap), res)
+
+
+# Blocks and lines that never reach the other game: the picture size (Setup's Resolution), Be a Pro (offline only, off
+# with the league switch) and the server's name (one lobby is one server, whatever name or address the app was given).
+LOCAL_ONLY_TITLES = (RES1440_TITLE, BAP32_TITLE)
+LOCAL_ONLY_LINES = (REDIRECTOR,) + NUCLEUS
+
+
+def netplay_fingerprint(text):
+    """What two games that play each other must share (the lobby's patch check, gamesetup.patch_fingerprint): a hash of
+    the bytes every enabled block writes, without the LOCAL_ONLY ones. Line order, line ends and comments do not
+    count. 20 hex characters (the whole-file hash of 0.70.7 and earlier had 16, so the lobby can tell the two apart)."""
+    skip = {a.upper() for a in LOCAL_ONLY_LINES}
+    lines = sorted(f'{addr.upper()}={value}' for b in parse(text) if b['enabled'] and b['name'] not in LOCAL_ONLY_TITLES
+                   for addr, value in b['lines'] if addr.upper() not in skip)
+    return hashlib.sha256('\n'.join(lines).encode('ascii')).hexdigest()[:20]

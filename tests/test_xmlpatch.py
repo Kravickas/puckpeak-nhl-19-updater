@@ -375,3 +375,17 @@ def test_repoint_keeps_the_resolution():
     moved = xmlpatch.repoint(on, '192.168.1.15')
     assert xmlpatch.res1440(moved) and xmlpatch.targets(moved)['redirector'] == '192.168.1.15'
     assert xmlpatch.repoint(moved, 'ot.puckpeak.com', 'https://91.98.195.150/') == on
+
+
+def test_netplay_fingerprint_counts_only_what_reaches_the_other_game():
+    # live 2026-11-08: a 1440p game and a 1080p game were told their patches differ (0.70.7 hashed the whole file)
+    base = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
+    fp = xmlpatch.netplay_fingerprint(base)
+    assert len(fp) == 20
+    assert xmlpatch.netplay_fingerprint(xmlpatch.with_res1440(base, True)) == fp
+    assert xmlpatch.netplay_fingerprint(xmlpatch.bap32_off(base)) == fp               # league switch off: Be a Pro only
+    assert xmlpatch.netplay_fingerprint(xmlpatch.build('91.98.195.150')) == fp         # the same server by its address
+    assert xmlpatch.netplay_fingerprint(base.replace('\r\n', '\n')) == fp
+    # the 32-team switch changes the online team list: that one counts, and so does any other game byte
+    assert xmlpatch.netplay_fingerprint(xmlpatch.expansion32_off(base)) != fp
+    assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/', features=xmlpatch.EARLIER[0])) != fp

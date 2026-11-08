@@ -710,3 +710,18 @@ def test_1440p_keeps_a_bigger_dmem_and_a_first_install_at_1440p_is_undone(world)
     assert json.loads(path.read_text())['General']['extra_dmem_in_mbytes'] == gamesetup.DMEM_1440
     gamesetup.remove(running=lambda: False)
     assert 'extra_dmem_in_mbytes' not in json.loads(path.read_text())['General']
+
+
+def test_emulator_identity_names_the_build_and_the_frame_timing(tmp_path, monkeypatch):
+    # live 2026-11-08: gr4vity ran vblank 9999 Hz; the lobby logs it next to the other player's
+    cfg = tmp_path / 'CUSA11126.json'
+    cfg.write_text('{"GPU": {"vblank_frequency": 9999}, "General": {"neo_mode": false}}', encoding='utf-8')
+    monkeypatch.setattr(gamesetup, 'emulator_build', lambda exe: {'rev': 'b23fb6716c4416cd90e8d9f3487d3572f6dab833',
+                                                                  'branch': 'NHL19-Build'})
+    monkeypatch.setattr(gamesetup, 'emu_user_dir', lambda exe: str(tmp_path))
+    monkeypatch.setattr(gamesetup, 'custom_config_path', lambda user: str(cfg))
+    assert gamesetup.emulator_identity('x.exe') == {'emu': 'NHL19-Build.b23fb67', 'timing': 'vblank9999,neo0'}
+    monkeypatch.setattr(gamesetup, 'emulator_build', lambda exe: {'rev': 'a' * 40, 'branch': 'feature/x.y'})
+    assert gamesetup.emulator_identity('x.exe')['emu'] == 'feature-x-y.aaaaaaa'
+    cfg.write_text('not json', encoding='utf-8')
+    assert gamesetup.emulator_identity('x.exe')['timing'] == '?'

@@ -209,3 +209,30 @@ def test_a_build_not_published_says_so(sc, served, world):  # noqa: F811
     assert not card['can'] and 'Not available' in card['text']
     sc.setup_boost(True)
     assert sc.emulator == str(world['emu']) and sc.ctl.said[-1][1] == 'bad'
+
+
+def test_an_online_ready_switches_to_the_build_with_no_click_and_keeps_it_current(sc, served, launcher, world):  # noqa: F811
+    # owner 2026-11-08: "make it automated to boost performance for the online"; sonku's other build desynced
+    own = str(world['emu'])
+    sc.setup_set_emulator(own)
+    notes = []
+    assert sc.online_boost(notes.append) == 'on'
+    assert sc.emulator == boost.exe_path() and sc.boost['emulator'] == own and sc.ctl.busy is None
+    assert notes and notes[-1].endswith('100 %')
+    assert sc.online_boost() == 'already'
+    release(served, b'MZ newer')
+    packdownload.forget()
+    sc._scan()
+    assert sc.online_boost() == 'on' and pathlib.Path(boost.exe_path()).read_bytes() == b'MZ newer'
+    sc.setup_boost(False)
+    assert sc.emulator == own                                   # Setup's switch still brings the player's own back
+
+
+def test_an_online_ready_leaves_the_build_alone_while_shadps4_runs_or_nothing_is_published(sc, served, world,  # noqa: F811
+                                                                                           monkeypatch):
+    own = str(world['emu'])
+    sc.setup_set_emulator(own)
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: True)
+    assert 'Close shadPS4' in sc.online_boost() and sc.emulator == own
+    sc.boost_table = {}
+    assert sc.online_boost() == 'none published'

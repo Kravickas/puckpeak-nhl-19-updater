@@ -1048,3 +1048,19 @@ def test_saves_pick_of_shadps4s_home_folder_finds_the_games_saves(sc, tmp_path):
     data = _portable(tmp_path)
     sc.folder_set('saves', str(data / 'home'))                              # Paths tab, Home Folder Location
     assert sc.ctl.save_dir == str(data / 'home' / '1000' / 'savedata' / 'CUSA11126')
+
+
+def test_the_online_minimum_writes_only_the_eboot_patch_and_the_online_start(sc):
+    # owner 2026-11-08: Ready patches a bare game by itself, "only the bare minimum for online"
+    from overtime_roster.app import patch_ctl
+    installed = sc.world['user'] / 'patches' / 'Overtime' / 'overtime.xml'
+    sc.setup_refresh()
+    patch_ctl.online_minimum(sc)
+    assert sc.calls['apply'] == [('menus',)]                    # no roster, text, art
+    text = installed.read_text(encoding='utf-8')
+    assert SC.xmlpatch.targets(text)['redirector'] == 'ot.puckpeak.com'
+    assert gamesetup.status(sc.known_emulator())['intact'] and gamesetup.load_clean() is None   # no clean-game hashing
+    # the lobby hash equals a fully patched game's (Overtime roster, Seattle active): no "patch differs" dead end
+    sc.seattle = True
+    sc.setup_patch()
+    assert SC.xmlpatch.netplay_fingerprint(installed.read_text(encoding='utf-8')) == SC.xmlpatch.netplay_fingerprint(text)

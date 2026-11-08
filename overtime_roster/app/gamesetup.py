@@ -757,16 +757,66 @@ def _keys_on(path):
 def patch_fingerprint(emu_exe):
     """What the lobby compares between the two games (overtime_server/lobby.py _patch_status): a short hash of the patch
     file installed for this emulator, or 'none' when it is missing or changed (switched-off network keys do not count:
-    the game start turns them on). Two games that play each other must carry the same patch, or they desync."""
+    the game start turns them on). Two games that play each other must carry the same patch, or they desync. Only what
+    reaches the other game counts (xmlpatch.netplay_fingerprint): 1080p against 1440p is one patch (live 2026-11-08,
+    the whole-file hash of 0.70.7 called them different)."""
     st = status(emu_exe)
     problems = [p for p in st.get('problems') or () if not str(p).startswith('network switched off')]
     text = installed_patch() if st.get('installed') and not problems else None
     if not text:
         return 'none'
-    return hashlib.sha256(text.replace(CRLF, LF).encode('utf-8')).hexdigest()[:16]
+    try:
+        return xmlpatch.netplay_fingerprint(text)
+    except xmlpatch.PatchError:
+        return 'none'
 
 
 CRLF, LF = chr(13) + chr(10), chr(10)
+
+
+_IDENTITY = {}
+
+
+def game_identity(game_dir):
+    """What the lobby logs and compares about this install besides the patch (overtime_server/lobby.py _game):
+    {'title': CUSA11126 | CUSA11116, 'data': a short hash of the disc maps (which release's archives these are),
+    'layers': the data patch layers on}. Live 2026-11-08: pairs desynced with installs nobody could see."""
+    info = read_game(game_dir)
+    out = {'title': info.get('title_id') or '?'}
+    base, update = gamefiles.roots(game_dir)
+    names = [os.path.join(update or base, n) for n in ('sce_discmap.plt', 'sce_discmap_patch.plt')]
+    try:
+        key = tuple((n, os.path.getsize(n), os.path.getmtime(n)) for n in names if os.path.isfile(n))
+        if key and key not in _IDENTITY:
+            h = hashlib.sha256()
+            for n, *_ in key:
+                h.update(_read(n))
+            _IDENTITY[key] = h.hexdigest()[:12]
+        out['data'] = _IDENTITY.get(key, 'none')
+    except OSError:
+        out['data'] = 'none'
+    try:
+        out['layers'] = ','.join(sorted((overlay.status(game_dir).get('layers') or {}).keys())) or 'none'
+    except Exception:   # a look must never stop Ready
+        out['layers'] = '?'
+    return out
+
+
+def emulator_identity(emu_exe):
+    """The shadPS4 side of the install identity: {'emu': short revision, 'timing': 'vblank<Hz>,neo<0|1>'} from the exe's
+    version block and the game's custom config (gr4vity ran vblank 9999 Hz on 2026-11-08; the game paces frames by it)."""
+    out = {}
+    build = emulator_build(emu_exe) if emu_exe else None
+    # '<branch>.<rev7>': the lobby refuses two branches (Kravickas's NHL19-Build against another, live 2026-11-08)
+    out['emu'] = f"{re.sub(r'[^A-Za-z0-9_+-]', '-', build['branch'])[:40]}.{build['rev'][:7]}" if build else '?'
+    try:
+        with open(custom_config_path(emu_user_dir(emu_exe)), encoding='utf-8-sig') as f:
+            cfg = json.load(f)
+        gpu, general = cfg.get('GPU') or {}, cfg.get('General') or {}
+        out['timing'] = f"vblank{int(gpu.get('vblank_frequency', 60))},neo{int(bool(general.get('neo_mode', False)))}"
+    except (OSError, ValueError, TypeError, AttributeError, SetupError):
+        out['timing'] = '?'
+    return out
 
 
 def installed_patch():

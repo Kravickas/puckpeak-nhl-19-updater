@@ -2,6 +2,24 @@
 
 What changed in each version, for players.
 
+## 0.70.8 (2026-11-08)
+
+### Changed
+
+- **Ready gets your game ready for online play by itself.** Before it tells the lobby, Ready switches NHL 19 to the
+  NHL 19 build of shadPS4 (Boost performance, the build every online player uses; also a newer published one), brings
+  the game patch up to this version and, on a game that was never patched, puts in only what online play needs (about
+  a second, no roster or art). No button to press. The card shows what it is doing.
+- **The patch check compares only what reaches the other game.** A 1440p game and a 1080p game, Be a Pro on or off, or
+  the server written as a name or an address no longer count as "patch differs".
+
+### Fixed
+
+- A match the two players finished could end with "Failed to retrieve data" when an earlier try of the same two had
+  been left early (server fix).
+- Two different shadPS4 builds playing each other drift apart in play (repeated faceoffs, then the match ends): the
+  lobby now says so before the game starts, and Ready fixes it on your side.
+
 ## 0.70.7 (2026-11-07)
 
 ### Added

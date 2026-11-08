@@ -25,7 +25,7 @@ import threading
 import time
 import webbrowser
 
-from overtime_core import history as H, overlay, rules as RU
+from overtime_core import history as H, overlay, rules as RU, xmlpatch
 
 from .. import VERSION, hud
 from . import (gamesetup, history_view as HV, hostroster, jobs, keypress, launch, lobby_client as LC, patch_ctl, paths,
@@ -106,6 +106,9 @@ class MultiplayerCtl(Part):
         self.lobbies = []           # the public list
         self.error = ''             # the last thing that went wrong, in words
         self.busy = ''              # a call in flight ('create', 'join', ...)
+        self.prep = ''              # what Ready does before it tells the lobby (the shadPS4 build, the patch), for the card
+        self.auto_patched = None    # the lobby code Ready patched the game for (once per lobby)
+        self.prep_why = ''          # why Ready's preparation could not do its part here (said with a lobby refusal)
         self.shown_now = False
         self.looked = False
         self.code = self.token = None
@@ -452,17 +455,89 @@ class MultiplayerCtl(Part):
         self._ensure_poller()
 
     def ready(self, value=True):
+        """Ready: first the game is made fit for online play with no click (owner 2026-11-08: "we just handle all
+        things for him"): the published Kravickas build of shadPS4 (Setup.online_boost), the patch file of this version
+        (patch_ctl.refresh_network) and, for a game without the patch, the eboot patch alone (patch_ctl.online_minimum). Then the lobby is told. A job: the
+        card shows what it does (`prep`)."""
         with self.mlock:
             code, token = self.code, self.token
         if not code:
             return {'ok': False}
-        patch = None
+        if not value:
+            return self._send_ready(code, token, False)
+        with self.mlock:
+            if self.busy:
+                return {'ok': False}
+            self.busy, self.prep = 'ready', 'Getting your game ready for online play...'
+        self._changed()
+        if self._spawn(lambda: self._ready_job(code, token), 'mp-ready') is None:
+            return self._ready_job(code, token)     # no threads (tests): at once
+        return {'ok': True}
+
+    def _prep_note(self, text):
+        with self.mlock:
+            self.prep = text
+        self._changed()
+
+    def _ready_job(self, code, token):
+        try:
+            try:
+                self.prep_why = self._prepare_online(code) or ''
+            except Exception as err:    # noqa: BLE001 (Ready goes on: the lobby compares what is there)
+                jobs.log_block(err, 'Preparing the game for an online Ready')
+                self.prep_why = ''
+            return self._send_ready(code, token, True)
+        finally:
+            with self.mlock:
+                self.busy, self.prep = '', ''
+            self._changed()
+
+    def _prepare_online(self, code):
+        """The build, then the patch. Returns why a part could not be done here ('' when all went in)."""
+        setup = self.ctl.setup
+        if not hasattr(setup, 'online_boost'):      # a bare Setup (tests): nothing to prepare
+            return ''
+        why = []
+        try:
+            got = setup.online_boost(self._prep_note)
+        except Exception as err:    # noqa: BLE001
+            jobs.log_block(err, 'Kravickas build before an online Ready')
+            got = 'it did not install'
+        if got == 'none published':
+            why.append('the NHL 19 build of shadPS4 is not on the Overtime server right now')
+        elif got not in ('on', 'already'):
+            why.append(f'the NHL 19 build of shadPS4 could not be switched on ({str(got).rstrip(".")})')
+        patch_ctl._refresh_before_start(setup)      # the patch file of this version and server, network keys on
+        emu = setup.known_emulator()
+        game_dir = self.ctl.game_dir
+        if not emu or not game_dir:
+            return '; '.join(why)
+        if gamesetup.patch_fingerprint(emu) != 'none' and (overlay.status(game_dir) or {}).get('layers'):
+            return '; '.join(why)
+        with self.mlock:
+            again, self.auto_patched = self.auto_patched == code, code
+        if not again:                               # once per lobby
+            self._prep_note('Patching your game for online play...')
+            try:
+                patch_ctl.online_minimum(setup)     # the eboot patch, network keys, online start: about a second
+            except (gamesetup.SetupError, overlay.PatchError, xmlpatch.PatchError, OSError, ValueError) as err:
+                self.ctl.host.log(f'Multiplayer: the patch for online play did not go in ({err}).')
+                why.append(f'the patch for online play could not go in ({str(err).rstrip(".")})')
+        return '; '.join(why)
+
+    def _send_ready(self, code, token, value):
+        patch = game = None
         if value:
             emu = self.ctl.setup.known_emulator()
             try:
                 patch = gamesetup.patch_fingerprint(emu) if emu else 'none'
             except (OSError, ValueError, gamesetup.SetupError) as err:
                 self.ctl.host.log(f'Multiplayer: the patch could not be read ({err!r}).')
+            try:
+                game = dict(gamesetup.game_identity(self.ctl.game_dir) if self.ctl.game_dir else {},
+                            **gamesetup.emulator_identity(emu), app=VERSION)
+            except Exception as err:   # the identity is for the log: Ready goes on without it
+                self.ctl.host.log(f'Multiplayer: the game could not be read ({err!r}).')
         if value and self._hosts_own_roster():
             try:
                 self._upload_roster(code, token)
@@ -471,7 +546,11 @@ class MultiplayerCtl(Part):
             except LC.LobbyError as err:
                 return self._lobby_error(err)
         try:
-            lobby = self.client().ready(code, token, bool(value), patch)
+            lobby = self.client().ready(code, token, bool(value), patch, game)
+        except LC.LobbyRefused as err:
+            if value and self.prep_why:             # say what went wrong here, not only the lobby's general advice
+                return self._fail(f'{err.text} (here: {self.prep_why})')
+            return self._lobby_error(err)
         except LC.LobbyError as err:
             return self._lobby_error(err)
         self._apply(lobby)
@@ -1158,6 +1237,7 @@ class MultiplayerCtl(Part):
                 'history': self._history_view(),
                 'error': self.error,
                 'busy': self.busy,
+                'prep': self.prep,
                 'quoted': 'signed in ... accountId=16349',
             }
 
@@ -1177,7 +1257,8 @@ class MultiplayerCtl(Part):
         if not lobby:
             return None
         players = [{'name': str(p.get('name') or ''), 'you': i == self.me, 'ready': bool(p.get('ready')),
-                    'roster': p.get('roster') or 'unknown', 'stage': p.get('stage') or 'lobby'}
+                    'roster': p.get('roster') or 'unknown', 'stage': p.get('stage') or 'lobby',
+                    'game': [str(k) for k in p.get('game') or () if isinstance(k, str)][:5]}
                    for i, p in enumerate(lobby.get('players') or [])]
         mine = players[self.me] if self.me < len(players) else None
         other = next((p for p in players if not p['you']), None)
