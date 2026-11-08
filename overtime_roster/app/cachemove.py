@@ -7,6 +7,11 @@ drawn here): hundreds of MB to several GB. The move never leaves the app without
     app keeps using the old folder until all are there; only then does the setting change (`switch`), and only then
     are the old files removed. A copy that fails leaves the old folder in use and takes its partial copies away.
 A file the new folder already has is replaced: the old folder's is the one the app has been using.
+
+A move takes every file of the old folder, so the cache always has a folder of its own: a folder the player picks that
+already holds other files gets one inside it (`pick`, SUBFOLDER), and every cache folder carries MARKER. Files are only
+moved out of a folder with MARKER or the program's own folder (`default`): a folder without it (picked before the
+marker existed) may hold the player's own files, so they stay where they are and only the setting changes.
 """
 import os
 import shutil
@@ -15,6 +20,10 @@ from overtime_core import durable
 
 SPARE = 1 << 30         # free bytes left on the new drive after the copy
 SKIP = ('.part', '.tmp')    # leftovers of a write a crash stopped: not copied, removed with the old folder
+MARKER = '.overtime-cache'  # in every cache folder: its files are the program's, a move may take them all
+SUBFOLDER = 'OvertimeRoster cache'  # the cache's own folder inside a picked folder that holds other files
+MARKER_TEXT = (b'This folder is the downloads and cache of Overtime Roster (Puck Peak Overtime for NHL 19). '
+               b'Setup, Folders, Downloads and cache moves every file in it.\r\n')
 
 
 class CacheMoveError(Exception):
@@ -34,12 +43,39 @@ def inside(path, folder):
         return False
 
 
+def is_cache(folder):
+    """`folder` carries MARKER: a cache folder of this program, all its files are the program's."""
+    return os.path.isfile(os.path.join(folder, MARKER))
+
+
+def mark(folder):
+    with open(os.path.join(folder, MARKER), 'wb') as f:
+        f.write(MARKER_TEXT)
+
+
+def _unmark(folder):
+    try:
+        os.remove(os.path.join(folder, MARKER))
+    except OSError:
+        pass
+
+
+def pick(path):
+    """The folder the cache goes in when the player picks `path`: `path` itself when it is new, empty or already a
+    cache folder of this program, else SUBFOLDER inside it, so the player's files never mix with the cache.
+    CacheMoveError when that one holds other files too."""
+    for folder in (path, os.path.join(path, SUBFOLDER)):
+        if not os.path.exists(folder) or is_cache(folder) or (os.path.isdir(folder) and not os.listdir(folder)):
+            return folder
+    raise CacheMoveError(f'{path} holds other files, and so does its {SUBFOLDER} folder. Pick an empty folder.')
+
+
 def files_of(folder):
-    """[(path relative to `folder`, size)] of every file under it, leftovers (SKIP) apart."""
+    """[(path relative to `folder`, size)] of every file under it, leftovers (SKIP) and MARKER apart."""
     out = []
     for top, _dirs, names in os.walk(folder):
         for name in names:
-            if name.endswith(SKIP):
+            if name.endswith(SKIP) or name == MARKER:
                 continue
             full = os.path.join(top, name)
             out.append((os.path.relpath(full, folder), os.path.getsize(full)))
@@ -50,24 +86,35 @@ def _same_drive(src, dst):
     return os.stat(src).st_dev == os.stat(dst).st_dev
 
 
-def move(src, dst, switch, progress=None, log=None):
-    """Move the cache from `src` to `dst` (created when missing). `switch()` makes the app use `dst` (the setting);
-    it runs once every file is in `dst`. `progress(done bytes, total bytes)`. Returns {'files', 'bytes', 'left'}:
-    `left` the old files that could not be removed (in use: they are copies, removed by hand or the next move)."""
+def move(src, dst, switch, progress=None, log=None, default=None):
+    """Move the cache from `src` to `dst` (created when missing; given MARKER). `switch()` makes the app use `dst`
+    (the setting); it runs once every file is in `dst`. `progress(done bytes, total bytes)`. `default`: the program's
+    own cache folder (its files are the program's even without MARKER). Returns {'files', 'bytes', 'left', 'kept'}:
+    `left` the old files that could not be removed (in use: they are copies, removed by hand or the next move);
+    `kept` is `src` when it has no MARKER and is not `default`, so none of its files were moved ('' otherwise)."""
     say = log or (lambda m: None)
     if same(src, dst):
         switch()
-        return {'files': 0, 'bytes': 0, 'left': 0}
+        return {'files': 0, 'bytes': 0, 'left': 0, 'kept': ''}
     if inside(dst, src) or inside(src, dst):
         raise CacheMoveError('The new cache folder cannot be inside the old one, or hold it.')
     os.makedirs(dst, exist_ok=True)
-    have = files_of(src) if os.path.isdir(src) else []
+    owned = os.path.isdir(src) and (is_cache(src) or (default is not None and same(src, default)))
+    kept = src if os.path.isdir(src) and not owned else ''
+    if kept:
+        say(f'cache move: {src} has no {MARKER}, so it may hold files that are not the cache: they stay there')
+    marked_now = not is_cache(dst)
+    mark(dst)
+    have = files_of(src) if owned else []
     total = sum(n for _rel, n in have)
     tell = progress or (lambda done, total: None)
     tell(0, total)
     if not have:
         switch()
-        return {'files': 0, 'bytes': 0, 'left': 0}
+        if owned:
+            _unmark(src)
+            _prune(src)
+        return {'files': 0, 'bytes': 0, 'left': 0, 'kept': kept}
     if _same_drive(src, dst):
         moved, done = [], 0
         try:
@@ -84,12 +131,17 @@ def move(src, dst, switch, progress=None, log=None):
                     os.replace(os.path.join(dst, rel), os.path.join(src, rel))
                 except OSError:
                     say(f'cache move: {rel} stays in {dst} ({err})')
+            if marked_now:
+                _unmark(dst)
             raise CacheMoveError(f'The cache could not be moved: {err}. It stays in {src}.') from err
         switch()
+        _unmark(src)
         _prune(src)
-        return {'files': len(have), 'bytes': total, 'left': 0}
+        return {'files': len(have), 'bytes': total, 'left': 0, 'kept': ''}
     free = shutil.disk_usage(dst).free
     if free < total + SPARE:
+        if marked_now:
+            _unmark(dst)
         raise CacheMoveError(f'Not enough free space in {dst}: {total / 2**30:.1f} GB to copy, '
                              f'{free / 2**30:.1f} GB free.')
     copied, existed, done = [], set(), 0
@@ -114,6 +166,8 @@ def move(src, dst, switch, progress=None, log=None):
                 os.remove(p)
             except OSError:
                 pass
+        if marked_now:
+            _unmark(dst)
         _prune(dst, keep=True)
         raise CacheMoveError(f'The cache could not be copied: {err}. It stays in {src}.') from err
     switch()
@@ -130,10 +184,12 @@ def move(src, dst, switch, progress=None, log=None):
                     os.remove(os.path.join(top, name))
                 except OSError:
                     pass
+    if not left:
+        _unmark(src)
     _prune(src)
     if left:
         say(f'cache move: {left} old file(s) in {src} are in use and stay (copies; safe to delete)')
-    return {'files': len(have), 'bytes': total, 'left': left}
+    return {'files': len(have), 'bytes': total, 'left': left, 'kept': ''}
 
 
 def _prune(folder, keep=False):

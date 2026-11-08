@@ -14,12 +14,15 @@ A lobby match plays on a setup made for that match alone, and the player's own s
           bytes are kept in the journal and written back after.
 
 The journal (`match-setup.json` in the app folder) is saved before each change, so `restore` can undo any prefix of
-`apply`. Nothing here runs while shadPS4 runs. Standard library only.
+`apply`. Nothing here runs while shadPS4 runs. `apply` and `restore` hold one lock (the app-start thread, the
+Multiplayer tab and a lobby start may all call them), and a caller that saw one journal restores only that one
+(`identity`, restore's `only`): a newer apply's setup is never taken away under it. Standard library only.
 """
 import json
 import os
 import re
 import shutil
+import threading
 import time
 from xml.sax.saxutils import quoteattr
 
@@ -39,6 +42,7 @@ ALWAYS_LAYERS = ('menus',)              # the autoplay hook lives in the menus l
 _ADDR = re.compile(r'0x[0-9A-Fa-f]{1,16}\Z')
 _HEX = re.compile(r'(?:[0-9A-Fa-f]{2}){1,1024}\Z')
 MAX_BLOCKS, MAX_LINES, MAX_NAME = 64, 4096, 200
+_LOCK = threading.RLock()       # one apply or restore at a time (apply restores first: re-entrant)
 
 
 class MatchSetupError(RuntimeError):
@@ -180,6 +184,13 @@ def active():
     return load() is not None
 
 
+def identity(j=None):
+    """Which match setup is in place (the journal's id, start time and tag), or None: restore(only=...) takes back
+    that one and no newer one."""
+    j = load() if j is None else j
+    return (j.get('id'), j.get('started'), j.get('tag')) if j else None
+
+
 def _save(j):
     path = journal_path()
     tmp = path + '.tmp'
@@ -261,6 +272,11 @@ def apply(game_dir, user_dir, r, own_text, add_layers=None, running=None, log=la
     (default: overlay.apply with the view's layers plus the missing ones). Returns {'patch': match xml path, 'view':
     'link' | 'copy' | 'mixed' | 'empty'}. A setup still in place is restored first. `tag` (the lobby's match_id) goes into the
     journal: tag() tells a running game set up for this match from one that was not."""
+    with _LOCK:
+        return _apply(game_dir, user_dir, r, own_text, add_layers, running, log, tag)
+
+
+def _apply(game_dir, user_dir, r, own_text, add_layers, running, log, tag):
     if (running or overlay.emulator_running)():
         raise MatchSetupError('shadPS4 is running: close the game first')
     check(r)
@@ -279,7 +295,7 @@ def apply(game_dir, user_dir, r, own_text, add_layers=None, running=None, log=la
     if os.path.exists(own):
         raise MatchSetupError(f'{own} is in the way (an earlier match setup that was not put back?); move it away')
     j = {'v': VERSION, 'game_dir': game_dir, 'mods': mods, 'view': view, 'own': own, 'user_dir': user_dir,
-         'started': int(time.time()), 'steps': [], 'tag': tag}
+         'started': int(time.time()), 'steps': [], 'tag': tag, 'id': os.urandom(8).hex()}
     _save(j)
     # 1. the view, beside the player's folder
     os.makedirs(view)
@@ -326,15 +342,26 @@ def apply(game_dir, user_dir, r, own_text, add_layers=None, running=None, log=la
 
 
 def _add_layers(game_dir, layers):
-    overlay.apply(game_dir, tuple(layers))
+    """overlay.apply on the view, with the text file the player's patch was made on (Patch passes the game's own:
+    patch_ctl.game_text); overlay.apply's default eng_us would rebuild the text layers on another file."""
+    served = overlay.status(game_dir).get('layers') or {}
+    lang = next((served[k]['file'] for k in ('text', 'names')
+                 if isinstance(served.get(k), dict) and isinstance(served[k].get('file'), str)), None)
+    overlay.apply(game_dir, tuple(layers), **({'lang': lang} if lang else {}))
 
 
-def restore(running=None, log=lambda m: None):
+def restore(running=None, log=lambda m: None, only=None):
     """Put the player's own setup back (any prefix of apply). Returns 'none' (nothing to do), 'done', or 'later'
     (shadPS4 runs: it holds the files; call again once it closed). Raises MatchSetupError when something is in the
-    way (the journal stays, so a later call can finish)."""
+    way (the journal stays, so a later call can finish). `only` (an identity()): restore that setup alone; another
+    one in place now (a newer apply's) is left to whoever made it ('none')."""
+    with _LOCK:
+        return _restore(running, log, only)
+
+
+def _restore(running, log, only):
     j = load()
-    if j is None:
+    if j is None or (only is not None and identity(j) != only):
         return 'none'
     if (running or overlay.emulator_running)():
         return 'later'
@@ -372,10 +399,14 @@ def restore(running=None, log=lambda m: None):
 
 def restore_when_closed(running=None, log=lambda m: None, sleep=time.sleep, every=10.0):
     """At app start (a thread): put a match setup left by a crash or a closed app back, once shadPS4 is closed. Returns
-    restore's last answer ('none', 'done') or 'failed' (logged; the journal stays for the next start)."""
+    restore's last answer ('none', 'done') or 'failed' (logged; the journal stays for the next start). Only the setup
+    in place when it started: a lobby start that made a new one meanwhile puts its own back."""
+    seen = identity()
+    if seen is None:
+        return 'none'
     while True:
         try:
-            got = restore(running=running, log=log)
+            got = restore(running=running, log=log, only=seen)
         except (MatchSetupError, OSError) as err:
             log(f'Match setup: your own setup could not be put back yet ({err})')
             return 'failed'

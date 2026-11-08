@@ -723,13 +723,20 @@ class SetupController(Part):
 
     def _check_cache(self, path):
         """(folder to use, None) or (None, why not) for the cache folder the player picked: a folder of its own on a
-        drive that is there, never inside the game, its update or mods folder, shadPS4's data or the saves (the game
-        would see the files, or Patch and Unpatch would meet them), and one this program may write to."""
+        drive that is there (a picked folder that holds other files gets one inside it: cachemove.pick, since a later
+        move takes every file of the cache folder), never inside the game, its update or mods folder, shadPS4's data or
+        the saves (the game would see the files, or Patch and Unpatch would meet them), and one this program may write
+        to."""
         path = os.path.abspath(path)
         if os.path.dirname(path) == path:
             return None, f'Pick a folder on {path}, not the drive itself: the cache puts its files in that folder.'
         if not os.path.isdir(os.path.dirname(path)):
             return None, f'{os.path.dirname(path)} is not there. Pick a folder on a drive this PC has.'
+        if not cachemove.same(path, paths.default_cache_dir()):
+            try:
+                path = cachemove.pick(path)
+            except cachemove.CacheMoveError as err:
+                return None, str(err)
         game = self.ctl.game_dir
         keep_out = []
         if game:
@@ -773,9 +780,13 @@ class SetupController(Part):
                   share)
 
         def work():
-            return cachemove.move(src, target, switch, progress, log=c.host.log)
+            return cachemove.move(src, target, switch, progress, log=c.host.log, default=paths.default_cache_dir())
 
         def said(out):
+            if out.get('kept'):
+                return (f"Downloads and cache: {target}. The files in {out['kept']} stay there: that folder may hold "
+                        'files that are not the cache, so the program does not move them. Download the packs again, or '
+                        'move them by hand.'), 'caution'
             if not out['files']:
                 return f'Downloads and cache: {target}.', 'good'
             text = f"Downloads and cache moved to {target}: {out['files']} files, {out['bytes'] / 2**20:.0f} MB."
