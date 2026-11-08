@@ -30,7 +30,7 @@ class FakeCtl:
         self.lock = threading.RLock()
         self.session = None
         self.setup = types.SimpleNamespace(server={'host': host}, known_emulator=lambda: str(tmp_path / 'emu' / 'shadPS4.exe'),
-                                           ctl=self, _xml=lambda: xmlpatch.build(host))
+                                           ctl=self, _xml=lambda: xmlpatch.build(host, 'https://91.98.195.150/'))
 
     def remember(self, **kv):
         self.prefs.update(kv)
@@ -46,6 +46,9 @@ class FakeService:
     def __init__(self):
         self.calls = []
         self.lobby = None
+        self.announced = []
+        self.you = 0
+        self.recipe = None
         self.fail = None            # an exception the next call raises
         self.public = [{'code': 'AB123', 'host': 'Bo', 'players': 1, 'age': 130}]
 
@@ -64,18 +67,29 @@ class FakeService:
     def create(self, name, ext, public=False, roster_crc=None):
         self._go('create', name, ext, public)
         self.lobby = self.view(public=public)
+        self.you = 0
         return {'token': 'secret-token', 'you': 0, 'lobby': self.lobby}
 
     def join(self, code, name, ext, roster_crc=None):
         self._go('join', code, name, ext)
         self.lobby = self.view()
         self.lobby['players'].insert(0, {'name': 'Bo', 'ready': False, 'launch': False, 'roster': 'unknown', 'stage': 'lobby'})
+        self.you = 1
         return {'token': 'secret-token', 'you': 1, 'lobby': self.lobby}
 
-    def ready(self, code, token, value=True, patch=None, game=None):
+    def ready(self, code, token, value=True, patch=None, game=None, caps=None):
+        self.caps = caps
+        if caps and not value and patch is None and game is None:     # the caps announcement after create/join
+            self.announced = (self.announced or []) + [('ready', code, token, value, tuple(caps))]
+            return {**self.lobby, 'you': self.you}
         self.patch, self.game = patch, game
         self._go('ready', code, token, value)
         return {**self.lobby, 'you': 0}
+
+    def match(self, code, token, recipe):
+        self.announced = (self.announced or []) + [('match', code, token)]
+        self.recipe = recipe
+        return {**self.lobby, 'you': self.you}
 
     def mode(self, code, token, mode):
         self._go('mode', code, token, mode)
@@ -995,3 +1009,152 @@ def test_a_shootout_launch_hooks_the_shootout_hub_and_bakes_its_rules(mp, monkey
     assert rig.events[0][1]['mode'] == 'shootout' and set(rig.events[0][1]['rules']) == {r[0] for r in RU.SHOOTOUT_RULES} and rig.events[0][1]['rules']['goaliecontrol'] == '0'
     mp.game = {'phase': 'running', 'note': '', 'manual': False}
     assert mp.view()['game']['steps'][4]['text'] == 'Online Shootout, searching for your friend'
+
+
+# --- 0.80: the match-only setup (docs/plans/mellow-crunching-hippo.md) ---------------------------------------------
+from overtime_roster.app import matchsetup, onlineemu  # noqa: E402
+
+
+def test_the_host_announces_its_recipe_and_caps_the_guest_its_caps(mp):
+    start_lobby(mp)
+    assert [a[0] for a in mp.service.announced] == ['match', 'ready']
+    assert mp.service.announced[-1][-1] == MC.CAPS
+    matchsetup.check(mp.service.recipe)                  # what the guest's app will read
+    assert mp.service.calls == [('create', 'iksperial', 16349, True)]   # no Ready said on the player's behalf
+    guest = MC.MultiplayerCtl(mp.ctl)
+    guest.threads, guest.service = False, FakeService()
+    guest.make_client = lambda url: guest.service
+    guest.set_name('Me')
+    guest.set_ext('5')
+    guest.join('K7M2Q')
+    assert [a[0] for a in guest.service.announced] == ['ready'] and guest.me == 1
+
+
+def match_lobby(mp, emu_sha=None):
+    start_lobby(mp)
+    mp.lobby.update(match=mp.service.recipe, match_setup=True, match_id='0123456789abcdef',
+                    online_emu={'sha256': emu_sha, 'url': 'https://x/'} if emu_sha else None)
+    mp.service.lobby.update(mp.lobby)
+
+
+class MatchRig(Rig):
+    """Rig plus fakes for the online copy, the match setup and the restart."""
+
+    def __init__(self, mp, monkeypatch, seq=(False, True, True, False), stop='closed', tag=None):
+        super().__init__(mp, monkeypatch, seq)
+        self.stop, self.tag = stop, tag
+        mp.stop_emulator = lambda: self.events.append(('stop',)) or self.stop
+        monkeypatch.setattr(onlineemu, 'start_dir', lambda emu: 'D:/emu')
+        monkeypatch.setattr(onlineemu, 'ensure', lambda cache, want=None, progress=None:
+                            (self.events.append(('ensure', want)) or 'C:/online/shadPS4.exe', 'f' * 64))
+        monkeypatch.setattr(matchsetup, 'apply', self.apply)
+        monkeypatch.setattr(matchsetup, 'restore', lambda running=None, log=None: self.events.append(('restore',))
+                            or 'done')
+        monkeypatch.setattr(matchsetup, 'tag', lambda: self.tag)
+        monkeypatch.setattr(overlay, 'status', lambda gd, **kw: {'layers': {}})
+
+    def apply(self, game_dir, user, r, own_text, running=None, log=None, tag=None):
+        self.events.append(('apply', tag))
+        self.own_text = own_text
+        return {'patch': 'C:/match/overtime-match.xml', 'view': 'link'}
+
+    def start(self, emu, game_dir, patch_file=None, exe=None):
+        self.events.append(('started', patch_file, exe))
+        return types.SimpleNamespace(pid=1)
+
+
+def test_a_match_launch_sets_up_starts_the_online_copy_and_puts_everything_back(mp, monkeypatch):
+    rig = MatchRig(mp, monkeypatch)
+    match_lobby(mp)
+    mp._launch_job()
+    assert kinds(rig) == ['ensure', 'apply', 'hook', 'started', 'press', 'press', 'hook', 'restore']
+    assert ('apply', '0123456789abcdef') in rig.events
+    assert ('started', 'C:/match/overtime-match.xml', 'C:/online/shadPS4.exe') in rig.events
+    assert not xmlpatch.parse(rig.own_text)[0] is None and mp.game['phase'] == 'ended'
+
+
+def test_an_unpatched_game_starts_with_the_match_setup(mp, monkeypatch):
+    good_checks(mp, tone='bad')             # the player's own game is not patched: the match setup is its own
+    rig = MatchRig(mp, monkeypatch)
+    match_lobby(mp)
+    mp._launch_job()
+    assert 'started' in kinds(rig) and mp.game['phase'] == 'ended'
+
+
+def test_a_game_running_with_another_setup_is_restarted(mp, monkeypatch):
+    rig = MatchRig(mp, monkeypatch, seq=(True, False, True, True, False))
+    match_lobby(mp)
+    mp._launch_job()
+    assert kinds(rig)[:3] == ['stop', 'ensure', 'apply'] and 'started' in kinds(rig)
+
+
+def test_a_game_that_does_not_close_fails_the_start_and_nothing_is_set_up(mp, monkeypatch):
+    for stop, text in (('failed', MC.RESTART_FAILED), ('unsupported', MC.RESTART_UNSUPPORTED)):
+        rig = MatchRig(mp, monkeypatch, seq=(True,), stop=stop)
+        mp.code = None
+        match_lobby(mp)
+        mp._launch_job()
+        assert kinds(rig) == ['stop'] and mp.game['phase'] == 'failed' and mp.game['note'] == text
+
+
+def test_a_game_running_with_this_matchs_setup_is_a_rematch(mp, monkeypatch):
+    rig = MatchRig(mp, monkeypatch, seq=(True, True, False), tag='0123456789abcdef')
+    match_lobby(mp)
+    mp._launch_job()
+    assert kinds(rig) == ['restore'] and mp.game['phase'] == 'ended'
+
+
+def test_a_failed_setup_still_puts_things_back(mp, monkeypatch):
+    rig = MatchRig(mp, monkeypatch)
+
+    def broken(*a, **k):
+        rig.events.append(('apply', None))
+        raise matchsetup.MatchSetupError('in the way')
+    monkeypatch.setattr(matchsetup, 'apply', broken)
+    match_lobby(mp)
+    mp._launch_job()
+    assert kinds(rig)[-2:] == ['hook', 'restore'] and 'started' not in kinds(rig)
+    assert mp.game['phase'] == 'failed' and 'in the way' in mp.game['note']
+
+
+def test_ready_in_a_match_lobby_gets_the_copy_and_sends_the_match_fingerprint(mp, monkeypatch):
+    MatchRig(mp, monkeypatch)
+    match_lobby(mp, emu_sha='a' * 64)
+    boosted = []
+    mp.ctl.setup.online_boost = lambda note: boosted.append(1) or 'on'
+    assert mp.ready(True) == {'ok': True}
+    assert boosted == [] and mp.service.caps == MC.CAPS
+    own = mp._own_text()
+    assert mp.service.patch == xmlpatch.netplay_fingerprint(matchsetup.match_xml(mp.service.recipe, own))
+    assert mp.service.patch == xmlpatch.netplay_fingerprint(mp.ctl.setup._xml())   # the same as the host's
+
+
+def test_ready_says_why_when_the_online_copy_cannot_be_had(mp, monkeypatch):
+    MatchRig(mp, monkeypatch)
+    match_lobby(mp)
+
+    def no(cache, want=None, progress=None):
+        raise onlineemu.OnlineEmuError('The lobby plays with another shadPS4 build than this app has: update the app.')
+    monkeypatch.setattr(onlineemu, 'ensure', no)
+    assert 'update the app' in mp.ready(True)['error']
+    assert not any(c[0] == 'ready' for c in mp.service.calls)
+
+
+def test_a_match_launch_shows_the_setup_step_first(mp, monkeypatch):
+    MatchRig(mp, monkeypatch)
+    match_lobby(mp)
+    mp.game = {'phase': 'restarting', 'note': '', 'manual': False}
+    steps = mp.view()['game']['steps']
+    assert steps[0] == {'text': MC.RESTART_STEP, 'state': 'now'} and len(steps) == len(MC.STEPS) + 1
+    mp.game = {'phase': 'title', 'note': '', 'manual': True}
+    steps = mp.view()['game']['steps']
+    assert steps[0] == {'text': MC.MATCH_STEP, 'state': 'done'}
+    assert steps[3] == {'text': 'Press ✕ on the title screen', 'state': 'now'}
+
+
+def test_an_unpatched_game_is_ready_for_online_in_the_pre_flight(mp):
+    mp.checks = [{'key': 'patch', 'label': 'Patch', 'tone': 'bad', 'text': 'not patched', 'go': 'patch'},
+                 {'key': 'roster', 'label': 'Roster', 'tone': 'bad', 'text': 'shadPS4 not set up', 'go': 'setup'}]
+    assert next(r for r in mp.view()['checks'] if r['key'] == 'roster')['tone'] == 'bad'   # only the patch row
+    patch = next(r for r in mp.view()['checks'] if r['key'] == 'patch')
+    assert patch['tone'] == 'good' and patch['text'] == MC.ONLINE_READY

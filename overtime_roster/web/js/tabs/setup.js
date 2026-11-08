@@ -169,11 +169,12 @@ function ServerField({ value, disabled, bad }) {
     }}/>`;
 }
 
-export function OnlineCard({ s }) {
+// the Online lines (server address, firewall): Multiplayer shows them in its Advanced row
+export function OnlineLines({ s, className }) {
   const o = s.online;
   const fw = o.firewall;
-  return html`<${Card} title="Online" className="su-online">
-    <div class="card-body su-lines">
+  return html`
+    <div class=${cls(className, 'su-lines')}>
       <span class="field-label">Server</span>
       <${ServerField} value=${o.server} disabled=${s.busy} bad=${!!o.error}/>
       <${Button} small disabled=${s.busy || o.is_default} title=${`Back to ${o.server_default}`}
@@ -183,8 +184,7 @@ export function OnlineCard({ s }) {
       <span class=${cls('su-fw', fw.tone, !fw.can_fix && 'wide')}><${Mark} tone=${fw.tone}/><span class="su-fwt">${fw.text}</span></span>
       ${fw.can_fix && html`<${Button} small kind="primary" disabled=${s.busy} title="Windows asks you to allow it"
         onClick=${() => call('setup_firewall')}>Let it through...<//>`}
-    </div>
-  <//>`;
+    </div>`;
 }
 
 // --- This program ---------------------------------------------------------------------------------------------------------

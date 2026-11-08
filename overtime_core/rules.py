@@ -10,10 +10,14 @@ import re
 
 RULES_PATH = 'nhl/data/common/gamemodes/matchmaking/online_playnow_casual_h2h.json'
 SHOOTOUT_PATH = 'nhl/data/common/gamemodes/matchmaking/online_shootout_competitive.json'
-# The two Online modes of the Multiplayer tab. Shootout searches with its own scenario (online_shootout_competitive:
-# NHL_GameType 25) and a shorter list of rules (docs/notes/online-shootout.md).
-VERSUS, SHOOTOUT = 'versus', 'shootout'
-MODES = (VERSUS, SHOOTOUT)
+THREES_PATH = 'nhl/data/common/gamemodes/matchmaking/gm_3on3_vs_timedperiods_otp.json'
+# The Online modes of the Multiplayer tab. Shootout searches with its own scenario (online_shootout_competitive:
+# NHL_GameType 25) and a shorter list of rules (docs/notes/online-shootout.md). Threes (NHL Threes online, scenario
+# online_vs_threeonthree_tp_otp, NHL_GameType 18) has no rules to pick: the ranked file holds only its game type
+# (docs/notes/threes-otp.md), so the game plays its own (Pro, timed periods) and every row of the card is greyed.
+VERSUS, SHOOTOUT, THREES = 'versus', 'shootout', 'threes'
+MODES = (VERSUS, SHOOTOUT, THREES)
+NAMES = 'versus, shootout or threes'   # for the texts that name the choices
 
 
 class RulesError(ValueError):
@@ -45,8 +49,9 @@ RULES = (
 # same rules as Versus', so one row means the same in both tables.
 _SHOOTOUT_KEYS = ('skilllevel', 'gamestyle', 'goaliecontrol')
 SHOOTOUT_RULES = tuple(r for k in _SHOOTOUT_KEYS for r in RULES if r[0] == k)
-TABLES = {VERSUS: RULES, SHOOTOUT: SHOOTOUT_RULES}
-PATHS = {VERSUS: RULES_PATH, SHOOTOUT: SHOOTOUT_PATH}
+THREES_RULES = ()
+TABLES = {VERSUS: RULES, SHOOTOUT: SHOOTOUT_RULES, THREES: THREES_RULES}
+PATHS = {VERSUS: RULES_PATH, SHOOTOUT: SHOOTOUT_PATH, THREES: THREES_PATH}
 KEYS = tuple(r[0] for r in RULES)
 DEFAULTS = {key: default for key, _label, _options, default in RULES}
 SHOOTOUT_DEFAULTS = {key: default for key, _label, _options, default in SHOOTOUT_RULES}
@@ -58,7 +63,7 @@ def table(mode=VERSUS):
     try:
         return TABLES[mode]
     except KeyError:
-        raise RulesError('The game mode is versus or shootout.') from None
+        raise RulesError('The game mode is %s.' % NAMES) from None
 
 
 def defaults(mode=VERSUS):

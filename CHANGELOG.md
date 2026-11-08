@@ -2,6 +2,33 @@
 
 What changed in each version, for players.
 
+## 0.80.0 (2026-11-08)
+
+### Added
+
+- **Online Threes.** MULTIPLAYER, Match rules has **VERSUS | SHOOTOUT | THREES**: 3 on 3, one player a side, the other
+  skaters are CPU. Once both are ready the game opens Threes online by itself. Threes games show in your history and
+  the rating strip ("Threes w-l").
+- **Ready makes both games match, for that match only.** In a lobby, Ready now sets up a match copy of the game on each
+  side: the NHL 19 build of shadPS4 (its own copy, downloaded once), the host's online patch plus your own picture
+  settings (1440p and the like stay yours), and the match timing. Your own shadPS4, rosters, data, art and settings are
+  never changed: everything goes back when NHL 19 closes, or at the next start of the app after a crash.
+- **No need to close NHL 19 before Ready.** If it is open, the app restarts it for the match (it asks the game to close
+  first and waits up to 10 seconds).
+- An unpatched game can play online: the Patch row says "Online ready: Ready sets up each match by itself".
+
+### Changed
+
+- **MULTIPLAYER has three columns:** you and the checks before a match, the lobby, then your rating and history.
+- With a 0.80.0 partner, Ready no longer switches your own shadPS4 to the NHL 19 build or patches your game; the match
+  copy does that instead.
+- While a match setup is in place, Game patch waits ("press again after that") instead of writing over it.
+
+### Known
+
+- Both players need 0.80.0 for the match setup. With a 0.70.x partner the lobby works as before and names who updates.
+- The match setup was tested in code and on the server, not yet in a two-player game over the internet.
+
 ## 0.70.8 (2026-11-08)
 
 ### Changed

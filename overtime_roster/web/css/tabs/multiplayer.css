@@ -1,35 +1,109 @@
 /* Multiplayer tab. Rules sit under .tab-multiplayer and use the prefix .mp- (docs/ui/CONTRACT.md); tokens from tokens.css,
-   parts from app.css. Left: You (name, ShadNet id, checks). Right: the lobby (list / waiting / launching) and the game steps. */
+   parts from app.css. Three columns (owner's mockup, v0.70.9): 1 you and pre-flight, 2 the lobby, 3 your rating and the
+   history. Each column scrolls on its own; narrower windows put column 3 under the other two, then everything in one. */
 
-.tab-multiplayer .mp { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 10px; align-items: start; align-content: start; overflow: hidden auto; }
-.tab-multiplayer .mp-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.tab-multiplayer .mp-body { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.tab-multiplayer .mp { flex: 1; min-height: 0; display: grid; gap: 12px; overflow: hidden auto;
+  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr) minmax(440px, 560px); grid-template-rows: minmax(0, 1fr); }
+.tab-multiplayer .mp.no-side { grid-template-columns: minmax(320px, 390px) minmax(0, 1fr); }
+.tab-multiplayer .mp-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow: hidden auto; }
+.tab-multiplayer .mp-col > .card { flex: none; }
+.tab-multiplayer .mp-col > .card.mp-card-fill { flex: 1 0 auto; }
+.tab-multiplayer .mp-col-side > .card.mp-card-fill { flex: 1 1 0; min-height: 280px; }
+.tab-multiplayer .mp-stage { box-shadow: inset 0 calc(-1 * var(--focus-bar)) 0 var(--metal-flat), 0 10px 30px rgba(0,0,0,.35); }
+.tab-multiplayer .mp-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.tab-multiplayer .mp-body.mp-fill { flex: 1; min-height: 0; gap: 14px; }
+.tab-multiplayer .mp-spacer { flex: 1; }
 .tab-multiplayer .mp-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tab-multiplayer .mp-row .sp { flex: 1; }
 .tab-multiplayer .mp-note { font-size: 12.5px; line-height: 1.4; color: var(--text-2); }
 .tab-multiplayer .mp-note.warn { color: var(--caution); }
 .tab-multiplayer .mp-note.bad { color: #ff6b8f; }
-.tab-multiplayer .mp-privacy summary { cursor: pointer; font-size: 11.5px; color: var(--text-2); }
-.tab-multiplayer .mp-privacy ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.tab-multiplayer .mp-faint { font-size: 12.5px; line-height: 1.4; color: var(--text-3); }
+.tab-multiplayer .mp-lbl { font-size: 12.5px; letter-spacing: .08em; color: var(--text-2); }
+.tab-multiplayer .mp-hl { height: 1px; flex: none; background: var(--line); }
+.tab-multiplayer .mp-chev { flex: none; color: var(--text-3); transition: transform .15s; }
 
-/* --- You: label / value rows with their check chip ------------------------------------------------------------------ */
+/* a notice: a tinted bar with an accent on the left (caution by default; bad, info) */
+.tab-multiplayer .mp-notice { display: flex; align-items: center; gap: 12px; padding: 10px 14px; font-size: 14px; color: var(--text-soft);
+  background: rgba(248, 191, 0, .08); box-shadow: inset 3px 0 0 var(--caution); }
+.tab-multiplayer .mp-notice .sp { flex: 1; min-width: 0; }
+.tab-multiplayer .mp-notice b { color: var(--text); }
+.tab-multiplayer .mp-notice.caution b { color: var(--caution); }
+.tab-multiplayer .mp-notice.bad { background: rgba(230, 0, 65, .1); box-shadow: inset 3px 0 0 var(--bad); gap: 8px; flex-wrap: wrap; }
+.tab-multiplayer .mp-notice.bad span { font-size: 13.5px; color: var(--text-2); }
+.tab-multiplayer .mp-notice.info { background: rgba(0, 126, 236, .1); box-shadow: inset 3px 0 0 var(--blue); font-size: 13.5px; }
+.tab-multiplayer .mp-warn { flex: none; color: var(--caution); }
+
+/* --- 1 You and pre-flight ------------------------------------------------------------------------------------------- */
+.tab-multiplayer .mp-id { display: flex; flex-direction: column; gap: 8px; }
+.tab-multiplayer .mp-id-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.tab-multiplayer .mp-avatar { width: 48px; height: 48px; flex: none; display: grid; place-items: center; background: var(--tile-hi);
+  font-size: 22px; font-weight: 700; color: var(--text); }
+.tab-multiplayer .mp-avatar.off { color: var(--text-3); box-shadow: inset 0 -3px 0 var(--caution); }
+.tab-multiplayer .mp-id-main { flex: 1; min-width: 0; }
+.tab-multiplayer .mp-id-name { font-size: 21px; font-weight: 700; line-height: 1.1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-multiplayer .mp-id-sub { font-size: 13px; color: var(--text-3); overflow-wrap: anywhere; }
+.tab-multiplayer .mp-id-sub.warn { color: var(--caution); }
+.tab-multiplayer .mp-checks { display: flex; flex-direction: column; gap: 6px; }
+.tab-multiplayer .mp-check { display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); min-width: 0; }
+.tab-multiplayer .mp-check.good { box-shadow: inset 3px 0 0 var(--good); }
+.tab-multiplayer .mp-check.caution { box-shadow: inset 3px 0 0 var(--caution); }
+.tab-multiplayer .mp-check.bad { box-shadow: inset 3px 0 0 var(--bad); }
+.tab-multiplayer .mp-check-main { flex: 1; min-width: 0; }
+.tab-multiplayer .mp-check-label { font-size: 12.5px; letter-spacing: .08em; color: var(--text-2); }
+.tab-multiplayer .mp-check-value { font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--text); overflow-wrap: anywhere; }
+.tab-multiplayer .mp-chk { display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none; font-size: 13px; font-weight: 700;
+  background: var(--tile-hi); color: var(--text-3); }
+.tab-multiplayer .mp-chk.good { background: rgba(49, 199, 120, .16); color: var(--good); }
+.tab-multiplayer .mp-chk.bad { background: rgba(230, 0, 65, .18); color: #ff6b8f; }
+.tab-multiplayer .mp-chk.caution { background: rgba(248, 191, 0, .14); color: var(--caution); }
+.tab-multiplayer .mp-opt { display: flex; align-items: center; gap: 12px; }
+.tab-multiplayer .mp-opt-text { min-width: 0; }
+.tab-multiplayer .mp-opt-t { color: var(--text); font-weight: 600; }
+.tab-multiplayer .mp-opt-d { font-size: 12.5px; color: var(--text-3); }
+.tab-multiplayer .mp-adv { background: var(--panel-deep); }
+.tab-multiplayer .mp-adv-head { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tab-multiplayer .mp-adv-head:hover .mp-chev, .tab-multiplayer .mp-adv-head:focus-visible .mp-chev { color: var(--text); }
+.tab-multiplayer .mp-adv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tab-multiplayer .mp-adv-d { font-size: 12.5px; color: var(--text-2); }
+.tab-multiplayer .mp-adv .mp-chev { transform: rotate(90deg); }
+.tab-multiplayer .mp-adv.open .mp-chev { transform: rotate(-90deg); }
+.tab-multiplayer .mp-adv-body { padding: 4px 12px 12px; }
+/* the name row (only before a ShadNet account) */
 .tab-multiplayer .mp-fact { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 4px 10px 4px 14px; background: var(--tile);
   box-shadow: inset 3px 0 0 var(--text-off); }
-.tab-multiplayer .mp-fact.good { box-shadow: inset 3px 0 0 var(--good); }
-.tab-multiplayer .mp-fact.caution { box-shadow: inset 3px 0 0 var(--caution); }
-.tab-multiplayer .mp-fact.bad { box-shadow: inset 3px 0 0 var(--bad); }
 .tab-multiplayer .mp-fact-label { flex: none; width: 92px; font-size: 12px; color: var(--text-3); letter-spacing: .08em; }
 .tab-multiplayer .mp-fact-value { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-multiplayer .mp-fact-sub { font-size: 12px; font-weight: 400; color: var(--text-2); margin-left: 6px; }
 
-/* --- Lobby: create / join, the public list, the code ----------------------------------------------------------------- */
-.tab-multiplayer .mp-join { display: flex; gap: 8px; }
-.tab-multiplayer .mp-code-in { width: 110px; flex: none; text-transform: uppercase; letter-spacing: .25em; text-align: center; font-weight: 700; }
-.tab-multiplayer .mp-list { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; }
+/* --- 2 Lobby, none open: host and join tiles, the public list, the three steps --------------------------------------- */
+.tab-multiplayer .mp-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.tab-multiplayer .mp-tile { display: flex; flex-direction: column; gap: 12px; padding: 18px; background: var(--tile); min-width: 0; }
+.tab-multiplayer .mp-tile.host { box-shadow: inset 0 3px 0 var(--accent); }
+.tab-multiplayer .mp-tile.join { box-shadow: inset 0 3px 0 var(--steel); }
+.tab-multiplayer .mp-tile-t { font-size: 20px; letter-spacing: .06em; color: var(--text); }
+.tab-multiplayer .mp-tile-d { font-size: 13.5px; color: var(--text-2); min-height: 38px; }
+.tab-multiplayer .mp-tile .btn.block { margin-top: auto; }
+.tab-multiplayer .mp-tile .switch-label { color: var(--text); font-weight: 600; }
+.tab-multiplayer .mp-code-in { height: 44px; font-size: 22px; font-weight: 700; letter-spacing: .35em; text-transform: uppercase; text-align: center; }
+.tab-multiplayer .mp-tile .btn.plain:disabled { color: var(--text-3); }
+.tab-multiplayer .mp-public { flex: 1 0 auto; min-height: 150px; display: flex; flex-direction: column; gap: 8px; }
+.tab-multiplayer .mp-public-empty { flex: 1; display: grid; place-items: center; padding: 16px; text-align: center; background: var(--panel-deep);
+  border: 1px dashed var(--line-hi); }
+.tab-multiplayer .mp-public-t { font-size: 15px; font-weight: 600; color: var(--text); }
+.tab-multiplayer .mp-public-d { margin-top: 2px; font-size: 13px; color: var(--text-3); }
+.tab-multiplayer .mp-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
 .tab-multiplayer .mp-lobby-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); }
 .tab-multiplayer .mp-lobby-row:hover { background: var(--tile-hi); box-shadow: inset 3px 0 0 var(--accent); }
 .tab-multiplayer .mp-lobby-row .who { flex: 1; min-width: 0; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-multiplayer .mp-lobby-row .age { font-size: 12px; color: var(--text-3); }
+.tab-multiplayer .mp-howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tab-multiplayer .mp-howto-step { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+.tab-multiplayer .mp-howto-step b { color: var(--text); }
+.tab-multiplayer .mp-howto-d { color: var(--text-3); }
+.tab-multiplayer .mp-ftag { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 22px;
+  background: var(--metal); color: var(--metal-ink); font-size: 12px; font-weight: 700; }
 .tab-multiplayer .mp-empty { padding: 14px; font-size: 13px; color: var(--text-3); text-align: center; background: var(--panel-deep); }
 .tab-multiplayer .mp-code { display: flex; align-items: center; gap: 12px; }
 .tab-multiplayer .mp-code-big { font: 700 34px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); letter-spacing: .22em; color: var(--text); }
@@ -43,13 +117,14 @@
 .tab-multiplayer .mp-player-name .you { margin-left: 6px; font-size: 11px; color: var(--accent); letter-spacing: .1em; }
 .tab-multiplayer .mp-marks { display: flex; flex-wrap: wrap; gap: 5px; }
 
-/* --- Match rules: label over a choice, two to a row; a changed rule is marked ---------------------------------------- */
-.tab-multiplayer .mp-rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
-.tab-multiplayer .mp-rule { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px 8px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); min-width: 0; }
+/* --- Match rules: compact tiles, three to a row (the roster is the first); a changed rule is marked -------------------- */
+.tab-multiplayer .mp-rules-body { gap: 8px; }
+.tab-multiplayer .mp-rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.tab-multiplayer .mp-rule { display: flex; flex-direction: column; gap: 2px; padding: 5px 8px 6px 11px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); min-width: 0; }
 .tab-multiplayer .mp-rule.changed { box-shadow: inset 3px 0 0 var(--accent); }
-.tab-multiplayer .mp-rule-label { font-size: 11.5px; color: var(--text-3); letter-spacing: .08em; }
-.tab-multiplayer .mp-rule-value { font-size: 15px; font-weight: 700; color: var(--text); min-height: 30px; display: flex; align-items: center; }
-.tab-multiplayer .mp-rule .field { width: 100%; }
+.tab-multiplayer .mp-rule-label { font-size: 10.5px; color: var(--text-3); letter-spacing: .08em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-multiplayer .mp-rule-value { font-size: 13.5px; font-weight: 700; color: var(--text); min-height: 26px; display: flex; align-items: center; }
+.tab-multiplayer .mp-rule .field { width: 100%; height: 26px; padding-left: 8px; padding-right: 24px; font-size: 13.5px; }
 
 /* --- Game: the steps the app does and the one the player does ------------------------------------------------------- */
 .tab-multiplayer .mp-steps { display: flex; flex-direction: column; gap: 4px; }
@@ -60,26 +135,54 @@
 .tab-multiplayer .mp-step .sp { flex: 1; }
 .tab-multiplayer .mp-step .n { flex: none; width: 18px; font-weight: 700; text-align: center; }
 .tab-multiplayer .mp-manual { padding: 8px 12px 8px 14px; background: var(--panel-deep); box-shadow: inset 3px 0 0 var(--caution); font-size: 13px; line-height: 1.45; color: var(--text-soft); }
-@media (max-width: 860px) { .tab-multiplayer .mp { grid-template-columns: minmax(0, 1fr); } }
 
-/* --- History: matches, the players table, the pop-ups ---------------------------------------------------------------- */
-.tab-multiplayer .mp-matches { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; }
-.tab-multiplayer .mp-match { padding: 8px 10px 8px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* --- 3 Your rating: the number big, the tier and the bar beside it ---------------------------------------------------- */
+.tab-multiplayer .mp-body.mp-rating { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 20px; }
+.tab-multiplayer .mp-rating-n { font-size: 64px; font-weight: 700; line-height: 1; letter-spacing: -.01em; color: var(--text); font-variant-numeric: tabular-nums; }
+.tab-multiplayer .mp-rating-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tab-multiplayer .mp-rating-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.tab-multiplayer .mp-rating-top .mp-delta { font-size: 15px; }
+.tab-multiplayer .mp-rating-rec { margin-left: auto; color: var(--text-2); white-space: nowrap; }
+.tab-multiplayer .mp-rating-note { font-size: 13px; color: var(--text-3); }
+.tab-multiplayer .mp-progress { height: 6px; background: rgba(255, 255, 255, .1); }
+.tab-multiplayer .mp-progress > span { display: block; height: 100%; background: var(--bar); transition: width .6s ease; }
+.tab-multiplayer .mp-delta { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tab-multiplayer .mp-delta.plus, .mp-review .plus { color: var(--good); }
+.tab-multiplayer .mp-delta.minus, .mp-review .minus { color: #ff6b8f; }
+
+/* --- History: the review notice, the views, the match rows (three parts), the footer ---------------------------------- */
+.tab-multiplayer .mp-hist { gap: 10px; }
+.tab-multiplayer .mp-hist > .seg { align-self: flex-start; }
+.tab-multiplayer .mp-hist-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.tab-multiplayer .mp-hist-scroll > .seg { align-self: flex-start; }
+.tab-multiplayer .mp-matches { display: flex; flex-direction: column; gap: 4px; }
+.tab-multiplayer .mp-match { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px;
+  padding: 5px 12px; background: var(--tile); box-shadow: inset 3px 0 0 var(--blue); min-width: 0; }
+.tab-multiplayer .mp-match .chip { height: 18px; padding: 0 6px; font-size: 11.5px; }
+.tab-multiplayer .mp-match .btn.small { height: 22px; padding: 0 8px; font-size: 12px; }
 .tab-multiplayer .mp-match.confirmed { box-shadow: inset 3px 0 0 var(--good); }
 .tab-multiplayer .mp-match.waiting { box-shadow: inset 3px 0 0 var(--caution); }
 .tab-multiplayer .mp-match.disputed { box-shadow: inset 3px 0 0 var(--bad); }
-.tab-multiplayer .mp-match-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.tab-multiplayer .mp-match-main .mp-side:last-child { justify-content: flex-end; text-align: right; }
-.tab-multiplayer .mp-side { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--text-2); }
+.tab-multiplayer .mp-match-a, .tab-multiplayer .mp-match-b { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tab-multiplayer .mp-match-b { align-items: flex-end; text-align: right; }
+.tab-multiplayer .mp-match-b .mp-side { justify-content: flex-end; }
+.tab-multiplayer .mp-match-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.tab-multiplayer .mp-match-b .mp-match-sub { justify-content: flex-end; }
+.tab-multiplayer .mp-match-sub .mp-delta { font-size: 13px; }
+.tab-multiplayer .mp-side { min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; color: var(--text-2); }
 .tab-multiplayer .mp-side.won { color: var(--text); font-weight: 700; }
 .tab-multiplayer .mp-side-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-multiplayer .mp-team { flex: none; font-size: 11.5px; font-weight: 700; letter-spacing: .08em; color: var(--accent); }
-.tab-multiplayer .mp-score { flex: none; min-width: 52px; text-align: center; font: 700 20px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); color: var(--text); }
-.tab-multiplayer .mp-score.tentative { color: var(--text-3); }
-.tab-multiplayer .mp-match-sub { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.tab-multiplayer .mp-match-sub .sp { flex: 1; }
-.tab-multiplayer .mp-ago { font-size: 12px; color: var(--text-3); white-space: nowrap; }
-.tab-multiplayer .mp-players-table { display: flex; flex-direction: column; gap: 3px; max-height: 340px; overflow-y: auto; }
+.tab-multiplayer .mp-team { flex: none; padding: 0 7px; height: 18px; display: inline-flex; align-items: center; background: var(--tile-hi);
+  font-size: 11.5px; font-weight: 700; letter-spacing: .06em; color: var(--text-2); }
+.tab-multiplayer .mp-score { min-width: 52px; text-align: center; font-size: 22px; font-weight: 700; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.tab-multiplayer .mp-score.tentative { font-size: 20px; color: var(--text-3); }
+.tab-multiplayer .mp-ago { font-size: 12.5px; color: var(--text-3); white-space: nowrap; }
+.tab-multiplayer .mp-privacy summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; font-size: 12.5px; letter-spacing: .08em; color: var(--text-2); }
+.tab-multiplayer .mp-privacy summary::-webkit-details-marker { display: none; }
+.tab-multiplayer .mp-privacy summary .mp-chev { width: 10px; height: 10px; color: currentColor; }
+.tab-multiplayer .mp-privacy[open] summary .mp-chev { transform: rotate(90deg); }
+.tab-multiplayer .mp-privacy ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.tab-multiplayer .mp-players-table { display: flex; flex-direction: column; gap: 3px; }
 .tab-multiplayer .mp-prow { display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 10px 7px 14px; border: 0; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off);
   color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .tab-multiplayer .mp-prow:hover { background: var(--tile-hi); box-shadow: inset 3px 0 0 var(--accent); }
@@ -116,16 +219,6 @@
 .mp-score-in { display: flex; align-items: center; gap: 10px; font-size: 20px; color: var(--text); }
 .mp-score-in .field.mp-num { flex: none; width: 64px; text-align: center; font-size: 20px; font-weight: 700; }
 
-/* rating strip, review-ready banner, review pop-up, rating columns (docs/plans/m5-rating-board.md) */
-.tab-multiplayer .mp-rating { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 10px 14px; background: var(--panel-deep); box-shadow: inset 3px 0 0 var(--accent); }
-.tab-multiplayer .mp-rating-main { display: flex; align-items: center; gap: 12px; }
-.tab-multiplayer .mp-rating-n { font: 700 34px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); color: var(--text); }
-.tab-multiplayer .mp-rating-tier { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
-.tab-multiplayer .mp-rating-sub { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 140px; }
-.tab-multiplayer .mp-delta { font-weight: 700; font-variant-numeric: tabular-nums; }
-.tab-multiplayer .mp-delta.plus, .mp-review .plus { color: var(--good); }
-.tab-multiplayer .mp-delta.minus, .mp-review .minus { color: #ff6b8f; }
-.tab-multiplayer .mp-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--caution); font-size: 13px; }
 .tab-multiplayer .mp-prow-n.mp-rk { width: 44px; color: var(--text-2); }
 .tab-multiplayer .mp-prow-n.mp-rt { width: 52px; font-weight: 700; }
 .mp-review { display: flex; flex-direction: column; gap: 10px; }
@@ -134,9 +227,6 @@
 .mp-review .mp-empty { padding: 8px; font-size: 13px; color: var(--text-3); background: var(--panel-deep); }
 .mp-review .mp-note { font-size: 12.5px; color: var(--text-2); }
 .tab-multiplayer .mp-prow-tier { flex: none; width: 128px; font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-multiplayer .mp-progress { flex: 1 1 140px; height: 6px; background: var(--tile); min-width: 120px; }
-.tab-multiplayer .mp-progress > span { display: block; height: 100%; background: var(--accent); transition: width .6s ease; }
-.tab-multiplayer .mp-progress-n { white-space: nowrap; }
 .tab-multiplayer .mp-ladder { display: flex; flex-direction: column; gap: 3px; }
 .tab-multiplayer .mp-ladder-row { display: flex; align-items: baseline; gap: 12px; padding: 5px 10px 5px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); }
 .tab-multiplayer .mp-ladder-row.you { box-shadow: inset 3px 0 0 var(--accent); background: var(--tile-hi); }
@@ -174,9 +264,19 @@
 .tab-multiplayer .mp-signin .field { flex: 1; min-width: 0; }
 .tab-multiplayer .mp-signin a { color: var(--accent); }
 .tab-multiplayer .mp-signin a.mp-quiet { color: var(--text-2); margin-left: 6px; }
-.tab-multiplayer .mp-roster-pick { display: grid; gap: 6px; margin-bottom: 10px; }
-.tab-multiplayer .mp-roster-pick .mp-rule { max-width: 360px; }
-.tab-multiplayer .mp-pick-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
-.tab-multiplayer .mp-pick-row .mp-roster-pick { margin-bottom: 0; flex: 1; min-width: 220px; }
-.tab-multiplayer .mp-mode-pick { flex: 0 0 auto; }
+.tab-multiplayer .mp-rule.mp-mode-pick { flex-direction: row; align-items: center; gap: 12px; align-self: flex-start; }
 .tab-multiplayer .mp-rule.off { opacity: .4; filter: grayscale(1); box-shadow: inset 3px 0 0 var(--text-off); }
+
+/* narrower windows: column 3 goes under the other two (rating and history side by side), then one column */
+@media (max-width: 1480px) {
+  .tab-multiplayer .mp, .tab-multiplayer .mp.no-side { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); grid-template-rows: none; }
+  .tab-multiplayer .mp-col { overflow: visible; min-height: auto; }   /* rows as tall as their cards: the page scrolls */
+  .tab-multiplayer .mp-col-side { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); align-items: start; }
+  .tab-multiplayer .mp-col-side > .card.mp-card-fill { min-height: 0; }
+  .tab-multiplayer .mp-hist-scroll { max-height: 460px; }
+}
+@media (max-width: 860px) {
+  .tab-multiplayer .mp, .tab-multiplayer .mp.no-side { grid-template-columns: minmax(0, 1fr); }
+  .tab-multiplayer .mp-rules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tab-multiplayer .mp-col-side { grid-template-columns: minmax(0, 1fr); }
+}

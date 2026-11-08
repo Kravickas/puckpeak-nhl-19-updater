@@ -1,11 +1,12 @@
-// Multiplayer: play one friend. Left: you (name, ShadNet id, the checks). Right: the lobby (create, join by code, the
-// public list; then the two players and Ready) and, once both are ready, the game card with the steps the app takes.
-// Everything on the tab is the `multiplayer` slice; the lobby's secret never reaches the page. docs/ui/multiplayer.md.
+// Multiplayer: play one friend. Three columns (owner's mockup, v0.70.9): 1 you and the pre-flight checks; 2 the lobby
+// (host / join tiles, the public list; then the two players, Ready, the rules and the game steps); 3 your rating and the
+// history. Everything on the tab is the `multiplayer` slice (the Advanced row is Setup's Online lines); the lobby's secret
+// never reaches the page. docs/ui/multiplayer.md.
 import { html, cls, useState } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
 import { Button, Card, Modal, Segmented, Select, Tag, TextField, Toggle } from '../ui.js';
-import { OnlineCard } from './setup.js';
+import { OnlineLines } from './setup.js';
 
 export const tip = 'Make a lobby, give your friend the code, and both press Ready: the game starts by itself.';
 
@@ -106,67 +107,166 @@ function SignIn({ sn, onDone }) {
   </div>`;
 }
 
-function ExtId({ you }) {
+// --- 1 You and pre-flight: who you are, the checks, what the app does when the game starts, Advanced (Setup's Online) ---
+function Mark({ tone }) {
+  return html`<span class=${cls('mp-chk', tone)} aria-hidden="true">${tone === 'good'
+    ? html`<svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6.4l2.6 2.6L10 3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>`
+    : tone === 'bad'
+      ? html`<svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>`
+      : '!'}</span>`;
+}
+
+// a small arrow pointing right; CSS turns it for open / closed
+function Chevron() {
+  return html`<svg class="mp-chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+    <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`;
+}
+
+// the ShadNet account the server knows you by: a letter tile, the Online ID, the account number and where it came from
+function Identity({ you }) {
   const [edit, setEdit] = useState(false);
   const sn = you.shadnet || {};
-  if (!you.ext || edit) {
-    const who = sn.npid ? html`${sn.npid}` : 'no ShadNet account yet';
-    return html`<${Fact} label="Player" tone="caution"
-        action=${edit ? html`<${Button} small kind="ghost" onClick=${() => setEdit(false)}>Cancel<//>`
-          : html`<${Button} small kind="ghost" onClick=${() => call('mp_refresh')}>Check again<//>`}>${who}<//>
-      ${!edit && you.ext_why ? html`<div class="mp-note">${you.ext_why}</div>` : null}
-      ${sn.ready ? html`<${SignIn} sn=${sn} onDone=${() => setEdit(false)}/>` : null}`;
+  const ok = !!you.ext && !edit;
+  const name = sn.npid || you.name || (you.ext ? `#${you.ext}` : '');
+  const sub = ok ? `ShadNet #${you.ext} · ${FROM[you.ext_from] || FROM.log}`
+    : sn.npid ? 'Not signed in to ShadNet yet' : 'No ShadNet account yet';
+  return html`<div class="mp-id">
+    <div class="mp-id-head">
+      <span class=${cls('mp-avatar', !ok && 'off')}>${(name.replace('#', '') || '?').charAt(0).toUpperCase()}</span>
+      <div class="mp-id-main">
+        <div class="mp-id-name">${name || 'Player'}</div>
+        <div class=${cls('mp-id-sub', !ok && 'warn')}>${sub}</div>
+      </div>
+      ${ok ? html`<${Button} small onClick=${() => setEdit(true)}>Change<//>`
+        : edit ? html`<${Button} small kind="ghost" onClick=${() => setEdit(false)}>Cancel<//>`
+          : html`<${Button} small kind="ghost" onClick=${() => call('mp_refresh')}>Check again<//>`}
+    </div>
+    ${!ok && !edit && you.ext_why ? html`<div class="mp-note">${you.ext_why}</div>` : null}
+    ${!ok && sn.ready ? html`<${SignIn} sn=${sn} onDone=${() => setEdit(false)}/>` : null}
+  </div>`;
+}
+
+function Check({ c, action }) {
+  return html`<div class=${cls('mp-check', c.tone)}>
+    <${Mark} tone=${c.tone}/>
+    <div class="mp-check-main"><div class="mp-check-label caps">${c.label}</div><div class="mp-check-value">${c.text}</div></div>
+    ${action}
+  </div>`;
+}
+
+// the controller's checks (roster, patch, server) and Setup's firewall line, one row each with what fixes it
+function checkRows(s, setup, go) {
+  const rows = s.checks.map((c) => ({ ...c, action: c.go
+    ? html`<${Button} small kind=${c.tone === 'bad' ? 'primary' : 'ghost'} onClick=${() => go && go(c.go)}>${GO_TEXT[c.go] || 'Open'}<//>`
+    : html`<${Tag} tone=${c.tone}>${c.tone === 'good' ? (c.key === 'server' ? 'reachable' : 'ok') : 'check'}<//>` }));
+  const fw = setup && setup.online && setup.online.firewall;
+  if (fw) {
+    const tone = ['good', 'caution', 'bad'].includes(fw.tone) ? fw.tone : 'idle';
+    rows.push({ key: 'firewall', label: 'Firewall', tone, text: fw.text, action: fw.can_fix
+      ? html`<${Button} small kind="primary" disabled=${setup.busy} title="Windows asks you to allow it"
+          onClick=${() => call('setup_firewall')}>Let it through...<//>`
+      : tone === 'good' ? html`<${Tag} tone="good">ok<//>` : null });
   }
-  return html`<${Fact} label="Player" tone="good" sub=${`#${you.ext}`}
-      action=${html`<${Button} small kind="ghost" onClick=${() => setEdit(true)}>Change<//>`}>${sn.npid || you.name || you.ext}<//>`;
+  return rows;
 }
 
-function Checks({ checks, go }) {
-  return checks.map((c) => html`<${Fact} key=${c.key} label=${c.label} tone=${c.tone}
-      action=${c.go ? html`<${Button} small kind="ghost" onClick=${() => go && go(c.go)}>${GO_TEXT[c.go] || 'Open'}<//>`
-        : html`<${Tag} tone=${c.tone}>${c.tone === 'good' ? (c.key === 'server' ? 'reachable' : 'ok') : 'check'}<//>`}>${c.text}<//>`);
+function Option({ on, title, sub, onChange }) {
+  return html`<div class="mp-opt">
+    <${Toggle} on=${on} label=${title} onChange=${onChange}/>
+    <div class="mp-opt-text"><div class="mp-opt-t">${title}</div><div class="mp-opt-d">${sub}</div></div>
+  </div>`;
 }
 
-function You({ s, go }) {
+function Advanced({ setup }) {
+  const [open, setOpen] = useState(false);
+  return html`<div class=${cls('mp-adv', open && 'open')}>
+    <button type="button" class="mp-adv-head" aria-expanded=${open} onClick=${() => setOpen(!open)}>
+      <span class="mp-adv-main"><span class="mp-lbl caps">Advanced</span><span class="mp-adv-d">Server address, firewall rule, what the server keeps</span></span>
+      <${Chevron}/>
+    </button>
+    ${open && html`<div class="mp-adv-body"><${OnlineLines} s=${setup}/><${Privacy}/></div>`}
+  </div>`;
+}
+
+function You({ s, setup, go }) {
   const lobbyOpen = !!s.lobby;
-  return html`<${Card} n=${1} title="You">
-    <div class="mp-body">
+  const rows = checkRows(s, setup, go);
+  const fix = rows.filter((c) => c.tone === 'bad').length;
+  const hud = s.you.hud;
+  return html`<${Card} n=${1} title="You and pre-flight" className="mp-card-fill">
+    <div class="mp-body mp-fill">
       ${!s.you.shadnet?.npid && !s.you.ext && html`<${Name} you=${s.you}/>`}
-      <${ExtId} you=${s.you}/>
-      <${Checks} checks=${s.checks} go=${go}/>
+      <${Identity} you=${s.you}/>
+      ${fix > 0 && html`<div class="mp-notice bad"><b>${fix} ${fix === 1 ? 'thing' : 'things'} to fix</b>
+        <span>before a lobby can start the game.</span></div>`}
+      <div class="mp-checks">${rows.map((c) => html`<${Check} key=${c.key} c=${c} action=${c.action}/>`)}</div>
       ${s.error && html`<div class="mp-note bad" role="alert">${s.error}</div>`}
       ${s.error && !lobbyOpen && html`<div class="mp-row"><${Button} small onClick=${() => call('mp_refresh')}>Check again<//></div>`}
-      <${Fact} label="Auto start"
-          action=${html`<${Toggle} on=${s.you.press} label="Get past the title screen for me" onChange=${(v) => call('mp_set_press', v)}/>`}>
-        ${s.you.press ? 'App skips the title screen' : 'Off: you press ✕'}<//>
-      ${s.you.hud && html`<${Fact} label="Overlay" sub=${s.you.hud.available ? null : 'Windows only'}
-          action=${html`<${Toggle} on=${s.you.hud.on} label="Show chat and results on top of the game"
-            onChange=${(v) => call('mp_set_hud', v)}/>`}>${s.you.hud.on && s.you.hud.available ? 'Chat and results in game' : 'Off'}<//>`}
+      <div class="mp-hl"></div>
+      <div class="mp-lbl caps">When the game starts</div>
+      <${Option} on=${s.you.press} title="App skips the title screen" sub="Presses ✕ for you, twice."
+        onChange=${(v) => call('mp_set_press', v)}/>
+      ${hud && html`<${Option} on=${hud.on} title="Chat and results in game"
+        sub=${hud.available ? 'Toasts and the result card, only over the game window.' : 'Windows only.'}
+        onChange=${(v) => call('mp_set_hud', v)}/>`}
+      <div class="mp-spacer"></div>
+      ${setup && setup.online && html`<${Advanced} setup=${setup}/>`}
     </div>
   </${Card}>`;
 }
 
-function Pick({ s }) {
+// --- 2 Lobby, none open yet: a host tile and a join tile, the public list, how a match comes about ---------------------
+const HOWTO = [
+  ['Create or join', 'One lobby, two players.'],
+  ['Both press Ready', 'The host sets the match rules first.'],
+  ['The app starts NHL 19', 'It searches for your friend by itself.'],
+];
+
+function HowTo() {
+  return html`<div class="mp-howto">${HOWTO.map(([t, d], i) => html`<div class="mp-howto-step" key=${i}>
+    <span class="mp-ftag">${i + 1}</span><div><b>${t}</b><div class="mp-howto-d">${d}</div></div></div>`)}</div>`;
+}
+
+function Pick({ s, go }) {
   const [code, setCode] = useState('');
   const [pub, setPub] = useState(true);   // public by default (owner, 2026-11-06)
   const idle = !s.busy;
-  return html`<div class="mp-body">
-    <div class="mp-row">
-      <${Button} kind="primary" big disabled=${!idle} onClick=${() => call('mp_create', pub)}>Create lobby<//>
-      <${Toggle} on=${pub} onChange=${setPub}>Show it in the public list<//>
+  const patch = s.checks.find((c) => c.key === 'patch');
+  const join = () => { if (code) call('mp_join', code); };
+  return html`<div class="mp-body mp-fill mp-pick">
+    ${patch && patch.tone === 'bad' && html`<div class="mp-notice caution">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" class="mp-warn"><path d="M10 2l9 16H1z" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M10 8v5M10 15v1" stroke="currentColor" stroke-width="2"/></svg>
+      <span class="sp"><b>${patch.go === 'setup' ? 'Set up shadPS4 first.' : 'Patch the game first.'}</b>${' '}Patch: ${patch.text},
+        so a lobby cannot start NHL 19.</span>
+      ${patch.go && html`<${Button} small kind="caution" onClick=${() => go && go(patch.go)}>Open ${GO_TEXT[patch.go] || 'it'}<//>`}
+    </div>`}
+    <div class="mp-tiles">
+      <div class="mp-tile host">
+        <div class="mp-tile-t caps">Host a lobby</div>
+        <div class="mp-tile-d">You get a short code to send to a friend, or your lobby shows in the public list.</div>
+        <${Toggle} on=${pub} onChange=${setPub}>Show it in the public list<//>
+        <${Button} kind="gold" big block disabled=${!idle} onClick=${() => call('mp_create', pub)}>Create lobby<//>
+      </div>
+      <div class="mp-tile join">
+        <div class="mp-tile-t caps">Join a friend</div>
+        <div class="mp-tile-d">Type the code your friend sent you.</div>
+        <input class="field mp-code-in" placeholder="CODE" value=${code} maxlength="12" spellcheck="false" aria-label="Lobby code"
+          onInput=${(e) => setCode(e.target.value.toUpperCase())} onKeyDown=${(e) => { if (e.key === 'Enter') join(); }}/>
+        <${Button} big block kind=${code ? 'primary' : 'plain'} disabled=${!idle || !code} onClick=${join}>Join with a code<//>
+      </div>
     </div>
-    <div class="mp-join">
-      <input class="field mp-code-in" placeholder="CODE" value=${code} maxlength="12" spellcheck="false"
-        onInput=${(e) => setCode(e.target.value.toUpperCase())}
-        onKeyDown=${(e) => { if (e.key === 'Enter' && code) call('mp_join', code); }}/>
-      <${Button} disabled=${!idle || !code} onClick=${() => call('mp_join', code)}>Join with a code<//>
+    <div class="mp-public">
+      <div class="mp-row"><span class="mp-lbl caps">Public lobbies</span><span class="sp"></span>
+        <${Button} small kind="ghost" disabled=${!idle} onClick=${() => call('mp_refresh')}>Refresh<//></div>
+      ${s.lobbies.length
+        ? html`<div class="mp-list">${s.lobbies.map((l) => html`<div class="mp-lobby-row" key=${l.code}>
+            <span class="who">${l.host}</span><span class="age">${l.age}</span>
+            <${Button} small disabled=${!idle} onClick=${() => call('mp_join', l.code)}>Join<//></div>`)}</div>`
+        : html`<div class="mp-public-empty"><div><div class="mp-public-t">No public lobbies right now</div>
+            <div class="mp-public-d">Make one, or ask a friend for a code.</div></div></div>`}
     </div>
-    <div class="caps" style=${{ color: 'var(--text-3)', fontSize: '12px' }}>Public lobbies</div>
-    ${s.lobbies.length
-      ? html`<div class="mp-list">${s.lobbies.map((l) => html`<div class="mp-lobby-row" key=${l.code}>
-          <span class="who">${l.host}</span><span class="age">${l.age}</span>
-          <${Button} small disabled=${!idle} onClick=${() => call('mp_join', l.code)}>Join<//></div>`)}</div>`
-      : html`<div class="mp-empty">No public lobbies right now. Make one, or ask a friend for a code.</div>`}
+    <${HowTo}/>
   </div>`;
 }
 
@@ -220,7 +320,7 @@ function Lobby({ s }) {
   const launching = l.state === 'launching' || l.state === 'matched';
   const chip = STATE_CHIP[l.state] || { tone: 'info', text: l.state };
   const differ = l.waiting && /ROSTERCRC/.test(l.waiting);
-  return html`<${Card} n=${2} title=${launching ? `Lobby ${l.code}` : 'Lobby'}
+  return html`<${Card} n=${2} title=${launching ? `Lobby ${l.code}` : 'Lobby'} className="mp-stage"
       aside=${html`<${Tag} tone=${chip.tone}>${chip.text}<//>${l.waiting && html` <${Tag} tone="caution">${l.waiting}<//>`}`}>
     <div class="mp-body">
       ${!launching && html`<div class="mp-code"><span class="mp-code-big">${l.code}</span>
@@ -256,27 +356,32 @@ const ROSTER_OPTIONS = [
 
 // whose roster the match plays on: the server's online roster, or the host's own (its app uploads it at Ready and the
 // guest's game downloads it, as a shared roster in the PS3 legacy app)
-function RosterPick({ roster, host, hostName }) {
+// one compact tile among the rules; its note (host's own roster) goes under the grid
+function RosterRule({ roster }) {
   const own = roster.mode === 'host';
   const picked = ROSTER_OPTIONS.find((o) => o.value === roster.mode);
-  return html`<div class="mp-roster-pick">
-    <label class=${cls('mp-rule', own && 'changed')}>
-      <span class="mp-rule-label caps">Roster</span>
-      ${roster.edit
-        ? html`<${Select} value=${roster.mode} options=${ROSTER_OPTIONS} onChange=${(v) => call('mp_roster_mode', v)}/>`
-        : html`<span class="mp-rule-value">${picked ? picked.label : roster.mode}</span>`}
-    </label>
-    ${own && host && html`<div class="mp-note">The roster open in Overtime Roster (with your edits and lines; none open: the one
-      Patch put on your game) is sent when you press Ready. Both games download it online.</div>`}
-    ${own && !host && html`<div class="mp-note">${hostName || 'The host'} plays their own roster.
-      ${roster.uploaded ? 'Your game downloads it when you press PLAY.' : 'It is sent when they press Ready.'}</div>`}
-  </div>`;
+  return html`<label class=${cls('mp-rule', own && 'changed')}>
+    <span class="mp-rule-label caps">Roster</span>
+    ${roster.edit
+      ? html`<${Select} value=${roster.mode} options=${ROSTER_OPTIONS} onChange=${(v) => call('mp_roster_mode', v)}/>`
+      : html`<span class="mp-rule-value">${picked ? picked.label : roster.mode}</span>`}
+  </label>`;
 }
 
-// the game the lobby plays: Online Versus or Online Shootout (the host picks; Shootout greys out the rules it has not)
+function RosterNote({ roster, host, hostName }) {
+  if (roster.mode !== 'host') return null;
+  return host
+    ? html`<div class="mp-note">Your open roster (with your edits and lines; none open: the one Patch put on your game) is sent
+        when you press Ready. Both games download it.</div>`
+    : html`<div class="mp-note">${hostName || 'The host'} plays their own roster.
+        ${roster.uploaded ? 'Your game downloads it when you press PLAY.' : 'It is sent when they press Ready.'}</div>`;
+}
+
+// the game the lobby plays: Online Versus, Shootout or Threes (the host picks; the others grey out the rules they have not)
 const MODE_OPTIONS = [
   { value: 'versus', label: 'VERSUS' },
   { value: 'shootout', label: 'SHOOTOUT' },
+  { value: 'threes', label: 'THREES' },
 ];
 
 function ModePick({ mode, pick }) {
@@ -290,23 +395,21 @@ function Rules({ rules, host, hostName, roster, mode, modePick }) {
   const edit = rules.can_edit;
   return html`<${Card} n=${3} title="Match rules"
       aside=${html`<${Tag} tone=${rules.is_default ? 'info' : 'accent'}>${rules.summary}<//>`}>
-    <div class="mp-body">
-      ${(modePick || roster) && html`<div class="mp-pick-row">
-        ${modePick && html`<${ModePick} mode=${mode} pick=${modePick}/>`}
-        ${roster && html`<${RosterPick} roster=${roster} host=${host} hostName=${hostName}/>`}
-      </div>`}
-      ${mode === 'shootout' && html`<div class="mp-note">Online Shootout: a penalty shootout, 1 against 1. The greyed rules do not apply.
-        Shootout games count in the same rating as Versus.</div>`}
-      <div class="mp-rules">${rules.rows.map((r) => {
+    <div class="mp-body mp-rules-body">
+      ${modePick && html`<${ModePick} mode=${mode} pick=${modePick}/>`}
+      ${mode === 'shootout' && html`<div class="mp-note">Shootout: 1 against 1 penalty shots; the greyed rules do not apply. Counts in the same rating.</div>`}
+      ${mode === 'threes' && html`<div class="mp-note">Threes: 3 on 3 with its own rules, so every rule is greyed. Counts in the same rating.</div>`}
+      <div class="mp-rules">${roster && html`<${RosterRule} roster=${roster}/>`}${rules.rows.map((r) => {
         const picked = r.options.find((o) => o.value === r.value);
         return html`<label key=${r.key} class=${cls('mp-rule', r.value !== r.default && 'changed', r.off && 'off')}
-            title=${r.off ? 'Does not apply to Shootout' : null}>
+            title=${r.off ? 'Does not apply to ' + (mode === 'threes' ? 'Threes' : 'Shootout') : null}>
           <span class="mp-rule-label caps">${r.label}</span>
           ${edit && !r.off
             ? html`<${Select} value=${r.value} options=${r.options} onChange=${(v) => call('mp_set_rule', r.key, v)}/>`
             : html`<span class="mp-rule-value">${picked ? picked.label : r.value}</span>`}
         </label>`;
       })}</div>
+      ${roster && html`<${RosterNote} roster=${roster} host=${host} hostName=${hostName}/>`}
       ${edit && html`<div class="mp-row"><span class="mp-note">Changing a rule clears Ready for both of you.</span><span class="sp"></span>
         <${Button} small kind="ghost" disabled=${rules.is_default} onClick=${() => call('mp_reset_rules')}>Reset to default<//></div>`}
       ${!host && html`<div class="mp-note">${hostName || 'The host'} picks the rules. Both games play them.</div>`}
@@ -344,19 +447,25 @@ const signed = (n) => (n > 0 ? '+' : '') + n;
 function MatchRow({ m }) {
   const [a, b] = m.players;
   const shown = a.score != null && b.score != null;
-  const score = shown ? `${a.score}\u2013${b.score}` : (a.score != null ? `${a.score}\u2013${b.score}?` : '\u2013');
+  const score = shown ? `${a.score}–${b.score}` : (a.score != null ? `${a.score}–${b.score}?` : '–');
+  // three parts (mockup): the first player with the match's state, the score, the second player with the buttons
   return html`<div class=${cls('mp-match', m.status)}>
-    <div class="mp-match-main">
-      <${Side} p=${a}/><span class=${cls('mp-score', m.status !== 'confirmed' && 'tentative')}>${score}</span><${Side} p=${b}/>
+    <div class="mp-match-a">
+      <${Side} p=${a}/>
+      <div class="mp-match-sub">
+        <${Tag} tone=${STATUS_TONE[m.tone] || 'info'}>${m.text}<//>
+        <span class="mp-ago">${m.ago}${m.mode === 'shootout' ? ' · Shootout' : m.mode === 'threes' ? ' · Threes' : ''}${m.rules && m.rules !== 'Default rules' ? ` · ${m.rules}` : ''}</span>
+        ${m.delta != null && html`<span class=${cls('mp-delta', m.delta > 0 && 'plus', m.delta < 0 && 'minus')}>${signed(m.delta)}</span>`}
+      </div>
     </div>
-    <div class="mp-match-sub">
-      <${Tag} tone=${STATUS_TONE[m.tone] || 'info'}>${m.text}<//>
-      <span class="mp-ago">${m.ago}${m.mode === 'shootout' ? ' · Shootout' : ''}${m.rules && m.rules !== 'Default rules' ? ` \u00b7 ${m.rules}` : ''}</span>
-      ${m.delta != null && html`<span class=${cls('mp-delta', m.delta > 0 && 'plus', m.delta < 0 && 'minus')}>${signed(m.delta)}</span>`}
-      <span class="sp"></span>
-      ${m.mine && m.status === 'confirmed' && html`<${Button} small kind="ghost" onClick=${() => call('mp_review_open', m.id)}>Review<//>`}
-      ${m.entry && html`<${Button} small kind=${m.entry.again ? 'ghost' : 'primary'} onClick=${() => call('mp_result_open', m.id)}>
-        ${m.entry.again ? 'Change my result' : 'Enter result'}<//>`}
+    <span class=${cls('mp-score', m.status !== 'confirmed' && 'tentative')}>${score}</span>
+    <div class="mp-match-b">
+      <${Side} p=${b}/>
+      <div class="mp-match-sub">
+        ${m.mine && m.status === 'confirmed' && html`<${Button} small onClick=${() => call('mp_review_open', m.id)}>Review<//>`}
+        ${m.entry && html`<${Button} small kind=${m.entry.again ? 'ghost' : 'primary'} onClick=${() => call('mp_result_open', m.id)}>
+          ${m.entry.again ? 'Change my result' : 'Enter result'}<//>`}
+      </div>
     </div>
   </div>`;
 }
@@ -375,18 +484,32 @@ function PlayerRow({ p }) {
 // ranked players by rank, then those still placing by rating; the rest (an older server) as sent
 const byRating = (a, b) => (a.rank != null ? a.rank : 1e6) - (b.rank != null ? b.rank : 1e6) || (b.rating || 0) - (a.rating || 0);
 
-function RatingStrip({ r }) {
-  return html`<div class="mp-rating">
-    <div class="mp-rating-main"><span class="mp-rating-n">${r.rating}</span>
-      <span class="mp-rating-tier"><${Tag} tone=${r.ranked ? 'good' : 'info'}>${r.ranked ? r.tier : `Placing ${5 - r.placing}/5`}<//>
-        <span class="mp-note">${r.ranked ? `#${r.rank} of ${r.of}` : `${r.placing} more rated ${r.placing === 1 ? 'game' : 'games'} to get your rank`}</span></span></div>
-    <div class="mp-rating-sub">${r.change != null && html`<span class=${cls('mp-delta', r.change > 0 && 'plus', r.change < 0 && 'minus')}>${signed(r.change)} last game</span>`}
-      ${r.modes && r.modes.length > 0 && html`<span class="mp-note">${r.modes.map((m) => `${m.name} ${m.record}`).join(' · ')}</span>`}
-      <span class="mp-note">${r.record}${Math.abs(r.streak) >= 2 ? ` \u00b7 ${Math.abs(r.streak)} ${r.streak > 0 ? 'wins' : 'losses'} in a row` : ''}</span></div>
-    ${r.next && r.ranked && html`<div class="mp-progress" title=${`${r.next.to_go} to ${r.next.name}`}><span style=${{ width: `${Math.round((r.next.progress || 0) * 100)}%` }}></span></div>
-      <span class="mp-note mp-progress-n">${r.next.to_go} to ${r.next.name} (${r.next.at})</span>`}
-    <${Toggle} on=${!r.hidden} onChange=${(on) => call('mp_set_hidden', !on)}>Show me on the web board<//>
-  </div>`;
+// 3 Your rating: the number big, then the tier (or the placing games), the last change, the record, a bar to the next
+// tier (or to the rank), the record per game (Versus / Shootout / Threes)
+function RatingCard({ r }) {
+  const placed = 5 - r.placing;
+  const bar = r.ranked ? (r.next ? r.next.progress || 0 : 1) : placed / 5;
+  const streak = Math.abs(r.streak) >= 2 ? `${Math.abs(r.streak)} ${r.streak > 0 ? 'wins' : 'losses'} in a row` : '';
+  const extra = [...(r.modes || []).map((m) => `${m.name} ${m.record}`), streak].filter(Boolean);
+  return html`<${Card} n=${3} title="Your rating"
+      aside=${html`<${Toggle} on=${!r.hidden} onChange=${(on) => call('mp_set_hidden', !on)}>Show me on the web board<//>`}>
+    <div class="mp-body mp-rating">
+      <div class="mp-rating-n">${r.rating}</div>
+      <div class="mp-rating-side">
+        <div class="mp-rating-top">
+          <${Tag} tone=${r.ranked ? 'good' : 'info'}>${r.ranked ? r.tier : `Placing ${placed}/5`}<//>
+          ${r.change != null && html`<span class=${cls('mp-delta', r.change > 0 && 'plus', r.change < 0 && 'minus')}>${signed(r.change)} last game</span>`}
+          <span class="mp-rating-rec">Record ${r.record}</span>
+        </div>
+        <div class="mp-progress" title=${r.ranked && r.next ? `${r.next.to_go} to ${r.next.name}` : null}>
+          <span style=${{ width: `${Math.round(Math.min(1, Math.max(0, bar)) * 100)}%` }}></span></div>
+        <div class="mp-rating-note">${r.ranked
+          ? `#${r.rank} of ${r.of}${r.next ? ` · ${r.next.to_go} to ${r.next.name} (${r.next.at})` : ''}`
+          : `${r.placing} more rated ${r.placing === 1 ? 'game' : 'games'} to get your rank`}</div>
+        ${extra.length > 0 && html`<div class="mp-rating-note">${extra.join(' · ')}</div>`}
+      </div>
+    </div>
+  <//>`;
 }
 
 // My games: how I played, over every game that has the game's own numbers, then each game with its box score.
@@ -412,7 +535,7 @@ function MyGames({ g }) {
         <span class="mp-recent-main">${m.for != null && m.status === 'confirmed'
           ? html`${m.team || '?'} ${m.for}–${m.against} ${m.opp_team || '?'}<span class="mp-note"> against ${m.opponent}</span>`
           : html`Against ${m.opponent}`}</span>
-        <span class="mp-ago">${m.status === 'confirmed' ? '' : m.status + ' · '}${m.ago}${m.mode === 'shootout' ? ' · Shootout' : ''}</span></summary>
+        <span class="mp-ago">${m.status === 'confirmed' ? '' : m.status + ' · '}${m.ago}${m.mode === 'shootout' ? ' · Shootout' : m.mode === 'threes' ? ' · Threes' : ''}</span></summary>
       ${m.box.length
         ? html`<div class="mp-box"><div class="mp-box-row head caps"><span></span><span>Me</span><span>Them</span></div>
             ${m.box.map((r) => html`<div class="mp-box-row" key=${r.label}><span>${r.label}</span><b>${r.me}</b><span>${r.them}</span></div>`)}</div>`
@@ -426,35 +549,34 @@ function History({ h }) {
   const [sort, setSort] = useState('rating');
   const empty = h.loaded && !h.matches.length;
   const players = sort === 'rating' && h.players.some((p) => p.rating != null) ? [...h.players].sort(byRating) : h.players;
-  return html`<${Card} title="History"
+  return html`<${Card} title="History" className="mp-card-fill"
       aside=${html`<${Button} small kind="ghost" onClick=${() => call('mp_history_refresh')}>Refresh<//>`}>
-    <div class="mp-body">
-      ${h.rating && html`<${RatingStrip} r=${h.rating}/>`}
-      ${h.banner && html`<div class="mp-banner" role="status"><span>Match review ready: ${h.banner.text}</span>
+    <div class="mp-body mp-fill mp-hist">
+      ${h.banner && html`<div class="mp-notice info" role="status"><span class="sp"><b>Match review ready:</b> ${h.banner.text}</span>
         <${Button} small kind="primary" onClick=${() => call('mp_review_open', h.banner.match)}>View<//></div>`}
       <${Segmented} value=${view} onChange=${setView}
         options=${[{ value: 'matches', label: 'Recent matches' }, ...(h.games ? [{ value: 'games', label: 'My games' }] : []),
           { value: 'players', label: 'Leaderboard' }]}/>
       ${h.error && html`<div class="mp-note warn" role="alert">${h.error}</div>`}
-      ${!h.loaded && !h.error && html`<div class="mp-empty">Loading the history...</div>`}
-      ${empty && html`<div class="mp-empty">No matches yet. Every game two players start from a lobby shows up here;
-        after it, both enter the result and it counts.</div>`}
-      ${view === 'games' && h.games && html`<${MyGames} g=${h.games}/>`}
-      ${view === 'matches' && h.matches.length > 0 && html`<div class="mp-matches">${h.matches.map((m) => html`<${MatchRow} key=${m.id} m=${m}/>`)}</div>
-        <div class="mp-note">A result counts once both players say the same: enter yours after the game.</div>`}
-      ${view === 'players' && h.players.some((p) => p.rating != null) && html`<${Segmented} value=${sort} onChange=${setSort}
-        options=${[{ value: 'rating', label: 'By rating' }, { value: 'wins', label: 'By wins' }]}/>`}
-      ${view === 'players' && html`${h.players.length
-        ? html`<div class="mp-players-table">
-            <div class="mp-prow head caps"><span class="mp-prow-name">Player</span><span class="mp-prow-tier">Tier</span><span class="mp-prow-n mp-rk">Rank</span>
-              <span class="mp-prow-n mp-rt">Rating</span><span class="mp-prow-n">W</span>
-              <span class="mp-prow-n">L</span><span class="mp-prow-n">GP</span><span class="mp-prow-n">+/-</span></div>
-            ${players.map((p) => html`<${PlayerRow} key=${p.pid} p=${p}/>`)}</div>`
-        : h.loaded && html`<div class="mp-empty">Nobody has a confirmed match yet.</div>`}`}
-      ${view === 'players' && h.ladder.length > 0 && html`<div class="caps mp-sub">Ranks (a rank shows after 5 rated games)</div>
-        <div class="mp-ladder">${h.ladder.map((t) => html`<div key=${t.name} class=${cls('mp-ladder-row', t.you && 'you')}>
-          <b>${t.name}</b><span class="mp-note">${t.min ? t.min + '+' : 'under 1000'}</span><span class="mp-note mp-ladder-b">${t.blurb}</span></div>`)}</div>`}
-      <${Privacy}/>
+      <div class="mp-hist-scroll">
+        ${!h.loaded && !h.error && html`<div class="mp-empty">Loading the history...</div>`}
+        ${view === 'matches' && empty && html`<div class="mp-empty">No matches yet. Every game two players start from a lobby shows up here;
+          after it, both enter the result and it counts.</div>`}
+        ${view === 'games' && h.games && html`<${MyGames} g=${h.games}/>`}
+        ${view === 'matches' && h.matches.length > 0 && html`<div class="mp-matches">${h.matches.map((m) => html`<${MatchRow} key=${m.id} m=${m}/>`)}</div>`}
+        ${view === 'players' && h.players.some((p) => p.rating != null) && html`<${Segmented} value=${sort} onChange=${setSort}
+          options=${[{ value: 'rating', label: 'By rating' }, { value: 'wins', label: 'By wins' }]}/>`}
+        ${view === 'players' && html`${h.players.length
+          ? html`<div class="mp-players-table">
+              <div class="mp-prow head caps"><span class="mp-prow-name">Player</span><span class="mp-prow-tier">Tier</span><span class="mp-prow-n mp-rk">Rank</span>
+                <span class="mp-prow-n mp-rt">Rating</span><span class="mp-prow-n">W</span>
+                <span class="mp-prow-n">L</span><span class="mp-prow-n">GP</span><span class="mp-prow-n">+/-</span></div>
+              ${players.map((p) => html`<${PlayerRow} key=${p.pid} p=${p}/>`)}</div>`
+          : h.loaded && html`<div class="mp-empty">Nobody has a confirmed match yet.</div>`}`}
+        ${view === 'players' && h.ladder.length > 0 && html`<div class="caps mp-sub">Ranks (a rank shows after 5 rated games)</div>
+          <div class="mp-ladder">${h.ladder.map((t) => html`<div key=${t.name} class=${cls('mp-ladder-row', t.you && 'you')}>
+            <b>${t.name}</b><span class="mp-note">${t.min ? t.min + '+' : 'under 1000'}</span><span class="mp-note mp-ladder-b">${t.blurb}</span></div>`)}</div>`}
+      </div>
     </div>
   </${Card}>`;
 }
@@ -462,7 +584,7 @@ function History({ h }) {
 // draft for the owner to approve (v0.10.0); the web board's footer says the same (overtime_server/http/web/board.html)
 function Privacy() {
   return html`<details class="mp-privacy">
-    <summary class="caps">What the Overtime server keeps</summary>
+    <summary class="caps"><${Chevron}/>What the Overtime server keeps</summary>
     <ul class="mp-note">
       <li>The name you enter here and your ShadNet account number. Other players never see the number, only your name.</li>
       <li>Every match two players start from a lobby: both names, the teams, the scores, the match rules and when it was
@@ -558,21 +680,26 @@ export function Modals() {
 
 export default function Multiplayer({ go }) {
   const s = useSlice('multiplayer');
-  const setup = useSlice('setup');       // the Online card (server address, firewall) is Setup's, shown here
+  const setup = useSlice('setup');       // the Advanced row (server address, firewall) and the firewall check are Setup's
   if (!s) return null;
-  return html`<div class="mp">
-    <div class="mp-col"><${You} s=${s} go=${go}/>${setup && html`<${OnlineCard} s=${setup}/>`}</div>
-    <div class="mp-col">
+  const h = s.history && s.history.supported ? s.history : null;
+  return html`<div class=${cls('mp', !h && 'no-side')}>
+    <div class="mp-col mp-col-you"><${You} s=${s} setup=${setup} go=${go}/></div>
+    <div class="mp-col mp-col-lobby">
       ${s.lobby
         ? html`<${Lobby} s=${s}/>`
-        : html`<${Card} n=${2} title="Lobby" aside="Play one friend at a time">
-            ${s.you.ext ? html`<${Pick} s=${s}/>`
-              : html`<div class="mp-body"><div class="mp-empty">Sign in to ShadNet first (left): a lobby is tied to your game's own sign-in.</div></div>`}
+        : html`<${Card} n=${2} title="Lobby" aside="Play one friend at a time" className="mp-card-fill mp-stage">
+            ${s.you.ext ? html`<${Pick} s=${s} go=${go}/>`
+              : html`<div class="mp-body mp-fill"><div class="mp-empty">Sign in to ShadNet first (left): a lobby is tied to your game's own sign-in.</div>
+                  <div class="mp-spacer"></div><${HowTo}/></div>`}
           </${Card}>`}
       ${s.lobby && s.lobby.rules && html`<${Rules} rules=${s.lobby.rules} host=${s.lobby.host} hostName=${s.lobby.host_name}
           roster=${s.lobby.roster_mode} mode=${s.lobby.mode} modePick=${s.lobby.mode_pick}/>`}
       ${s.game && html`<${Game} game=${s.game}/>`}
-      ${s.history && s.history.supported && html`<${History} h=${s.history}/>`}
     </div>
+    ${h && html`<div class="mp-col mp-col-side">
+      ${h.rating && html`<${RatingCard} r=${h.rating}/>`}
+      <${History} h=${h}/>
+    </div>`}
   </div>`;
 }

@@ -25,6 +25,10 @@ Zero-press launch (`launch`, docs/plans/m2-zero-press.md): not an option, never 
                    tile's own nav event (what `_OnAdvanceAction` sends), flag `_G.OvertimeAutoplay = 'home'`.
   hub.lua          (online hub) at the end of Hub:PublishData, when the hub is the Online Versus one and both data
                    sources are in and the flag is 'home': `_OnAdvance(PLAYNOW_ONLINE)` (PLAY), flag 'hub'.
+  Threes: the homepage hook jumps with the Threes tile's event (evt_3_on_3) into NHL Threes' own hub (3on3 hub.lua),
+                   whose hook, at the end of Hub:new, picks Online once (`_OnOnlineSelection`, which sets the game type and
+                   sends evt_online); that leads to the shared online hub in its MODE_3ON3ONLINE, where the hook above
+                   presses PLAY.
 `{'rules': {...}}` (overtime_core.rules; only with a launch) also serves the Online Versus rules file with those rules'
 `defaultvalue`s set, so the game searches with them (docs/plans/m3b-match-settings.md). It goes off with the hook.
 Every hook body is a pcall: a Lua error (an `os` that is not reachable, a missing global) leaves the screen as it was,
@@ -40,11 +44,20 @@ from . import rules
 HOMEPAGE_PATH = 'nhl/ui/features/homepage/vvms/homepage.lua'
 LAYOUT_PATH = 'nhl/ui/features/homepage/vvms/homepage.layout'
 HUB_PATH = 'nhl/ui/features/online/vvms/hub/hub.lua'
+THREES_HUB_PATH = 'nhl/ui/features/3on3/vvms/hub/hub.lua'   # NHL Threes' own hub: Offline / Campaign / Online
 PATHS = (HOMEPAGE_PATH, LAYOUT_PATH)
-LAUNCH_PATHS = PATHS + (HUB_PATH,) + tuple(rules.PATHS.values())   # what a launch (set_menus) adds, and a clear takes off again
+LAUNCH_PATHS = PATHS + (HUB_PATH, THREES_HUB_PATH) + tuple(rules.PATHS.values())   # what a launch (set_menus) adds, and a clear takes off again
 
 DEAD = ('ULTIMATETEAM', 'HOCKEYDRAFT', 'EASHL')  # MODES_NAMES keys: Hockey Ultimate Team, Draft Champions, WOC
-OPTIONS = {'chel': False, 'news': True}  # chel = bring back World of Chel; news = keep the news tile (Puck Peak)
+OPTIONS = {'chel': False, 'news': True, 'hut': False}
+# chel = bring back World of Chel; news = keep the news tile (Puck Peak); hut = keep the Hockey Ultimate Team tile (the
+# server's CardHouse is scaffolding only, docs/notes/hut.md; no switch in the app, set with overlay `menus={'hut': True}`)
+SERVED_DEAD = {'EASHL': 'chel', 'ULTIMATETEAM': 'hut'}   # the dead modes an option brings back
+
+
+def hidden_keys(opts):
+    """The MODES_NAMES keys the options leave hidden."""
+    return [k for k in DEAD if not opts.get(SERVED_DEAD.get(k))]
 MARK = b'Overtime menus'
 
 
@@ -76,8 +89,8 @@ def _once(raw, anchor, path):
         raise MenuError(f'{path}: anchor {anchor[:60]!r} found {n} times, expected once')
 
 
-def _filter(chel):
-    gone = [k for k in DEAD if not (chel and k == 'EASHL')]
+def _filter(chel, hut=False):
+    gone = hidden_keys({'chel': chel, 'hut': hut})
     hidden = ', '.join(f'[MODES_NAMES.{k}] = true' for k in gone)
     lines = [
         '    -- Overtime menus: Hockey Ultimate Team, Draft Champions and World of Chel have no server. They leave',
@@ -122,10 +135,17 @@ HOME_END_ANCHOR = (b'    self:_PublishIsTutorialAvailable()\r\nend\r\n\r\n'
 HUB_END_ANCHOR = b'    self.im.Publish(BINDINGS.BUTTONS_FONT_STYLE, self.mButtonsState)\r\nend\r\n'
 HUB_STOCK = (b'function Hub:PublishData()', b'MODE_SHOOTOUT_ONLINE', b'function Hub:_OnAdvance(evt)')
 HUB_MODE = 'MODE_PLAY_NOW_ONLINE_QUICKMATCH'  # gameMode of the Online Versus hub (playonline.nav, OnlineHub)
-HUB_MODES = {rules.VERSUS: HUB_MODE, rules.SHOOTOUT: 'MODE_SHOOTOUT_ONLINE'}   # ... and of the Online Shootout hub
+HUB_MODES = {rules.VERSUS: HUB_MODE, rules.SHOOTOUT: 'MODE_SHOOTOUT_ONLINE',   # ... and of the Online Shootout hub
+             rules.THREES: 'MODE_3ON3ONLINE'}                                   # ... and of the Online Threes one
 # The homepage tile's nav event per game: Versus' own (what _OnAdvanceAction sends), and the one the Shootout tile's
 # Offline / Online popup sends for its Online choice (_ShootoutPopUpCallBack, EVENTS.GOTO_ONLINE_SHOOTOUT).
-HOME_EVENTS = {rules.VERSUS: 'evt_playonline', rules.SHOOTOUT: 'evt_goto_online_shootout'}
+# NHL Threes' tile sends evt_3_on_3 (homepage.nav -> out_3_on_3 -> the 3on3 nav, docs/notes/threes-otp.md).
+HOME_EVENTS = {rules.VERSUS: 'evt_playonline', rules.SHOOTOUT: 'evt_goto_online_shootout', rules.THREES: 'evt_3_on_3'}
+THREES_HUB_ANCHOR = (b'    o:_RegisterActions()\r\n'
+                     b'    return o\r\n'
+                     b'end\r\n')
+THREES_HUB_STOCK = (b'function Hub:_OnOnlineSelection()', b'local ONLINE_GAME_TYPE = "PLAYNOW_ONLINE_PERIODS"',
+                    b'ACTIONS.ONLINE')
 
 
 def _lines(*lines):
@@ -157,6 +177,33 @@ def hub_hook(until, mode=rules.VERSUS):
         '    end)')
 
 
+def threes_hub_hook(until):
+    return _lines(
+        '    -- Overtime autoplay: the NHL Threes hub picks Online once, right after the homepage jumped here',
+        '    pcall(function()',
+        f"        if _G.OvertimeAutoplay == 'home' and _G.OvertimeThreesHub == nil and os.time() <= {int(until)} then",
+        '            _G.OvertimeThreesHub = true',
+        '            o:_OnOnlineSelection()',
+        '        end',
+        '    end)')
+
+
+def edit_threes_hub(raw, until):
+    """The Threes hub.lua with the Online hook at the end of Hub:new."""
+    path = THREES_HUB_PATH
+    if MARK in raw:
+        raise MenuError(f'{path} is already edited')
+    if raw.count(b'\r\n') != raw.count(b'\n'):
+        raise MenuError(f'{path} does not have CRLF line ends')
+    missing = [x for x in THREES_HUB_STOCK if raw.count(x) < 1]
+    if missing:
+        raise MenuError(f'{path} is not the Threes hub.lua this patch knows ({missing[0][:60]!r})')
+    _once(raw, THREES_HUB_ANCHOR, path)
+    tail = b'    return o' + b'\r\n' + b'end' + b'\r\n'
+    new = THREES_HUB_ANCHOR[:-len(tail)] + threes_hub_hook(until) + tail
+    return raw.replace(THREES_HUB_ANCHOR, new)
+
+
 DIAG_TITLE = _lines(
     '    -- Overtime autoplay (diagnostic): the clock and the flag, in the last column title',
     '    do',
@@ -180,7 +227,7 @@ def edit_hub(raw, until, mode=rules.VERSUS):
     return raw.replace(HUB_END_ANCHOR, new)
 
 
-def edit_homepage(raw, chel=False, news=False, launch=None):
+def edit_homepage(raw, chel=False, news=False, launch=None, hut=False):
     """homepage.lua without the dead modes (World of Chel kept when `chel`) and, unless `news`, the news tile; with
     `launch` ({'until', 'diag'}) the autoplay hook (and the diagnostic title)."""
     path = HOMEPAGE_PATH
@@ -191,7 +238,7 @@ def edit_homepage(raw, chel=False, news=False, launch=None):
     missing = [s for s in STOCK if raw.count(s) != 1]
     if missing:
         raise MenuError(f'{path} is not the homepage.lua this patch knows ({missing[0][:60]!r})')
-    edits = [(MODES_ANCHOR, _filter(chel) + MODES_ANCHOR), (FEATURED_ANCHOR, FEATURED_GUARD + FEATURED_ANCHOR),
+    edits = [(MODES_ANCHOR, _filter(chel, hut) + MODES_ANCHOR), (FEATURED_ANCHOR, FEATURED_GUARD + FEATURED_ANCHOR),
              (TITLES_ANCHOR, TITLES_ANCHOR + TITLES_DROP)]
     if not news:
         edits.append((NEWS_ANCHOR, NEWS_EMPTY))
@@ -236,7 +283,7 @@ def options(given=None, served=None):
 
 
 def launch_mode(launch):
-    """The game a launch jumps into: 'versus' (the default) or 'shootout'."""
+    """The game a launch jumps into: 'versus' (the default), 'shootout' or 'threes'."""
     mode = (launch or {}).get('mode') or rules.VERSUS
     if mode not in HUB_MODES:
         raise MenuError(f'unknown game mode: {str(mode)[:20]}')
@@ -247,11 +294,13 @@ def edits(read, opts, launch=None):
     """{path: new bytes} for the two files, plus hub.lua with `launch` ({'until': unix seconds, 'diag': bool, 'mode':
     versus|shootout, 'rules': {rule: value}}) and that mode's rules file when it names rules; `read(path)` gives the
     game's own bytes."""
-    out = {HOMEPAGE_PATH: edit_homepage(read(HOMEPAGE_PATH), chel=opts['chel'], news=opts['news'], launch=launch),
+    out = {HOMEPAGE_PATH: edit_homepage(read(HOMEPAGE_PATH), chel=opts['chel'], news=opts['news'], launch=launch, hut=opts['hut']),
            LAYOUT_PATH: edit_layout(read(LAYOUT_PATH))}
     if launch:
         mode = launch_mode(launch)
         out[HUB_PATH] = edit_hub(read(HUB_PATH), launch['until'], mode)
+        if mode == rules.THREES:
+            out[THREES_HUB_PATH] = edit_threes_hub(read(THREES_HUB_PATH), launch['until'])
         if launch.get('rules'):
             try:
                 out[rules.path(mode)] = rules.edit(read(rules.path(mode)), launch['rules'], mode)
@@ -263,7 +312,7 @@ def edits(read, opts, launch=None):
 def record(opts, launch=None):
     """The layer's record in the patch state file. A launch hook is recorded as `autoplay_until`, outside `options`
     (options are what a re-apply keeps; the hook is never kept)."""
-    rec = {'options': dict(opts), 'hidden': [k for k in DEAD if not (opts['chel'] and k == 'EASHL')],
+    rec = {'options': dict(opts), 'hidden': hidden_keys(opts),
            'news': bool(opts['news']), 'grid_columns': 5}
     if launch:
         rec['autoplay_until'] = int(launch['until'])

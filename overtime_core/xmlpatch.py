@@ -19,6 +19,8 @@ loaded eboot only. `build` makes the file from the FEATURES table below; `build(
               (CUSA11116 v1.60); its sites are byte-identical in CUSA11126 v1.60 (docs/notes/boost-performance.md)
   res1440     render at 2560x1440 instead of 1920x1080, by Kravickas (same file, "Resolution 2560x1440 (16:9)"). Written
               off (isEnabled="false"); with_res1440 switches it (the Setup tab's Resolution choice, with Additional DMem)
+  threes_rewards  a not-found check on the hero/mascot lookup of Online Threes' unlock lists (0x1406990), whose miss read
+              past the vector's end and crashed the setup at 0x1406fc5 (docs/notes/threes-otp.md 10.4). Local only
   ledger_cap  a capacity check on the Franchise per-team list append in 0x423ad80 (a daily per-team ledger, cleared at
               the season reset: 369 days against 366 slots), whose overflow crashes the expansion career offseason at
               0x423ce8c; the cap drops at most 3 days' entries (docs/notes/nhl19-32teams-re.md, R1: runs c1, e1)
@@ -48,6 +50,7 @@ NUCLEUS = ('0x526E089', '0x526E0A2', '0x526E0BA')
 E32_DEFAULT, E32_STOCK = '0x6F7963', 'C6051E2EC50500'
 BAP32_TITLE = 'BAP32: Seattle in Be a Pro'
 RES1440_TITLE = 'Resolution 2560x1440 (Kravickas)'
+THREES_REWARDS_TITLE = 'T1: not-found check on the Threes unlock lookup'
 
 
 class Feature:
@@ -100,6 +103,15 @@ FEATURES = {
        default 0 (mov byte [rip+0x5c52e1e], 0 at 0x2f7963 -> +0x38); the registry takes it as the live value that the
        TeamList builder (0x1d5e8a0, appends team 499) and the team-count getters read. Default 1 = 32 teams. -->""",
         [(E32_DEFAULT, 'C6051E2EC50501')]),
+    'threes_rewards': Feature(
+        THREES_REWARDS_TITLE,
+        """  <!-- Online Threes' setup builds the unlock lists (herounlocks / mascotunlocks) in 0x1406990: each hero or mascot
+       reward's player id is looked up (equal_range) in a sorted {id, def} vector with no not-found check, so a missing
+       id reads the def pointer one entry past the end (heap garbage; 0xc0000005 at 0x1406fc5 in most runs, docs/notes/
+       threes-otp.md 10.4). Hook 0x1406fbd -> cave 0x56eb200 (text padding): found takes the entry as before; not found
+       goes to 0x1406fd3, where the live ZF makes the existing cmovz write 0xffff (the code's own "no asset" value). -->""",
+        [('0x1806FBD', 'E93E422E04909090'),
+         ('0x5AEB200', '740C4989C8498B4008E9B7BDD1FBE9C0BDD1FB')]),
     'ledger_cap': Feature(
         'R1: cap check on the Franchise per-team list append',
         """  <!-- 0x423ad80 appends a 0x38 entry to a team's fixed list (32 slots of 366 inline entries, header begin/end/cap)
@@ -147,10 +159,12 @@ FEATURES = {
                        '0041C78424EC0300002000000031D24C89E7C3')]),
 }
 # bap32 and expansion32 stay last: DEFAULT[:-2] is the patch without the 32-team switch (xmlpatch.expansion32_off)
-DEFAULT = ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'ledger_cap', 'bap32', 'expansion32')
+DEFAULT = ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'threes_rewards', 'ledger_cap', 'bap32',
+           'expansion32')
 # what earlier versions wrote: repoint takes such a file as its own and writes today's DEFAULT (a player's next Play
 # brings new blocks in without Patch)
-EARLIER = (('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'ledger_cap', 'bap32', 'expansion32'),)
+EARLIER = (('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'ledger_cap', 'bap32', 'expansion32'),
+           ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'ledger_cap', 'bap32', 'expansion32'))
 
 _HOST = re.compile(r'[A-Za-z0-9.-]+\Z')
 _URL = re.compile(r'(https?)://([A-Za-z0-9.-]+(?::\d{1,5})?)/\Z')
@@ -325,8 +339,9 @@ def repoint(text, host, nucleus_url=None):
 
 
 # Blocks and lines that never reach the other game: the picture size (Setup's Resolution), Be a Pro (offline only, off
-# with the league switch) and the server's name (one lobby is one server, whatever name or address the app was given).
-LOCAL_ONLY_TITLES = (RES1440_TITLE, BAP32_TITLE)
+# with the league switch), the Threes unlock guard (only a lookup that would crash changes) and the server's name (one
+# lobby is one server, whatever name or address the app was given).
+LOCAL_ONLY_TITLES = (RES1440_TITLE, BAP32_TITLE, THREES_REWARDS_TITLE)
 LOCAL_ONLY_LINES = (REDIRECTOR,) + NUCLEUS
 
 

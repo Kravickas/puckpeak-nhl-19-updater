@@ -210,6 +210,16 @@ def start_update_ticks(host, quit, ctl=None):
     threading.Thread(target=loop, daemon=True, name='selfupdate').start()
 
 
+def start_match_restore(host):
+    """A lobby match setup left by a crash or a closed app (matchsetup.py) comes back once shadPS4 is closed."""
+    from ..app import matchsetup
+    if not matchsetup.active():
+        return None
+    t = threading.Thread(target=lambda: matchsetup.restore_when_closed(log=host.log), daemon=True, name='match-restore')
+    t.start()
+    return t
+
+
 # --- the two ways to show the app -------------------------------------------------------------------
 def run_browser(host, api, port=0, open_browser=True, ready=None, quit=None):
     from .server import AppServer
@@ -378,6 +388,7 @@ def main(browser=False, port=0, open_browser=True, game_dir=None, save_dir=None)
         return 1
     host, controller, api = build(game_dir, save_dir)
     startup.mark('app built')
+    start_match_restore(host)
     quit = Quit()
     if getattr(sys, 'frozen', False):       # the exe looks for a newer exe; source runs don't
         start_update_ticks(host, quit, controller)

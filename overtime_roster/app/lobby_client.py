@@ -94,13 +94,20 @@ class LobbyClient:
         return self._call('POST', f'/api/lobby/{_code(code)}/join',
                           {'name': name, 'ext': ext, **({'roster_crc': roster_crc} if roster_crc else {})})
 
-    def ready(self, code, token, value=True, patch=None, game=None):
+    def ready(self, code, token, value=True, patch=None, game=None, caps=None):
+        """Ready on or off. `caps` (0.80: ['match_setup']) tells the server what this app can do; it keeps them until
+        sent again, so an app announces them right after create/join (docs/notes/lobby.md "Match recipe")."""
         return self._call('POST', f'/api/lobby/{_code(code)}/ready', {'token': token, 'ready': bool(value),
                                                                       **({'patch': patch} if patch else {}),
-                                                                      **({'game': game} if game else {})})
+                                                                      **({'game': game} if game else {}),
+                                                                      **({'caps': list(caps)} if caps else {})})
+
+    def match(self, code, token, recipe):
+        """The host's match recipe (matchsetup.recipe), or None to clear it."""
+        return self._call('POST', f'/api/lobby/{_code(code)}/match', {'token': token, 'match': recipe})
 
     def mode(self, code, token, mode):
-        """The host picks the game, 'versus' or 'shootout' (a server before 0.71 has no such call: 404)."""
+        """The host picks the game, 'versus', 'shootout' or 'threes' (a server before 0.71 has no such call: 404)."""
         return self._call('POST', f'/api/lobby/{_code(code)}/mode', {'token': token, 'mode': mode})
 
     def roster_mode(self, code, token, mode):

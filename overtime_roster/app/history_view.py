@@ -89,13 +89,15 @@ def ladder(mine):
 
 
 def modes_view(modes):
-    """[{mode, name, record}] per game this player has played (Versus and Shootout share one rating); [] for a server that
-    does not split them or before the first Shootout game, so the strip stays as it was."""
-    shootout = (modes or {}).get('shootout') if isinstance(modes, dict) else None
-    if not isinstance(shootout, dict) or not shootout.get('w', 0) + shootout.get('l', 0):
+    """[{mode, name, record}] per game this player has played (Versus, Shootout and Threes share one rating); [] for a
+    server that does not split them or before the first game besides Versus, so the strip stays as it was."""
+    if not isinstance(modes, dict):
+        return []
+    others = [k for k in ('shootout', 'threes') if isinstance(modes.get(k), dict) and modes[k].get('w', 0) + modes[k].get('l', 0)]
+    if not others:
         return []
     return [{'mode': k, 'name': k.title(), 'record': '%s–%s' % (modes[k].get('w', 0), modes[k].get('l', 0))}
-            for k in ('versus', 'shootout') if isinstance(modes.get(k), dict)]
+            for k in ('versus', 'shootout', 'threes') if isinstance(modes.get(k), dict) and (k == 'versus' or k in others)]
 
 
 def rating_view(r):

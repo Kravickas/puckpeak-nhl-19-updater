@@ -28,8 +28,8 @@ import webbrowser
 from overtime_core import history as H, overlay, rules as RU, xmlpatch
 
 from .. import VERSION, hud
-from . import (gamesetup, history_view as HV, hostroster, jobs, keypress, launch, lobby_client as LC, patch_ctl, paths,
-               shadnet)
+from . import (gamesetup, history_view as HV, hostroster, jobs, keypress, launch, lobby_client as LC, matchsetup,
+               onlineemu, patch_ctl, paths, shadnet)
 from .registry import Part
 
 POLL = 3.0              # seconds between `state` asks while in a lobby
@@ -62,13 +62,22 @@ CERT_TEXT = ("This PC could not check the server's certificate. Update Windows, 
              'send us the error log.')
 SIGNIN_MISSING = ('shadPS4 has no ShadNet sign-in for NHL 19. Sign in to ShadNet on the Multiplayer tab (with shadPS4 '
                   'and its launcher closed), then Ready again.')
-EXPECTED = (LC.LobbyError, gamesetup.SetupError, launch.LaunchError, overlay.PatchError)
+EXPECTED = (LC.LobbyError, gamesetup.SetupError, launch.LaunchError, overlay.PatchError, matchsetup.MatchSetupError,
+            onlineemu.OnlineEmuError)
+CAPS = ('match_setup',)     # 0.80: this app makes a match-only setup at Ready (docs/notes/lobby.md "Match recipe")
+RESTART_FAILED = 'NHL 19 did not close. Close it, then press Start again.'
+RESTART_UNSUPPORTED = 'NHL 19 is running: close it, then press Start again.'
 
 # the step list of the launch card (docs/ui/multiplayer.md)
 STEPS = ('Online start set', 'NHL 19 started', 'Pressing the title screen', 'Game Setup: pressing READY',
          'Online {game}, searching for {{partner}}', 'Match found: pick your team')
-GAME_NAMES = {RU.VERSUS: 'Versus', RU.SHOOTOUT: 'Shootout'}
+GAME_NAMES = {RU.VERSUS: 'Versus', RU.SHOOTOUT: 'Shootout', RU.THREES: 'Threes'}
 PHASES = {'hook': 0, 'starting': 1, 'title': 2, 'ready': 3, 'running': 4}
+# a 0.80 match-setup launch: one step before (the restart, then the match setup), the rest one further on
+MATCH_STEP = 'Match set up (your own setup comes back after)'
+RESTART_STEP = 'Restarting NHL 19 for the match'
+MATCH_PHASES = {'restarting': 0, 'setup': 0, **{k: v + 1 for k, v in PHASES.items()}}
+ONLINE_READY = 'Online ready: Ready sets up each match by itself'
 
 
 class MultiplayerCtl(Part):
@@ -127,6 +136,8 @@ class MultiplayerCtl(Part):
         self.sleep = time.sleep
         self.now = time.time
         self.running = overlay.emulator_running
+        self.stop_emulator = launch.stop_emulator
+        self.online_exe = None      # the online shadPS4 copy Ready got for a match-setup lobby (onlineemu)
         self.make_hud = lambda: hud.Hud(hud.emulator_rect, on_hotkey=self._hotkey, hotkeys=hud.PHRASE_KEYS)
         self.hud_ok = hud.available
         self.service_down = False   # the last ask of the service got no answer
@@ -452,7 +463,70 @@ class MultiplayerCtl(Part):
             self.lobby, self.me = lobby, int(got.get('you', 0))
             self.error, self.down, self.game, self.launched_for = '', 0, None, None
         self._changed()
+        self._announce(lobby['code'], got['token'])
         self._ensure_poller()
+
+    def _announce(self, code, token):
+        """Right after create/join (0.80): the host sets its match recipe, then this app tells its caps (the server
+        cannot tell "not ready yet" from a 0.70 app until it hears them). A server that does not know them: logged."""
+        client = self.client()
+        try:
+            if self.me == 0 and hasattr(client, 'match'):
+                self._apply(client.match(code, token, matchsetup.recipe(self.ctl.setup._xml())))
+            self._apply(client.ready(code, token, False, caps=CAPS))
+        except (LC.LobbyError, matchsetup.MatchSetupError, xmlpatch.PatchError, AttributeError, TypeError) as err:
+            self.ctl.host.log(f'Multiplayer: the match setup was not announced ({err}).')
+
+    # --- the match-only setup (0.80, docs/plans/mellow-crunching-hippo.md) --------------------------------------
+    def _match_plan(self):
+        """The lobby's match setup when both apps make one: {'recipe', 'id', 'emu_sha'}; None otherwise (a 0.70 partner,
+        or no recipe: today's flow)."""
+        with self.mlock:
+            lobby = self.lobby or {}
+        r = lobby.get('match')
+        if not (lobby.get('match_setup') and isinstance(r, dict)):
+            return None
+        emu = lobby.get('online_emu') if isinstance(lobby.get('online_emu'), dict) else {}
+        return {'recipe': r, 'id': lobby.get('match_id') or '', 'emu_sha': emu.get('sha256') or None}
+
+    def _own_text(self):
+        """This player's own patch text for the local-only blocks: this version's patch for Setup's server and
+        resolution (never the installed file: it may name another server), Seattle in Be a Pro only with the league
+        layer (as online_minimum)."""
+        text = self.ctl.setup._xml()
+        game_dir = self.ctl.game_dir
+        layers = ((overlay.status(game_dir) or {}).get('layers') or {}) if game_dir else {}
+        return text if 'league' in layers else xmlpatch.bap32_off(text)
+
+    def _match_fingerprint(self, plan):
+        return xmlpatch.netplay_fingerprint(matchsetup.match_xml(plan['recipe'], self._own_text()))
+
+    def _online_copy(self, plan, note=None):
+        """The online shadPS4 for this lobby (downloaded once), checked to reach the player's own data."""
+        emu = self.ctl.setup.known_emulator()
+        onlineemu.start_dir(emu)
+
+        def progress(_name, done, total):
+            if note and total:
+                note(f'Getting the online shadPS4... {int(done * 100 / total)}%')
+        exe, _sha = onlineemu.ensure(patch_ctl.cache_dir(), want=plan['emu_sha'], progress=progress)
+        self.online_exe = exe
+        return exe
+
+    def _restore(self, note_on_fail=True):
+        """The player's own setup back (the game has closed). '' or why it could not (logged, said on the card)."""
+        try:
+            got = matchsetup.restore(running=self.running, log=self.ctl.host.log)
+        except (matchsetup.MatchSetupError, OSError) as err:
+            self.ctl.host.log(f'Multiplayer: your own setup could not be put back yet ({err}).')
+            if note_on_fail:
+                with self.mlock:
+                    if self.game:
+                        self.game = dict(self.game, note=f'{self.game.get("note") or ""} Your own setup comes back at '
+                                                         'the next start of the app.'.strip())
+                self._changed()
+            return str(err)
+        return '' if got in ('done', 'none') else got
 
     def ready(self, value=True):
         """Ready: first the game is made fit for online play with no click (owner 2026-11-08: "we just handle all
@@ -481,6 +555,15 @@ class MultiplayerCtl(Part):
 
     def _ready_job(self, code, token):
         try:
+            plan = self._match_plan()
+            if plan is not None:            # 0.80 pair: nothing of the player's own setup is changed at Ready
+                try:
+                    self._prep_note('Getting the online shadPS4 ready...')
+                    self._online_copy(plan, self._prep_note)
+                except (onlineemu.OnlineEmuError, gamesetup.SetupError) as err:
+                    return self._fail(str(err))
+                self.prep_why = ''
+                return self._send_ready(code, token, True)
             try:
                 self.prep_why = self._prepare_online(code) or ''
             except Exception as err:    # noqa: BLE001 (Ready goes on: the lobby compares what is there)
@@ -529,13 +612,18 @@ class MultiplayerCtl(Part):
         patch = game = None
         if value:
             emu = self.ctl.setup.known_emulator()
+            plan = self._match_plan()
             try:
-                patch = gamesetup.patch_fingerprint(emu) if emu else 'none'
-            except (OSError, ValueError, gamesetup.SetupError) as err:
+                if plan is not None:        # what the game will play with: the match patch (the server logs both)
+                    patch = self._match_fingerprint(plan)
+                else:
+                    patch = gamesetup.patch_fingerprint(emu) if emu else 'none'
+            except (OSError, ValueError, gamesetup.SetupError, matchsetup.MatchSetupError, xmlpatch.PatchError) as err:
                 self.ctl.host.log(f'Multiplayer: the patch could not be read ({err!r}).')
             try:
+                plays = self.online_exe if plan is not None and self.online_exe else emu
                 game = dict(gamesetup.game_identity(self.ctl.game_dir) if self.ctl.game_dir else {},
-                            **gamesetup.emulator_identity(emu), app=VERSION)
+                            **gamesetup.emulator_identity(plays), app=VERSION)
             except Exception as err:   # the identity is for the log: Ready goes on without it
                 self.ctl.host.log(f'Multiplayer: the game could not be read ({err!r}).')
         if value and self._hosts_own_roster():
@@ -546,7 +634,7 @@ class MultiplayerCtl(Part):
             except LC.LobbyError as err:
                 return self._lobby_error(err)
         try:
-            lobby = self.client().ready(code, token, bool(value), patch, game)
+            lobby = self.client().ready(code, token, bool(value), patch, game, caps=CAPS)
         except LC.LobbyRefused as err:
             if value and self.prep_why:             # say what went wrong here, not only the lobby's general advice
                 return self._fail(f'{err.text} (here: {self.prep_why})')
@@ -598,15 +686,15 @@ class MultiplayerCtl(Part):
         return {'ok': True}
 
     def _mode(self):
-        """The game the lobby plays: 'versus' (also for a server before 0.71, which has no choice) or 'shootout'."""
+        """The game the lobby plays: 'versus' (also for a server before 0.71, which has no choice) 'shootout' or 'threes'."""
         with self.mlock:
             mode = (self.lobby or {}).get('mode')
         return mode if mode in RU.MODES else RU.VERSUS
 
     def set_mode(self, mode):
-        """The host picks the game, Versus or Shootout (before Ready; the rules go back to that game's defaults)."""
+        """The host picks the game, Versus, Shootout or Threes (before Ready; the rules go back to that game's defaults)."""
         if mode not in RU.MODES:
-            return self._fail('Pick Versus or Shootout.')
+            return self._fail('Pick Versus, Shootout or Threes.')
         with self.mlock:
             code, token, me = self.code, self.token, self.me
             state = (self.lobby or {}).get('state')
@@ -620,7 +708,7 @@ class MultiplayerCtl(Part):
             lobby = self.client().mode(code, token, mode)
         except LC.LobbyRefused as err:
             if err.status == 404:
-                return self._fail('This server does not offer Online Shootout yet.')
+                return self._fail('This server does not offer Online %s yet.' % GAME_NAMES[mode])
             return self._lobby_error(err)
         except LC.LobbyError as err:
             return self._lobby_error(err)
@@ -1024,6 +1112,9 @@ class MultiplayerCtl(Part):
             self._phase('failed', jobs.log_unexpected(err, 'Multiplayer launch'))
 
     def _launch(self):
+        plan = self._match_plan()
+        if plan is not None:
+            return self._launch_match(plan)
         c = self.ctl
         emu, game_dir = c.setup.known_emulator(), c.game_dir
         patch_ctl._refresh_before_start(c.setup)    # the server field and the network keys, no Patch needed
@@ -1059,6 +1150,59 @@ class MultiplayerCtl(Part):
             self._watch(emu, hooked=True)
         finally:
             self._unhook(game_dir)
+
+    def _hook_opts(self, rules):
+        opts = {'until': int(self.now()) + HOOK_SECONDS}
+        if self._mode() != RU.VERSUS:
+            opts['mode'] = self._mode()
+        if rules:
+            opts['rules'] = rules
+        return opts
+
+    def _launch_match(self, plan):
+        """A 0.80 lobby match: the game restarts when it runs with anything but this match's setup, plays on the
+        match setup (the online copy, the match patch with -p, the match -mods view and config), and the player's own
+        setup comes back once it closed. The player's own shadPS4, patch, data and settings are never changed."""
+        c = self.ctl
+        emu, game_dir = c.setup.known_emulator(), c.game_dir
+        if not emu or not game_dir:
+            raise gamesetup.SetupError('Pick shadPS4 and NHL 19 in Setup first.')
+        user = gamesetup.emu_user_dir(emu)
+        self._signin_ready(user)
+        rules = self._launch_rules()
+        if self.running():
+            if matchsetup.tag() == plan['id']:      # started for this very match setup: keep it (a rematch)
+                note = 'NHL 19 is already running. Press PLAY in Online %s to meet your friend.' % GAME_NAMES[self._mode()]
+                self._phase('rematch', note)
+                self._hud_call('ping')
+                try:
+                    self._watch(emu, hooked=False)
+                finally:
+                    self._restore()
+                return
+            self._phase('restarting', 'Restarting NHL 19 for the match...')
+            got = self.stop_emulator()
+            if got == 'unsupported':
+                raise gamesetup.SetupError(RESTART_UNSUPPORTED)
+            if got == 'failed' or self.running():
+                raise gamesetup.SetupError(RESTART_FAILED)
+        self._phase('setup', 'Setting up the match (your own setup comes back after)...')
+        exe = self._online_copy(plan)
+        try:
+            got = matchsetup.apply(game_dir, user, plan['recipe'], self._own_text(), running=self.running,
+                                   log=c.host.log, tag=plan['id'])
+            self._phase('hook')
+            overlay.set_menus(game_dir, self._hook_opts(rules))     # on the match view: the player's files stay
+            before = (gamesetup.shadnet_log(user) or {}).get('when')
+            self._phase('starting')
+            launch.start(emu, game_dir, patch_file=got['patch'], exe=exe)
+            # the key map, sign-in log and config are the player's own data folder's (the copy runs on it)
+            self._titles(emu, lambda: self._signed_in(user, before))
+            self._ready(emu)
+            self._watch(emu, hooked=True)
+        finally:
+            self._unhook(game_dir)
+            self._restore()
 
     def _launch_rules(self):
         """The rules to bake: the lab override, else the lobby's when they differ from the game's defaults, else None."""
@@ -1185,6 +1329,10 @@ class MultiplayerCtl(Part):
         c = self.ctl
         if self.running() or not (c.game_dir and c.game.ok):
             return
+        with self.mlock:
+            launching = bool(self.job and self.job.is_alive())
+        if matchsetup.active() and not launching:   # a match setup left by a crash: the player's own setup back
+            self._restore(note_on_fail=False)
         try:
             layer = ((overlay.status(c.game_dir) or {}).get('layers') or {}).get('menus') or {}
             if layer.get('autoplay_until'):
@@ -1248,6 +1396,9 @@ class MultiplayerCtl(Part):
 
     def _checks_view(self):
         rows = [dict(r) for r in self.checks or []]
+        for r in rows:      # 0.80: Ready sets up each match (and patches a 0.70 lobby's game), so no patch blocks online
+            if r.get('key') == 'patch' and r.get('tone') != 'good' and r.get('go') == 'patch':
+                r.update(tone='good', text=ONLINE_READY)
         rows.append({'key': 'server', 'label': 'Server', 'tone': 'bad' if self.service_down else 'good',
                      'text': ('not reachable' if self.service_down else self.ctl.setup.server['host']), 'go': None})
         return rows
@@ -1281,8 +1432,8 @@ class MultiplayerCtl(Part):
     @staticmethod
     def _rules_view(lobby, host):
         """The Match rules card: one row per rule with the choices, the lobby's pick, and whether this player may change
-        it (the host, until the game is starting); `summary` names what differs from the defaults. In Shootout the
-        rules that game has not are listed greyed out (`off`), at their defaults and not editable."""
+        it (the host, until the game is starting); `summary` names what differs from the defaults. In Shootout and Threes
+        the rules that game has not are listed greyed out (`off`), at their defaults and not editable."""
         mode = lobby.get('mode') if lobby.get('mode') in RU.MODES else RU.VERSUS
         try:
             picked = RU.validate(lobby.get('rules') or {}, mode=mode)
@@ -1306,13 +1457,16 @@ class MultiplayerCtl(Part):
         matched = bool(lobby) and (lobby['state'] == 'matched' or any(p['you'] and p['stage'] == 'matched'
                                                                       for p in lobby['players']))
         steps = []
-        if phase in PHASES:
-            now = (5 if matched else 4) if phase == 'running' else PHASES[phase]
-            for i, text in enumerate(STEPS):
+        match = self._match_plan() is not None
+        phases, names = (MATCH_PHASES, (RESTART_STEP if phase == 'restarting' else MATCH_STEP,) + STEPS) if match             else (PHASES, STEPS)
+        if phase in phases:
+            at = 1 if match else 0
+            now = (at + 5 if matched else at + 4) if phase == 'running' else phases[phase]
+            for i, text in enumerate(names):
                 text = text.format(game=GAME_NAMES[self._mode()]).format(partner=partner)
-                if i == 2 and (game.get('manual') or not self.press_title):
+                if i == at + 2 and (game.get('manual') or not self.press_title):
                     text = 'Press ✕ on the title screen'
-                if i == 3 and (game.get('ready_manual') or not self.press_title):
+                if i == at + 3 and (game.get('ready_manual') or not self.press_title):
                     text = 'Press ✕ (READY) on Game Setup'
                 steps.append({'text': text, 'state': 'done' if i < now else 'now' if i == now else 'todo'})
         return {'phase': phase, 'game': GAME_NAMES[self._mode()], 'note': game.get('note') or '',

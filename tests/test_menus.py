@@ -85,14 +85,14 @@ def test_layout_edit():
 
 
 def test_options():
-    assert menus.options() == {'chel': False, 'news': True}
-    assert menus.options(served={'chel': True}) == {'chel': True, 'news': True}
-    assert menus.options({'chel': False}, {'chel': True}) == {'chel': False, 'news': True}
-    assert menus.options(served={'chel': False, 'news': False}) == {'chel': False, 'news': False}
+    assert menus.options() == {'chel': False, 'news': True, 'hut': False}
+    assert menus.options(served={'chel': True}) == {'chel': True, 'news': True, 'hut': False}
+    assert menus.options({'chel': False}, {'chel': True}) == {'chel': False, 'news': True, 'hut': False}
+    assert menus.options(served={'chel': False, 'news': False}) == {'chel': False, 'news': False, 'hut': False}
     with pytest.raises(menus.MenuError):
         menus.options({'woc': True})
-    assert menus.record({'chel': True, 'news': True})['hidden'] == ['ULTIMATETEAM', 'HOCKEYDRAFT']
-    assert menus.record({'chel': False, 'news': True})['hidden'] == list(menus.DEAD)
+    assert menus.record(menus.options({'chel': True}))['hidden'] == ['ULTIMATETEAM', 'HOCKEYDRAFT']
+    assert menus.record(menus.options())['hidden'] == list(menus.DEAD)
     assert menus.record(menus.options())['news'] is True
 
 
@@ -103,6 +103,17 @@ def test_edits_keep_the_news_tile_by_default():
     assert menus.NEWS_ANCHOR in kept and menus.NEWS_EMPTY not in kept
     gone = menus.edits(files.__getitem__, menus.options({'news': False}))[menus.HOMEPAGE_PATH]
     assert menus.NEWS_ANCHOR not in gone and menus.NEWS_EMPTY in gone
+
+
+def test_the_hut_tile_stays_hidden_unless_the_option_is_on():
+    """HUT's CardHouse is scaffolding (docs/notes/hut.md): the tile is hidden like before, `hut` brings it back."""
+    files = {menus.HOMEPAGE_PATH: fake_homepage(), menus.LAYOUT_PATH: fake_layout()}
+    off = menus.edits(files.__getitem__, menus.options())[menus.HOMEPAGE_PATH]
+    on = menus.edits(files.__getitem__, menus.options({'hut': True}))[menus.HOMEPAGE_PATH]
+    assert b'[MODES_NAMES.ULTIMATETEAM] = true' in off and b'[MODES_NAMES.ULTIMATETEAM] = true' not in on
+    assert b'[MODES_NAMES.HOCKEYDRAFT] = true' in on and b'[MODES_NAMES.EASHL] = true' in on
+    assert menus.record(menus.options({'hut': True}))['hidden'] == ['HOCKEYDRAFT', 'EASHL']
+    assert menus.record(menus.options({'hut': True, 'chel': True}))['hidden'] == ['HOCKEYDRAFT']
 
 
 @pytest.mark.game
@@ -148,7 +159,7 @@ def test_launch_off_changes_nothing_and_serves_no_hub():
 def test_launch_on_hooks_the_homepage_and_the_hub_inside_pcall():
     files = fake_files()
     on = menus.edits(files.__getitem__, menus.options(), {'until': UNTIL})
-    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()))  # the rules file only when rules are named
+    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()) - {menus.THREES_HUB_PATH})  # the rules file only when rules are named; the Threes hub only for Threes
     home, hub = on[menus.HOMEPAGE_PATH], on[menus.HUB_PATH]
     for lua in (home, hub):
         assert b'pcall(function()' in lua and b'os.time() <= %d' % UNTIL in lua
@@ -166,9 +177,9 @@ def test_launch_on_hooks_the_homepage_and_the_hub_inside_pcall():
 def test_launch_rules_serve_the_rules_file_with_those_defaults():
     files = {**fake_files(), rules.RULES_PATH: fake_rules()}
     on = menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {'periodlength': 10, 'icing': 1}})
-    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - {rules.SHOOTOUT_PATH})
+    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - {rules.SHOOTOUT_PATH, rules.THREES_PATH, menus.THREES_HUB_PATH})
     assert rules.read(on[rules.RULES_PATH])['periodlength'] == '10' and rules.read(on[rules.RULES_PATH])['icing'] == '1'
-    assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {}}).keys() ==         set(menus.LAUNCH_PATHS) - set(rules.PATHS.values())
+    assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {}}).keys() ==         set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()) - {menus.THREES_HUB_PATH}
     with pytest.raises(menus.MenuError, match='pick one'):
         menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {'periodlength': 7}})
     with pytest.raises(menus.MenuError, match='0 times'):

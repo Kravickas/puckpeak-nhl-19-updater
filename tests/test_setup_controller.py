@@ -1064,3 +1064,23 @@ def test_the_online_minimum_writes_only_the_eboot_patch_and_the_online_start(sc)
     sc.seattle = True
     sc.setup_patch()
     assert SC.xmlpatch.netplay_fingerprint(installed.read_text(encoding='utf-8')) == SC.xmlpatch.netplay_fingerprint(text)
+
+
+def test_patch_writes_wait_while_a_lobby_match_setup_is_in_place(sc, monkeypatch):
+    # 0.80.0: the match plays on its own setup; the player's patch, config and -mods are put back after it
+    from overtime_roster.app import matchsetup, patch_ctl
+    installed = sc.world['user'] / 'patches' / 'Overtime' / 'overtime.xml'
+    sc.setup_refresh()
+    monkeypatch.setattr(matchsetup, 'active', lambda: True)
+    with pytest.raises(gamesetup.SetupError):
+        patch_ctl.online_minimum(sc)
+    assert sc.calls['apply'] == [] and not installed.exists()
+    assert patch_ctl.refresh_network(sc) in (None, 'later')
+    assert patch_ctl.look(sc)['match_setup'] is True
+
+
+def test_the_game_patch_card_says_a_match_setup_is_in_place():
+    from overtime_roster.app import patch_ctl
+    f = {'busy': '', 'checked': True, 'running': False, 'match_setup': True, 'error': '', 'patched': False,
+         'problems': []}
+    assert patch_ctl.state_line(f) == {'text': patch_ctl.MATCH_LOCKED, 'tone': 'caution'}

@@ -29,7 +29,8 @@ def test_targets_and_blocks():
     assert [b['name'] for b in blocks] == [
         'ProtoHttp: accept EAGAIN while waiting for the status code', 'Redirector host: ot.puckpeak.com',
         'QoS coordinator: skip TLS cert validation', 'Nucleus hosts: ot.puckpeak.com, 91.98.195.150',
-        '60 FPS replays (Kravickas)', 'Resolution 2560x1440 (Kravickas)', 'R1: cap check on the Franchise per-team list append', 'BAP32: Seattle in Be a Pro',
+        '60 FPS replays (Kravickas)', 'Resolution 2560x1440 (Kravickas)', xmlpatch.THREES_REWARDS_TITLE,
+        'R1: cap check on the Franchise per-team list append', 'BAP32: Seattle in Be a Pro',
         'E32: 32 teams in every mode']
     assert all(b['enabled'] == (b['name'] != xmlpatch.RES1440_TITLE) and b['app_ver'] == '01.60' for b in blocks)
 
@@ -218,6 +219,46 @@ def test_ledger_cap_matches_the_stock_eboot(game_dir):
         assert va + memsz <= cave_at and cave_at + len(cave) <= page_end
 
 
+def _threes_rewards():
+    (hook_a, hook_v), (cave_a, cave_v) = xmlpatch.FEATURES['threes_rewards'].lines
+    return int(hook_a, 16) - 0x400000, bytes.fromhex(hook_v), int(cave_a, 16) - 0x400000, bytes.fromhex(cave_v)
+
+
+def test_threes_rewards_is_default_and_wired():
+    """0x1406990's equal_range: the hook replaces `cmovnz r8,rcx; mov rax,[r8+8]` (8 bytes) with jmp cave + 3 nops; the
+    cave: je notfound (ZF of cmp rcx,rdx at 0x1406fb3 still live); mov r8,rcx; mov rax,[r8+8]; jmp 0x1406fc5;
+    notfound: jmp 0x1406fd3 (the cmovz there writes 0xffff). Past bap32's caves, local only."""
+    assert xmlpatch.DEFAULT.index('threes_rewards') < xmlpatch.DEFAULT.index('ledger_cap')
+    block = next(b for b in xmlpatch.parse(xmlpatch.build('localhost', newline='\n'))
+                 if b['name'] == xmlpatch.THREES_REWARDS_TITLE)
+    assert block['enabled'] and block['lines'] == xmlpatch.FEATURES['threes_rewards'].lines
+    hook_at, hook, cave_at, cave = _threes_rewards()
+    assert hook_at == 0x1406fbd and _jmp_target(hook_at, hook, 0) == cave_at and hook[5:] == b'\x90' * 3
+    assert cave[:2] == bytes.fromhex('740C') and cave[2:9] == bytes.fromhex('4989C8498B4008')
+    assert _jmp_target(cave_at, cave, 9) == 0x1406fc5 and 2 + cave[1] == 14
+    assert _jmp_target(cave_at, cave, 14) == 0x1406fd3 and len(cave) == 19
+    assert cave_at >= max(a + len(v) for a, v in _bap32().items())
+    assert xmlpatch.THREES_REWARDS_TITLE in xmlpatch.LOCAL_ONLY_TITLES
+
+
+@pytest.mark.game
+def test_threes_rewards_matches_the_stock_eboot(game_dir):
+    """The hook overwrites exactly the stock cmovnz / mov; the cave is zero-filled, inside the r-x segment's last page."""
+    import struct
+    path = os.path.join(game_dir, 'eboot.bin-decrypted')
+    if not os.path.exists(path):
+        pytest.skip('no decrypted eboot')
+    with open(path, 'rb') as f:
+        elf = f.read()
+    phoff, phnum = struct.unpack_from('<Q', elf, 0x20)[0], struct.unpack_from('<H', elf, 0x38)[0]
+    text = [struct.unpack_from('<IIQQQQQQ', elf, phoff + k * 56) for k in range(phnum)]
+    _t, _fl, off, va, _pa, _filesz, memsz, align = next(h for h in text if h[0] == 1 and h[1] & 1)
+    hook_at, hook, cave_at, cave = _threes_rewards()
+    assert elf[off + hook_at - va:off + hook_at - va + len(hook)] == bytes.fromhex('4C0F45C1498B4008')
+    page_end = (va + memsz + align - 1) // align * align
+    assert va + memsz <= cave_at and cave_at + len(cave) <= page_end
+
+
 def _bap32():
     return {int(a, 16) - 0x400000: bytes.fromhex(v) for a, v in xmlpatch.FEATURES['bap32'].lines}
 
@@ -386,6 +427,9 @@ def test_netplay_fingerprint_counts_only_what_reaches_the_other_game():
     assert xmlpatch.netplay_fingerprint(xmlpatch.bap32_off(base)) == fp               # league switch off: Be a Pro only
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('91.98.195.150')) == fp         # the same server by its address
     assert xmlpatch.netplay_fingerprint(base.replace('\r\n', '\n')) == fp
+    # the Threes unlock guard only changes a lookup that would crash: a game without it still plays one with it
+    assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/',
+                                                       features=xmlpatch.EARLIER[1])) == fp
     # the 32-team switch changes the online team list: that one counts, and so does any other game byte
     assert xmlpatch.netplay_fingerprint(xmlpatch.expansion32_off(base)) != fp
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/', features=xmlpatch.EARLIER[0])) != fp

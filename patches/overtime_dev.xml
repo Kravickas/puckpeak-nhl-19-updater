@@ -57,6 +57,17 @@
       <Line Type="bytes" Address="0x4E35077" Value="483D00000040721348B90000C090000000004839C8740448C1E001498B0E483B4DE8E953E673FB"/>
     </PatchList>
   </Metadata>
+  <!-- Online Threes' setup builds the unlock lists (herounlocks / mascotunlocks) in 0x1406990: each hero or mascot
+       reward's player id is looked up (equal_range) in a sorted {id, def} vector with no not-found check, so a missing
+       id reads the def pointer one entry past the end (heap garbage; 0xc0000005 at 0x1406fc5 in most runs, docs/notes/
+       threes-otp.md 10.4). Hook 0x1406fbd -> cave 0x56eb200 (text padding): found takes the entry as before; not found
+       goes to 0x1406fd3, where the live ZF makes the existing cmovz write 0xffff (the code's own "no asset" value). -->
+  <Metadata Name="T1: not-found check on the Threes unlock lookup" AppVer="01.60" AppElf="eboot.bin" isEnabled="true">
+    <PatchList>
+      <Line Type="bytes" Address="0x1806FBD" Value="E93E422E04909090"/>
+      <Line Type="bytes" Address="0x5AEB200" Value="740C4989C8498B4008E9B7BDD1FBE9C0BDD1FB"/>
+    </PatchList>
+  </Metadata>
   <!-- 0x423ad80 appends a 0x38 entry to a team's fixed list (32 slots of 366 inline entries, header begin/end/cap)
        with no capacity check; a full list's next entry zeroes the next team's begin/end and that team's next append
        writes to 0 (0xc0000005 at 0x423ce8c after "Too few players"). Hook 0x423ce71 -> cave 0x56eb000 (text padding):

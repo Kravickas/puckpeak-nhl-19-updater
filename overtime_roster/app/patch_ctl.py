@@ -15,12 +15,15 @@ import time
 from overtime_core import gamefiles, nhlcom, overlay, rosterupdate, tdb, teams as T, textpack, xmlpatch
 
 from .. import VERSION
-from . import gamesetup, jobs, launch, packdownload, patch, paths, savegame, selfupdate, update
+from . import gamesetup, jobs, launch, matchsetup, packdownload, patch, paths, savegame, selfupdate, update
 from .packdownload import PackError
 from .registry import Part
 from .shell import friendly_date
 
 SEASON_LABEL = '2026-27'
+# a lobby match plays on a setup of its own (matchsetup): the player's patch, config and -mods wait until it is back
+MATCH_LOCKED = ('A lobby match setup is in place. Your own setup comes back when NHL 19 closes; press again after '
+                'that.')
 KEYS = ('names', 'roster', 'league', 'text', 'menus', 'chel', 'art', 'photos', 'kits')
 # key, title, sub (one short line), the "?" text; the page's order
 LAYERS = (
@@ -260,6 +263,7 @@ def look(setup):
     eboot = {'installed': st['installed'], 'intact': st['intact'], 'targets': st['targets'],
              'problems': list(st['problems']), 'updated': m.get('updated')}
     out = {'overlay': overlay.status(game_dir) if ok else None, 'running': overlay.emulator_running(),
+           'match_setup': matchsetup.active(),
            'eboot': eboot, 'teams32': installed_teams32(st)}
     part = _part(ctl)
     if ok and part is not None and part.size[0] != game_dir:
@@ -510,6 +514,8 @@ def one_click(setup, then=None):
             raise Refused(f"NHL 19 cannot be patched: {game['problem']}.")
         if overlay.emulator_running():
             raise Refused('shadPS4 is running. Close NHL 19, then press Patch again.')
+        if matchsetup.active():
+            raise Refused(MATCH_LOCKED)
         gamesetup.use_game(game_dir)
         if game['title_id'] != gamesetup.TITLE_ID:     # CUSA11116 v1.60 runs CUSA11126's eboot (same sha256, 2026-11-03)
             ctl.host.log(f"NHL 19 {game['title_id']}: eboot.bin sha256 "
@@ -590,6 +596,8 @@ def one_unpatch(setup):
     def work(_step):
         if overlay.emulator_running():
             raise Refused('shadPS4 is running. Close NHL 19, then press Unpatch again.')
+        if matchsetup.active():
+            raise Refused(MATCH_LOCKED)
         removed = overlay.undo(game_dir) if game_dir else []
         return list(removed or []) + gamesetup.remove()
 
@@ -723,7 +731,7 @@ def refresh_network(setup):
     user = gamesetup.emu_user_dir(emu)
     if new == text and gamesetup.network_on(user) and gamesetup.network_written(user):
         return 'same'
-    if overlay.emulator_running():
+    if overlay.emulator_running() or matchsetup.active():
         return 'later'
     gamesetup.install(emu, new)
     setup.ctl.host.log(f"Server {setup.server['host']} put into the patch file, network keys on (no Patch needed).")
@@ -743,6 +751,8 @@ def online_minimum(setup):
     emu, game_dir = setup.known_emulator(), setup.ctl.game_dir
     if not emu:
         raise gamesetup.SetupError('Pick shadPS4 in Setup first.')
+    if matchsetup.active():
+        raise gamesetup.SetupError(MATCH_LOCKED)
     layers = (overlay.status(game_dir) or {}).get('layers') or {} if game_dir else {}
     if game_dir and not layers:
         overlay.apply(game_dir, ('menus',), menus={'news': True})
@@ -883,10 +893,13 @@ def state_line(f):
         return {'text': 'Looking at NHL 19...', 'tone': 'info'}
     if f['running']:
         return {'text': 'shadPS4 is running. Close NHL 19 before you patch or unpatch.', 'tone': 'caution'}
+    if f.get('match_setup'):
+        return {'text': MATCH_LOCKED, 'tone': 'caution'}
     if f['error']:
         return {'text': f['error'], 'tone': 'bad'}
     if not f['patched']:
-        return {'text': 'Not patched. NHL 19 runs as it came and cannot go online. Press Patch.', 'tone': ''}
+        return {'text': 'Not patched. NHL 19 runs as it came (lobby matches still work: Ready sets each one up). '
+                        'Press Patch for the rest.', 'tone': ''}
     if f['problems']:
         n = len(f['problems'])
         return {'text': f"Patched, with {n} problem{'s' if n != 1 else ''}. Press Patch again to put "
@@ -1076,7 +1089,7 @@ class PatchCtl(Part):
             season = c.upd_season
             return {
                 'ready': c.game.ok, 'busy': bool(c.busy), 'checked': c.patch_status is not None,
-                'running': c.patch_running, 'game_dir': c.game_dir,
+                'running': c.patch_running, 'match_setup': matchsetup.active(), 'game_dir': c.game_dir,
                 'overlay': overlay.overlay_dir(c.game_dir) if c.game_dir else '',
                 'want': dict(c.patch_want), 'applied': bool(st.get('applied')), 'applied_at': st.get('applied_at'),
                 'layers': st.get('layers') or {}, 'files': st.get('files') or {}, 'problems': st.get('problems') or [],

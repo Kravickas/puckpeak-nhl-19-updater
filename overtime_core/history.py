@@ -187,9 +187,9 @@ def resolve(match):
 
 
 def mode_records(matches, pid):
-    """{mode: {w, l}} of the confirmed matches of `pid` in each game mode (versus, shootout): the numbers the game's own
+    """{mode: {w, l}} of the confirmed matches of `pid` in each game mode (versus, shootout, threes): the numbers the game's own
     hubs show per mode, while the rating is one over all of them."""
-    out = {'versus': {'w': 0, 'l': 0}, 'shootout': {'w': 0, 'l': 0}}
+    out = {'versus': {'w': 0, 'l': 0}, 'shootout': {'w': 0, 'l': 0}, 'threes': {'w': 0, 'l': 0}}
     for m in matches:
         r = m.get('result') or resolve(m)
         if r['status'] != CONFIRMED or pid not in r['scores']:
@@ -261,7 +261,7 @@ def player_detail(matches, who, limit=20):
         mine_stats = ((m.get('claims') or {}).get(who) or {}).get('stats')
         their_stats = ((m.get('claims') or {}).get(theirs['pid']) or {}).get('stats')
         mode = m.get('mode') or 'versus'
-        if won is not None and mine_stats:
+        if won is not None and mine_stats and mode != 'threes':   # Threes' report class is not known: no totals yet
             (shootouts if mode == 'shootout' else played).append(
                 {'stats': with_opponent(mine_stats, their_stats), 'for': r['scores'][who],
                  'against': r['scores'][theirs['pid']]})
