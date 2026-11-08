@@ -29,7 +29,7 @@ import json
 import os
 import zipfile
 
-from . import art, eb, gamefiles, gnf, workers
+from . import art, durable, eb, gamefiles, gnf, workers
 
 KIND, FORMAT = 'kitlayers', 1
 # family: the source pack (a download with its own switch), the switch (patch_ctl), the pack served (its name)
@@ -474,7 +474,7 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
         if os.path.isfile(out_path):
             os.remove(out_path)
         return counts
-    os.replace(tmp, out_path)
+    durable.replace(tmp, out_path)
     counts['files'] = len(shas)
     return counts
 

@@ -43,7 +43,9 @@ const WHERE_INFO = [
     'The program finds the rest from there: NHL 19, the emulator and your roster saves.'] },
   { head: 'Folders', items: ['Shows where shadPS4, NHL 19, shadPS4\'s data and your saves are.',
     'Change... picks one yourself (a portable shadPS4, another drive). The program never changes a folder you set.',
-    'Auto lets the program find it again.'] },
+    'Auto lets the program find it again.',
+    'Downloads and cache: the packs downloaded and the jerseys made on this PC (several GB with every pack). Change... moves '
+      + 'them to a folder you pick, e.g. on the drive NHL 19 is on; Auto moves them back.'] },
   { head: 'The checks', items: ['shadPS4: found, and its version.', 'NHL 19: the game (CUSA11126 or CUSA11116) with update 1.60.',
     'ShadNet: you are signed in inside shadPS4.', 'Network: the Overtime server answers.',
     'Hold the mouse on a check to read all of it.'] },
@@ -64,6 +66,7 @@ const FOLDER_ASK = {
   game: "The full path of NHL 19's folder (the one holding eboot.bin):",
   data: "The full path of shadPS4's data folder (\"user\" beside shadPS4.exe, or %APPDATA%\\shadPS4):",
   saves: 'The full path of the saves folder (...\\home\\1000\\savedata\\CUSA11126):',
+  cache: 'The full path of a folder for the downloads and cache (its files move there):',
 };
 async function changeFolder(f) {
   if (f.key === 'emulator') return findGame(f.path);
@@ -79,16 +82,19 @@ function Folders({ folders, busy }) {
   const wrong = folders.some((f) => !f.ok);
   return html`<details class="su-folders" open=${wrong || mine > 0}>
     <summary>Folders <span class="su-fsum">${mine ? `${mine} set by you` : 'all found'}</span></summary>
-    ${folders.map((f) => html`<div key=${f.key} class=${cls('su-folder', !f.ok && 'bad')}>
+    <div class="su-fgrid">${folders.map((f) => html`<div key=${f.key}
+      class=${cls('su-folder', !f.ok && 'bad')}>
       <span class="su-fl">${f.label}</span>
       <${PathText} path=${f.path} unset="Not found"/>
       <${Tag} tone=${f.custom ? 'info' : (f.ok ? '' : 'bad')}
         title=${f.custom ? 'You set this one. Checks never change it.' : 'Found by the program'}>${f.custom ? 'yours' : (f.ok ? 'found' : 'not found')}<//>
       <${Button} small disabled=${busy} onClick=${() => changeFolder(f)}
-        title=${f.key === 'emulator' ? 'Pick shadPS4QtLauncher.exe or shadPS4.exe' : 'Pick this folder yourself'}>Change...<//>
+        title=${f.key === 'emulator' ? 'Pick shadPS4QtLauncher.exe or shadPS4.exe'
+          : (f.key === 'cache' ? 'Pick a folder: the downloads and cache move there' : 'Pick this folder yourself')}>Change...<//>
       ${f.custom ? html`<${Button} small disabled=${busy} onClick=${() => call('setup_folder_auto', f.key)}
-        title="Let the program find it again">Auto<//>` : html`<span class="su-fauto"></span>`}
-    </div>`)}
+        title=${f.key === 'cache' ? 'Move them back to the program\'s own folder' : 'Let the program find it again'}>Auto<//>`
+        : html`<span class="su-fauto"></span>`}
+    </div>`)}</div>
   </details>`;
 }
 

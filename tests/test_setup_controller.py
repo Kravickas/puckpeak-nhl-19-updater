@@ -960,7 +960,7 @@ def _portable(tmp_path):
 def test_folders_list_shows_what_was_found(sc):
     sc.setup_refresh()
     rows = {r['key']: r for r in sc._folders()}
-    assert list(rows) == ['emulator', 'game', 'data', 'saves']
+    assert list(rows) == ['emulator', 'game', 'data', 'saves', 'cache']
     assert rows['emulator']['path'] == str(sc.world['emu']) and not rows['emulator']['custom']
     assert rows['game']['ok'] and rows['data']['path'] == str(sc.world['user']) and rows['data']['ok']
 
@@ -1094,3 +1094,25 @@ def test_resolution_choice_takes_720_1080_1440_and_is_kept(sc):
         assert sc.resolution == want and SC.xmlpatch.resolution(sc._xml()) == want
     sc.setup_resolution(720)
     assert sc.ctl.prefs['setup']['resolution'] == 720 and SC.SetupController(sc.ctl).resolution == 720
+
+
+def test_downloads_folder_set_by_hand_moves_the_cache_and_auto_moves_it_back(sc, tmp_path, monkeypatch):
+    monkeypatch.setenv('OVERTIME_ROSTER_HOME', str(tmp_path / 'home'))
+    from overtime_roster.app import paths
+    old = paths.cache_dir()
+    os.makedirs(old, exist_ok=True)
+    with open(os.path.join(old, 'photos.zip'), 'wb') as f:
+        f.write(b'p' * 10)
+    inside = os.path.join(str(sc.world['game']), 'cache')
+    assert 'error' in sc.folder_set('cache', inside)                    # never inside NHL 19
+    mine = str(tmp_path / 'D' / 'OvertimeCache')
+    os.makedirs(tmp_path / 'D')
+    assert sc.folder_set('cache', mine) is None                         # a job: moves, then says so
+    assert paths.cache_dir() == mine and os.path.isfile(os.path.join(mine, 'photos.zip'))
+    assert not os.path.exists(os.path.join(old, 'photos.zip'))
+    assert sc.ctl.prefs['setup']['custom']['cache'] == mine
+    rows = {r['key']: r for r in sc._folders()}
+    assert rows['cache']['path'] == mine and rows['cache']['custom'] and rows['cache']['ok']
+    sc.folder_auto('cache')
+    assert paths.cache_dir() == paths.default_cache_dir() and 'cache' not in sc.custom
+    assert os.path.isfile(os.path.join(paths.default_cache_dir(), 'photos.zip'))

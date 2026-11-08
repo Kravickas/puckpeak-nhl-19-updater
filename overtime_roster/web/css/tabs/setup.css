@@ -2,6 +2,12 @@
    (docs/ui/CONTRACT.md); tokens from tokens.css, parts from app.css. Legacy's Setup layout: the steps on the left (where is
    shadPS4, online, downloads), the rosters on the right with this program under them. */
 
+/* the steps take the wider column, the rosters the narrower one (as the Game patch tab) */
+.tab-setup .columns.su { grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr); }
+@media (max-width: 1100px) {
+  .tab-setup .columns.su { grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); }
+}
+
 /* --- marks: a slanted NHL 19 box with ✓ ✕ ! … in the tone's colour ------------------------------------------------- */
 :is(.tab-setup, .tab-multiplayer) .su-mark { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px;
   transform: skewX(var(--slant)); background: rgba(255, 255, 255, .06); color: var(--text-3); }
@@ -163,13 +169,19 @@
   .tab-setup .su-acts { flex-basis: 100%; justify-content: flex-end; }
 }
 
-/* Folders: shadPS4, NHL 19, shadPS4 data, Saves; each found or set by hand */
+/* Folders: shadPS4, NHL 19, shadPS4 data, Saves, Downloads and cache; each found or set by hand. One line each, a tile
+   like the Update tab's switches: its bar green when the folder is there and good (found or yours), red when not */
 .tab-setup .su-folders { margin-top: 10px; }
 .tab-setup .su-folders > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text-2); text-transform: uppercase;
   letter-spacing: .04em; padding: 2px 0; user-select: none; }
 .tab-setup .su-folders .su-fsum { margin-left: 6px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text-3); }
-.tab-setup .su-folder { display: grid; grid-template-columns: 104px minmax(0, 1fr) auto auto 52px; align-items: center; gap: 8px;
-  margin-top: 5px; }
-.tab-setup .su-folder .su-fl { font-size: 13px; color: var(--text-soft); white-space: nowrap; }
+.tab-setup .su-fgrid { display: grid; gap: 6px; margin-top: 6px; }
+.tab-setup .su-folder { display: grid; grid-template-columns: 150px minmax(0, 1fr) 72px auto 52px; align-items: center;
+  gap: 8px; min-width: 0; padding: 6px 10px 6px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--good);
+  transition: box-shadow .15s, background-color .15s; }
+.tab-setup .su-folder:hover { background: var(--tile-hi); }
+.tab-setup .su-folder.bad { box-shadow: inset 3px 0 0 var(--bad); }
+.tab-setup .su-folder .su-fl { font-size: 14.5px; font-weight: 700; line-height: 1.3; color: var(--text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
 .tab-setup .su-folder .field.path { min-width: 0; height: 28px; font-size: 13px; }
-.tab-setup .su-folder.bad .field.path { box-shadow: inset 3px 0 0 var(--bad); }
+.tab-setup .su-folder > .chip { justify-self: end; }     /* found / not found / yours: the paths line up */

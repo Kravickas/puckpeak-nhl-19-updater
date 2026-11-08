@@ -296,3 +296,24 @@ def test_huffman_decode_a_byte_at_a_time_matches_bit_by_bit():
             s = bytes(rng.choice(syms) for _ in range(n))
             area = b'\x5a' * 3 + tree.encode(s, 2) + bytes(rng.randrange(256) for _ in range(4))
             assert tree.decode(area, 3, 2) == tree.decode_bits(area, 3, 2) == s
+
+
+def test_column_reads_what_get_reads():
+    """Table.column (one pass, rosterupdate.State and lines.players_of) gives exactly get()'s values, for fields at
+    any bit position and depth, with and without an offset (low)."""
+    import random
+    rnd = random.Random(3)
+    for _ in range(200):
+        size = rnd.randint(1, 64)
+        fields, bit = [], 0
+        while bit < size * 8:
+            depth = rnd.randint(1, min(32, size * 8 - bit))
+            fields.append(Field(f'f{len(fields)}', TYPE_INT, bit, depth, low=rnd.choice((0, -1, -50))))
+            bit += depth
+        n = rnd.randint(0, 120)
+        head = bytearray(0x40)
+        struct.pack_into('<I', head, 0x08, size)
+        struct.pack_into('<HH', head, 0x14, n + 5, n)
+        t = Table('t', bytes(head), fields, rnd.randbytes(size * (n + 5)))
+        for f in fields:
+            assert t.column(f.name) == [t.get(r, f.name) for r in range(n)]

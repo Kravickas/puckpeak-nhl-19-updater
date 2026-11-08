@@ -7,7 +7,7 @@ and the app plays with it. Off: the player's own shadPS4 comes back, in the app 
 import os
 import zipfile
 
-from overtime_core import overlay
+from overtime_core import durable, overlay
 
 from . import gamesetup, packdownload, paths
 
@@ -47,7 +47,7 @@ def unpack(pack, target):
         with zipfile.ZipFile(pack) as z, z.open(packdownload.emulator_entry(z)) as src, open(part, 'wb') as out:
             for block in iter(lambda: src.read(1 << 20), b''):
                 out.write(block)
-        os.replace(part, target)
+        durable.replace(part, target)
     except zipfile.BadZipFile as err:
         raise BoostError(f'The Kravickas build does not read: {err}') from err
     finally:

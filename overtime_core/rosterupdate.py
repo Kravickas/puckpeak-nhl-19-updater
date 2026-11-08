@@ -102,19 +102,18 @@ class State:
     def __init__(self, db):
         self.db = db
         players, bios = db[PLAYERS], db[BIOS]
-        self.bio_row = {bios.get(i, 'game_id'): i for i in range(bios.count)}
+        self.bio_row = {gid: i for i, gid in enumerate(bios.column('game_id'))}
         self.entry = {}  # playerindex -> (table, team)
         for name in (ROSTER, CUSTOM_ROSTER):
             if name in db:
                 t = db[name]
-                for i in range(t.count):
-                    self.entry[t.get(i, 'playerindex')] = (name, t.get(i, 'team'))
-        f = db[FREE]
-        self.free = {f.get(i, 'playerindex') for i in range(f.count)}
+                for pi, team in zip(t.column('playerindex'), t.column('team')):
+                    self.entry[pi] = (name, team)
+        self.free = set(db[FREE].column('playerindex'))
         self.pis_of = {}  # game_id -> [playerindex]
-        for i in range(players.count):
-            if players.get(i, 'table') == 0:
-                self.pis_of.setdefault(players.get(i, 'playerid'), []).append(players.get(i, 'index'))
+        for table, gid, pi in zip(players.column('table'), players.column('playerid'), players.column('index')):
+            if table == 0:
+                self.pis_of.setdefault(gid, []).append(pi)
 
     def main_pi(self, game_id):
         """The playerindex a bio plays under: the one on an NHL team or Seattle, else on the bio's team, else a free

@@ -126,3 +126,33 @@ def test_mips_are_scaled_like_the_games_own(num):
         want = np.stack([np.asarray(pil.fromarray(np.asarray(pic, np.float32)[..., c] / 255, 'F').resize(
             m.shape[1::-1], pil.Resampling.BICUBIC)) for c in range(3)], -1)
         assert np.abs(m.astype(float) - np.clip(np.rint(want * 255), 0, 255)).max() <= 1
+
+
+def _loop_detile(data, ew, eh, bpe, pitch_e):
+    out = bytearray(ew * eh * bpe)
+    for s, d in gnf._pairs(ew, eh, pitch_e):
+        out[d * bpe:d * bpe + bpe] = data[s * bpe:s * bpe + bpe]
+    return bytes(out)
+
+
+def _loop_retile(lin, ew, eh, bpe, pitch_e):
+    out = bytearray(gnf._a(pitch_e or ew, 8) * gnf._a(eh, 8) * bpe)
+    for d, s in gnf._pairs(ew, eh, pitch_e):
+        out[d * bpe:d * bpe + bpe] = lin[s * bpe:s * bpe + bpe]
+    return bytes(out)
+
+
+def test_tiling_fast_path_is_the_element_loop():
+    """Jersey speed: detile / retile gather whole elements in a cached order; the bytes are the per-element loop's,
+    for every element size, odd shapes, a padded pitch, and short data (which takes the loop itself)."""
+    rnd = random.Random(7)
+    for bpe in (1, 2, 4, 8, 16, 3, 12):
+        for _ in range(25):
+            ew, eh = rnd.randint(1, 70), rnd.randint(1, 70)
+            pitch = rnd.choice([None, ew, ew + rnd.randint(0, 20)])
+            tiled = gnf._a(pitch or ew, 8) * gnf._a(eh, 8) * bpe
+            for cut in (0, rnd.randint(1, 40)):
+                data = rnd.randbytes(max(0, tiled - cut))
+                assert gnf.detile_thin1d(data, ew, eh, bpe, pitch) == _loop_detile(data, ew, eh, bpe, pitch)
+                lin = rnd.randbytes(max(0, ew * eh * bpe - cut))
+                assert gnf.retile_thin1d(lin, ew, eh, bpe, pitch) == _loop_retile(lin, ew, eh, bpe, pitch)

@@ -37,7 +37,7 @@ import threading
 import zipfile
 from functools import partial
 
-from . import clubdata, eb, gamefiles
+from . import clubdata, durable, eb, gamefiles
 
 FORMAT = 1
 DELTA_FORMAT = 2
@@ -377,7 +377,7 @@ def write_pack(path, name, files, source='', built='', bases=None, extra=None):
             zi = zipfile.ZipInfo(p, stamp)
             zi.compress_type = zipfile.ZIP_DEFLATED
             z.writestr(zi, stored[p])
-    os.replace(tmp, path)
+    durable.replace(tmp, path)
     with open(path, 'rb') as f:
         return _sha(f.read())
 

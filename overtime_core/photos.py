@@ -23,7 +23,7 @@ import re
 import struct
 import urllib.request
 
-from . import art, clubdata, gnf, net, nhlcom, workers
+from . import art, clubdata, durable, gnf, net, nhlcom, workers
 
 LOCAL_PACK = 'people_local.zip'
 LOCAL_NAME = 'people_local'
@@ -375,7 +375,7 @@ def _read_index(folder):
 def _write(path, data):
     with open(path + '.part', 'wb') as f:
         f.write(data)
-    os.replace(path + '.part', path)
+    durable.replace(path + '.part', path)
 
 
 def missing(pack_links, people):

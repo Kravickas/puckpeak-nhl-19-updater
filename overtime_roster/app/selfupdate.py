@@ -21,7 +21,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from overtime_core import net
+from overtime_core import durable, net
 
 from .. import VERSION
 from . import paths
@@ -207,9 +207,11 @@ def due(now=None, state=None, first=False):
 
 
 def _write_state(state):
+    path = paths.app_dir(STATE_FILE)
     try:
-        with open(paths.app_dir(STATE_FILE), 'w', encoding='utf-8') as f:
+        with open(path + '.tmp', 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=1)
+        durable.replace(path + '.tmp', path)
     except OSError:
         pass
 
@@ -336,6 +338,7 @@ def swap(new_path, exe):
         os.remove(old)
     except OSError:
         pass
+    durable.flush(new_path)     # the new exe whole on the disk before the old one gives up its name
     os.replace(exe, old)
     try:
         os.replace(new_path, exe)

@@ -16,9 +16,8 @@ change per part: a part the roster refuses changes nothing and is skipped with i
 refused, such as a number another player has now, is skipped alone; the rest of the card goes in).
 """
 import json
-import os
 
-from overtime_core import equipment as EQ, faces as F, lines as LN, rosterupdate as U
+from overtime_core import durable, equipment as EQ, faces as F, lines as LN, rosterupdate as U
 from overtime_core.roster import ALTERNATE, CAPTAIN
 
 from . import labels as L, paths, roster_card as RC
@@ -69,7 +68,7 @@ def save(data, path=None):
     tmp = path + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1, ensure_ascii=False)
-    os.replace(tmp, path)
+    durable.replace(tmp, path)
 
 
 # --- who a player is -----------------------------------------------------------------------------------------------

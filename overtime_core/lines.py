@@ -69,12 +69,12 @@ def players_of(db, team, table=ROSTER):
     """[_Player] of the team's rows of roster `table` (customrostertable for custom teams), with position,
     handedness and ratings."""
     roster, players, bios = db[table], db[PLAYERS], db[BIOS]
-    prow = {players.get(i, 'index'): i for i in range(players.count)}
-    brow = {bios.get(i, 'game_id'): i for i in range(bios.count)}
-    ai_rows = {name: {db[name].get(i, 'game_id'): i for i in range(db[name].count)} for name in (SKATERS, GOALIES)}
+    prow = {pi: i for i, pi in enumerate(players.column('index'))}
+    brow = {gid: i for i, gid in enumerate(bios.column('game_id'))}
+    ai_rows = {name: {gid: i for i, gid in enumerate(db[name].column('game_id'))} for name in (SKATERS, GOALIES)}
     out = []
-    for i in range(roster.count):
-        if roster.get(i, 'team') != team:
+    for i, on in enumerate(roster.column('team')):
+        if on != team:
             continue
         e = roster.row(i)
         bio = ai = None

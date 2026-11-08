@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.request
 
-from . import net
+from . import durable, net
 
 BASE = 'https://api-web.nhle.com/v1'
 ROSTER_TTL = 20 * 60
@@ -72,7 +72,7 @@ class Client:
             tmp = self._path(url) + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump({'url': url, 'at': at, 'body': body}, f)
-            os.replace(tmp, self._path(url))
+            durable.replace(tmp, self._path(url))
 
     # --- requests --------------------------------------------------------------------------------
     def get(self, path):

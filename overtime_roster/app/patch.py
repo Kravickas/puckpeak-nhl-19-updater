@@ -20,7 +20,7 @@ clubs' logos are (make_clubart, overtime_core.clubart): no game texture is downl
 import json
 import os
 
-from overtime_core import art, clubart, kitcompose, menus, overlay, photos, rosterupdate, teams
+from overtime_core import art, clubart, durable, kitcompose, menus, overlay, photos, rosterupdate, teams
 
 from . import sources, update
 from .session import RosterSession
@@ -232,7 +232,7 @@ def _save_checked(cache_dir, checked):
         tmp = os.path.join(cache_dir, CHECKED + '.tmp')
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(keep, f, indent=1, sort_keys=True)
-        os.replace(tmp, os.path.join(cache_dir, CHECKED))
+        durable.replace(tmp, os.path.join(cache_dir, CHECKED))
     except OSError:
         pass                            # only speed is lost: the next Patch checks the packs in full again
 

@@ -10,6 +10,8 @@ import os
 import re
 import time
 
+from overtime_core import durable
+
 from . import sources
 
 DB_NAME = 'nhl_game.db'
@@ -94,9 +96,11 @@ def remember(cache_dir, data, base, season):
     tmp = os.path.join(cache_dir, CACHE_DB + '.part')
     with open(tmp, 'wb') as f:
         f.write(data)
-    os.replace(tmp, os.path.join(cache_dir, CACHE_DB))
-    with open(os.path.join(cache_dir, CACHE_RECORD), 'w', encoding='utf-8') as f:
+    durable.replace(tmp, os.path.join(cache_dir, CACHE_DB))
+    record = os.path.join(cache_dir, CACHE_RECORD)
+    with open(record + '.part', 'w', encoding='utf-8') as f:
         json.dump({'sha256': _sha(data), 'base': base, 'season': season, 'made': time.time()}, f, indent=1)
+    durable.replace(record + '.part', record)
 
 
 def cached(cache_dir, base):

@@ -44,7 +44,7 @@ import struct
 import subprocess
 import sys
 
-from . import art as art_mod, eb, gamefiles, menus as menus_mod, textpack
+from . import art as art_mod, durable, eb, gamefiles, menus as menus_mod, textpack
 from .schema import parse_schema
 from .tdb import Database
 
@@ -343,6 +343,9 @@ def _load_state(game_dir):
             return json.load(f)
     except FileNotFoundError:
         return None
+    except (ValueError, UnicodeDecodeError) as err:     # written with durable.replace since 0.70.7: a disk fault
+        raise PatchError(f'{state_path(game_dir)} is damaged ({err}): delete the {overlay_dir(game_dir)} folder, '
+                         'then press Patch') from err
 
 
 def _rel(game_dir, path):
@@ -679,7 +682,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
         tmp = state_path(game_dir) + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(st, f, indent=1)
-        os.replace(tmp, state_path(game_dir))
+        durable.replace(tmp, state_path(game_dir))     # on the disk before the next file is renamed in
         return st
 
     try:
@@ -724,7 +727,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
                 written[rel]['backup'] = True
             ours[rel] = dict(written[rel])
             save(ours, partial)
-            os.replace(tmp, target)
+            durable.replace(tmp, target)    # its data on the disk before the state below lists its hash
             written[rel]['sha256'] = ours[rel]['sha256'] = hashed.get(rel) or _sha256(target)
             save(ours, partial)
     except art_mod.ArtError as err:     # a pack changed after it was read (art.Stored)
@@ -859,7 +862,7 @@ def set_menus(game_dir, launch=None, running=None):
                     if arc.read(entry) != data:
                         raise PatchError(f'{rel}: {entry} did not read back')
             st = os.stat(archive)
-            os.replace(tmp, target)
+            durable.replace(tmp, target)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -870,7 +873,7 @@ def set_menus(game_dir, launch=None, running=None):
     tmp = state_path(game_dir) + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(state, f, indent=1)
-    os.replace(tmp, state_path(game_dir))
+    durable.replace(tmp, state_path(game_dir))
     return state
 
 

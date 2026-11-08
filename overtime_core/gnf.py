@@ -16,7 +16,9 @@ pixel), row by row across the padded pitch, the 64 elements of a tile in Morton 
 each other, largest first, each whole micro tiles. A texture made from a template keeps its format: bcn writes BC1, BC3,
 BC5 and BC7 (the UI art), Pillow's own BCn writer is not used (bcn's docstring says why).
 """
+import functools
 import struct
+from array import array
 
 MAGIC = b'GNF '
 DATA_FORMATS = {1: '8', 2: '16', 3: '8_8', 4: '32', 5: '16_16', 10: '8_8_8_8', 12: '16_16_16_16', 14: '32_32_32_32',
@@ -142,8 +144,46 @@ def _pairs(ew, eh, pitch_e):
     return out
 
 
+# the copy unit of the fast path: an element moves as `n` array items of `code` (bytes per element: (code, n))
+_UNITS = {1: ('B', 1), 2: ('H', 1), 4: ('I', 1), 8: ('Q', 1), 16: ('Q', 2)}
+
+
+@functools.lru_cache(maxsize=64)
+def _order(ew, eh, pitch_e, n, retile):
+    """The item gather order of the fast path, made once per mip shape (a jersey family is a few shapes over
+    thousands of textures). detile: for each linear element, its tiled one. retile: for each tiled element, its linear
+    one, or the zero element appended after the picture (ew * eh) for the pitch padding."""
+    pairs = _pairs(ew, eh, pitch_e)
+    if retile:
+        src = [ew * eh] * (_a(pitch_e or ew, 8) * _a(eh, 8))
+        for s, d in pairs:
+            src[s] = d
+    else:
+        src = [0] * (ew * eh)
+        for s, d in pairs:
+            src[d] = s
+    return array('I', [e * n + k for e in src for k in range(n)])
+
+
+def _gather(data, ew, eh, bpe, pitch_e, retile):
+    """detile / retile as one gather of whole elements, or None where the plain loop must run (an element size with
+    no copy unit, or data not exactly the length the shape asks for, which the loop handles as it always has)."""
+    unit = _UNITS.get(bpe)
+    want = ew * eh if retile else _a(pitch_e or ew, 8) * _a(eh, 8)
+    if unit is None or len(data) != want * bpe or array(unit[0]).itemsize * unit[1] != bpe:
+        return None
+    code, n = unit
+    src = memoryview(bytes(data) + (bytes(bpe) if retile else b'')).cast(code)
+    out = array(code)
+    out.extend(map(src.__getitem__, _order(ew, eh, pitch_e, n, retile)))
+    return out.tobytes()
+
+
 def detile_thin1d(data, ew, eh, bpe, pitch_e=None):
     """Tiled bytes -> linear rows of ew x eh elements of bpe bytes. pitch_e = the padded pitch in elements."""
+    fast = _gather(data, ew, eh, bpe, pitch_e, False)
+    if fast is not None:
+        return fast
     out = bytearray(ew * eh * bpe)
     for s, d in _pairs(ew, eh, pitch_e):
         out[d * bpe:d * bpe + bpe] = data[s * bpe:s * bpe + bpe]
@@ -151,6 +191,9 @@ def detile_thin1d(data, ew, eh, bpe, pitch_e=None):
 
 
 def retile_thin1d(lin, ew, eh, bpe, pitch_e=None):
+    fast = _gather(lin, ew, eh, bpe, pitch_e, True)
+    if fast is not None:
+        return fast
     out = bytearray(_a(pitch_e or ew, 8) * _a(eh, 8) * bpe)
     for d, s in _pairs(ew, eh, pitch_e):
         out[d * bpe:d * bpe + bpe] = lin[s * bpe:s * bpe + bpe]
