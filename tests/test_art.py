@@ -511,7 +511,8 @@ def test_patch_checks_every_written_archive_at_the_end_and_removes_one_that_does
     looks = pack(tmp_path, 'looks', {LOGO: gnf('utah'), KIT: gnf('utah kit')})
     real = eb.new_archive
     monkeypatch.setattr(eb, 'new_archive',              # the 3D archive lands other than it was written (a bad disk)
-                        lambda out, files: real(out, files) if 'inxp' in out else (real(out, files), '0' * 64)[1])
+                        lambda out, files, **kw: real(out, files, **kw) if 'inxp' in out
+                        else (real(out, files, **kw), '0' * 64)[1])
     with pytest.raises(overlay.PatchError, match='did not read back as written'):
         overlay.apply(game, ('art',), art=[looks], **IDLE)
     st = overlay._load_state(game)

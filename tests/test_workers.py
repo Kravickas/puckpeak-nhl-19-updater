@@ -141,3 +141,48 @@ def _members(path):
     info = json.loads(out.pop('pack.json'))
     info.pop('made', None)
     return out, info
+
+
+def test_threads_with_a_context_enter_and_leave_it_on_their_own_thread():
+    import contextlib
+    seen = []
+
+    @contextlib.contextmanager
+    def ctx():
+        me = threading.get_ident()
+        seen.append(('in', me))
+        yield
+        seen.append(('out', me))
+    out = list(workers.ordered(((i, (i,)) for i in range(20)), lambda i: (i, threading.get_ident()), workers=3,
+                               context=ctx))
+    assert [r[0] for _k, r, _e in out] == list(range(20))
+    ins = {t for k, t in seen if k == 'in'}
+    assert ins == {t for k, t in seen if k == 'out'} and len(ins) == 3
+    assert {r[1] for _k, r, _e in out} <= ins
+
+
+def test_an_art_archive_read_on_many_cores_is_the_same_archive(cores, tmp_path):
+    from overtime_core import art, eb
+    files = {f'nhl/ui/kettle_assets/teamlogos/large/t{i}.gnf': b'GNF ' + bytes([i]) * (1000 + 37 * i)
+             for i in range(40)}
+    path = str(tmp_path / 'p.zip')
+    art.write_pack(path, 'p', files, source='t', built='2026-11-08')
+    pack = art.load_pack(path)
+    outs = {}
+    for n in (1, 5):
+        cores(n)
+        out = str(tmp_path / f'a{n}.big')
+        with art.reading():
+            sha = eb.new_archive(out, pack.files, context=art.reading)
+        outs[n] = (sha, open(out, 'rb').read())
+    assert outs[1] == outs[5] and outs[1][1] == eb.archive_bytes({p: files[p] for p in pack.files})   # pack order
+
+
+def test_a_damaged_art_file_read_on_another_core_fails_the_archive(cores, tmp_path):
+    from overtime_core import art, eb
+    bad = art.Stored(10, lambda: (_ for _ in ()).throw(art.ArtError('does not match its checksum')))
+    cores(4)
+    with pytest.raises(art.ArtError, match='checksum'):
+        eb.new_archive(str(tmp_path / 'x.big'), {'nhl/a.gnf': b'GNF 123456', 'nhl/b.gnf': bad},
+                       context=art.reading)
+    assert not (tmp_path / 'x.big').exists() and not (tmp_path / 'x.big.tmp').exists()

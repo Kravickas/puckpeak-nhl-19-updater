@@ -696,7 +696,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
             if new:  # the art layer's own archive: only its entries
                 # hashed as it was written; each file was checked against its pack's sha256 as it was read for it.
                 # Its table is checked here (every entry, at its size); the bytes at the end (_verify_written)
-                hashed[rel] = eb.new_archive(tmp, entries)
+                hashed[rel] = eb.new_archive(tmp, entries, context=art_mod.reading)    # read on every core
                 with eb.EbArchive(tmp) as arc:
                     for entry, data in entries.items():
                         if arc.entries.get(entry.lower(), (0, -1))[1] != len(data):

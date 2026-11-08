@@ -60,8 +60,16 @@ What changed in each version, for players.
 - **Every core.** Jerseys, club logos and photos are made on every core the program may use. The game's archives and
   the packs are read on one thread and the packs are written in order, so they are byte for byte the ones one thread
   makes (checked with 1 and 6 workers). A texture made on its own splits its blocks over the cores instead.
-- Making a texture takes longer: a 1024 x 1024 jersey with its mips about 2.2 s instead of 0.1 s on one core, a
-  512 x 340 BC7 photo about 1.4 s. A photo is made once and kept in the photo cache, next to its picture.
+- Making a texture takes longer: a jersey colour map (2048 x 2048, its mips included) about 2.7 s instead of 0.5 s
+  on one core, a 512 x 340 BC7 photo about 1.4 s. A photo is made once and kept in the photo cache, next to its
+  picture.
+- **Jerseys made 2.7 times faster than the first 0.80.1 build** (7.4 to 2.7 s for a Czech jersey colour map here),
+  and a little sharper: three quarters of a jersey's blocks are one colour, and those now take the best colour pair
+  there is from a table instead of a search (their error about halved; the Czech jersey 43.1 to 43.3 dB). The search
+  of the other blocks no longer tries blocks it has made exact (the same bytes, faster).
+- **The art archive is read on every core while Patch writes it**: each texture is unpacked and checked against its
+  pack on its own thread, written in order (the archive is byte for byte the same). The game's normal and colour
+  maps the jerseys cover are unpacked on the workers too, not on the one thread that reads the archives.
 - The exe is about 10 MB larger (numpy).
 - **A faster Update**: each team's look at the roster reads a table's column in one pass instead of one field at a
   time. Measured on tables of 11,000 players: 57 to 21 ms and 37 to 12 ms per team. The roster it writes is the same.

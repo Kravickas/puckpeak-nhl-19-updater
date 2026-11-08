@@ -33,7 +33,7 @@ FMT_BPE = {'BC1': (8, 4), 'BC4': (8, 4), 'BC2': (16, 4), 'BC3': (16, 4), 'BC5': 
            '16_16_16_16': (8, 1)}
 BCN = {'BC1': 1, 'BC2': 2, 'BC3': 3, 'BC4': 4, 'BC5': 5, 'BC6': 6, 'BC7': 7}
 ENCODABLE = ('BC1', 'BC3', 'BC5', 'BC7')  # what bcn writes
-ENCODER = '5'   # in the keys of the textures made on the player's PC: a new one makes them again (1: Pillow's)
+ENCODER = '6'   # in the keys of the textures made on the player's PC: a new one makes them again (1: Pillow's)
 
 
 class GnfError(ValueError):

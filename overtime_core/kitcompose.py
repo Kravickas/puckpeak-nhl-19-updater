@@ -505,9 +505,11 @@ def _jobs(source, by_arc, picture, where):
             for p in ps:
                 step = source.files[p]
                 try:
-                    raw = arc.read(p) if step.get('op') in WHOLE else arc.head(p, HEAD)
-                    if gnf.Gnf(raw).data_off > len(raw):
-                        raw = arc.read(p)
+                    # a whole file is handed over as stored (packed): it is unpacked on the worker (eb.unchunk), so the
+                    # one reading thread does not inflate every normal map for all the cores
+                    raw = arc.raw(p) if step.get('op') in WHOLE else arc.head(p, HEAD)
+                    if step.get('op') not in WHOLE and gnf.Gnf(raw).data_off > len(raw):
+                        raw = arc.raw(p)
                     pics, files = _needs(step, picture, lambda q: _read_other(where, q, big, arc))
                 except _STEP_ERRORS as err:
                     yield p, err
@@ -516,8 +518,8 @@ def _jobs(source, by_arc, picture, where):
 
 
 def _make(p, step, raw, pics, files):
-    """One texture (on a worker): its GNF and sha256."""
-    data = run(step, raw, pics.__getitem__, files.__getitem__)
+    """One texture (on a worker): its GNF and sha256. `raw` may still be packed (chunkzip): unpacked here."""
+    data = run(step, eb.unchunk(raw), pics.__getitem__, files.__getitem__)
     art.check_file(p, data)
     return data, hashlib.sha256(data).hexdigest()
 

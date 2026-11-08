@@ -14,6 +14,7 @@ Safe by construction:
 import collections
 import concurrent.futures
 import os
+import queue
 import threading
 
 AHEAD = 4               # jobs read beyond the ones being made (a texture is a few MB)
@@ -40,11 +41,53 @@ def pool(workers=None):
     return concurrent.futures.ThreadPoolExecutor(workers or count(), initializer=_mark)
 
 
-def ordered(jobs, make, errors=(Exception,), workers=None):
+class _ThreadsWith:
+    """A pool whose every thread runs inside `context()` from its first job to the end (art.reading: each thread
+    keeps its own pack zips open, closed by the thread that opened them when the pool ends). Futures as an
+    executor's."""
+
+    def __init__(self, n, context):
+        self.q = queue.Queue()
+        self.threads = [threading.Thread(target=self._run, args=(context,), daemon=True) for _ in range(n)]
+        for t in self.threads:
+            t.start()
+
+    def _run(self, context):
+        _mark()
+        with context():
+            while True:
+                item = self.q.get()
+                if item is None:
+                    return
+                fut, fn, args = item
+                if not fut.set_running_or_notify_cancel():      # cancelled before it started
+                    continue
+                try:
+                    fut.set_result(fn(*args))
+                except BaseException as err:     # noqa: BLE001 (handed to the caller through the future)
+                    fut.set_exception(err)
+
+    def submit(self, fn, *args):
+        fut = concurrent.futures.Future()
+        self.q.put((fut, fn, args))
+        return fut
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        for _t in self.threads:
+            self.q.put(None)
+        for t in self.threads:
+            t.join()
+
+
+def ordered(jobs, make, errors=(Exception,), workers=None, context=None):
     """(key, result, error) of make(*args) for each (key, args) of `jobs`, in the jobs' order. `args` may be an
     exception instead (the job could not be read): it comes back as that job's error. An exception of `errors` raised
     by make is returned as the error; any other is raised. One thread (no pool) when workers is 1 or on a pool's thread
-    already."""
+    already. `context`: a context manager factory each pool thread runs in (_ThreadsWith); the calling thread is
+    assumed to be in one already when it does the jobs itself."""
     workers = workers or count()
     if workers == 1 or in_worker():
         for key, args in jobs:
@@ -56,7 +99,7 @@ def ordered(jobs, make, errors=(Exception,), workers=None):
             except errors as err:
                 yield key, None, err
         return
-    with pool(workers) as ex:
+    with (pool(workers) if context is None else _ThreadsWith(workers, context)) as ex:
         pending = collections.deque()
 
         def done():

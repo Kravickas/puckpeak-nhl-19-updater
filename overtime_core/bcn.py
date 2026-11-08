@@ -95,12 +95,13 @@ def _axis_ends(x, valid):
     return mean + hi[:, None] * v, mean + lo[:, None] * v
 
 
-def _nearest(x, pal, valid):
-    """Each pixel's nearest palette entry and each block's summed squared error over its valid pixels."""
+def _nearest(x, pal, valid, xx=None):
+    """Each pixel's nearest palette entry and each block's summed squared error over its valid pixels. `xx`: each
+    pixel's |x|^2, when the caller has it (the same x is tried against many palettes)."""
     # |x - p|^2 = |x|^2 - 2 x.p + |p|^2: one batched matrix product instead of every difference
     d = (pal * pal).sum(2)[:, None, :] - 2 * np.matmul(x, pal.transpose(0, 2, 1))
     idx = d.argmin(2)
-    best = np.take_along_axis(d, idx[..., None], 2)[..., 0] + (x * x).sum(2)
+    best = np.take_along_axis(d, idx[..., None], 2)[..., 0] + ((x * x).sum(2) if xx is None else xx)
     err = np.where(valid, np.maximum(best, 0), 0).sum(1)
     return idx, err
 
@@ -152,14 +153,15 @@ def _fit(x, valid, weights, candidates, palette, lsq_valid=None, rounds=None, de
     -> (code, idx, err)."""
     rounds = ROUNDS if rounds is None else rounds
     e0, e1 = _axis_ends(x, valid)
+    xx = (x * x).sum(2)
     best = None
     for r in range(rounds + 1):
         for code, d0, d1, allowed, rows in candidates(e0, e1):
             if rows is None:
-                idx, err = _nearest(x, palette(d0, d1), valid)
+                idx, err = _nearest(x, palette(d0, d1), valid, xx)
             else:                                   # tried on those blocks only
                 idx, err = np.zeros(x.shape[:2], np.int64), np.full(len(x), np.inf, np.float32)
-                idx[rows], err[rows] = _nearest(x[rows], palette(d0[rows], d1[rows]), valid[rows])
+                idx[rows], err[rows] = _nearest(x[rows], palette(d0[rows], d1[rows]), valid[rows], xx[rows])
             if allowed is not None:
                 err = np.where(allowed, err, np.inf)
             if best is None:
@@ -187,6 +189,7 @@ def _search(x, valid, palette, best, decode, top, frozen, passes):
         return best
     sub = {k: v[rows] for k, v in code.items()}
     i_s, e_s, x_s, v_s = idx[rows], err[rows], x[rows], valid[rows]
+    xx_s = (x_s * x_s).sum(2)
     f_s = None if frozen is None else frozen[rows]
     top = np.broadcast_to(np.asarray(top), (sub['q0'].shape[1],))
     for _ in range(passes):
@@ -196,21 +199,26 @@ def _search(x, valid, palette, best, decode, top, frozen, passes):
                 if f_s is not None and f_s[:, c].all():
                     continue
                 for step in (-1, 1):
-                    q = sub[key].copy()
+                    on = np.flatnonzero(e_s > 0)            # a block now exact cannot get better: not tried again
+                    if not len(on):
+                        break
+                    trial = {k: v[on] for k, v in sub.items()}
+                    q = trial[key].copy()
                     q[:, c] = np.clip(q[:, c] + step, 0, top[c])
-                    trial = dict(sub)
                     trial[key] = q
-                    i, e = _nearest(x_s, palette(*decode(trial)), v_s)
-                    better = e < e_s
+                    i, e = _nearest(x_s[on], palette(*decode(trial)), v_s[on], xx_s[on])
+                    better = e < e_s[on]
                     if f_s is not None:
-                        better &= ~f_s[:, c]
+                        better &= ~f_s[on, c]
                     if not better.any():
                         continue
-                    sub = {k: np.where(better.reshape((-1,) + (1,) * (v.ndim - 1)), trial[k], v)
-                           for k, v in sub.items()}
-                    i_s = np.where(better[:, None], i, i_s)
-                    e_s = np.where(better, e, e_s)
-                    moved |= better
+                    hit = on[better]
+                    for k in sub:
+                        sub[k] = sub[k].copy()
+                        sub[k][hit] = trial[k][better]
+                    i_s, e_s = i_s.copy(), e_s.copy()
+                    i_s[hit], e_s[hit] = i[better], e[better]
+                    moved[hit] = True
         if not moved.any():
             break
     code = {k: v.copy() for k, v in code.items()}
@@ -248,13 +256,46 @@ def _pack565(q):
     return (q[..., 0] << 11) | (q[..., 1] << 5) | q[..., 2]
 
 
+def _one_colour_table(bits):
+    """For each 8-bit value: the codes (a, b) of a `bits`-bit channel whose 2/3 a + 1/3 b (the colour index 2 shows)
+    is nearest to it, a == b included (the code itself); every pair tried."""
+    top = (1 << bits) - 1
+    codes = np.arange(top + 1)
+    e = (((codes << (8 - bits)) | (codes >> (2 * bits - 8))).astype(np.float32))
+    w = _W4[2]
+    val = w * e[:, None] + (1 - w) * e[None, :]                     # (a, b) -> the colour index 2 decodes to
+    err = (val[None, :, :] - np.arange(256, dtype=np.float32)[:, None, None]) ** 2
+    best = err.reshape(256, -1).argmin(1)
+    return np.stack([best // (top + 1), best % (top + 1)], 1).astype(np.int32)
+
+
+_ONE5, _ONE6 = _one_colour_table(5), _one_colour_table(6)
+
+
+def _one_colour(rgb):
+    """BC1 colour halves of blocks of one colour (n, 3): the best a block can do (every index decodes to one of c0,
+    c1 and the thirds between them, so the best pair for the third c0 + c1 / 3 is the best of all), from the tables."""
+    v = rgb.astype(np.int64)
+    pair = np.stack([_ONE5[v[:, 0]], _ONE6[v[:, 1]], _ONE5[v[:, 2]]], 1)          # (n, channel, (a, b))
+    c0 = _pack565(pair[:, :, 0]).astype(np.uint32)
+    c1 = _pack565(pair[:, :, 1]).astype(np.uint32)
+    idx = np.where(c0 > c1, 2, np.where(c0 < c1, 3, 0))     # 4-colour mode wants c0 > c1: else the pair turns round
+    c0, c1 = np.maximum(c0, c1), np.minimum(c0, c1)
+    return c0, c1, idx
+
+
 def _color(rgb, clear=None):
-    """BC1 colour halves ((n,) uint64) of rgb (n, 16, 3); `clear` (n, 16): pixels to leave clear (3-colour mode)."""
+    """BC1 colour halves ((n,) uint64) of rgb (n, 16, 3); `clear` (n, 16): pixels to leave clear (3-colour mode).
+    Blocks of one colour (most of a jersey) take the table (_one_colour), the others the fit."""
     n = len(rgb)
     out_c0, out_c1 = np.zeros(n, np.uint32), np.zeros(n, np.uint32)
     out_idx = np.zeros((n, 16), np.int64)
     punch = np.zeros(n, bool) if clear is None else clear.any(1)
-    for three, sel in ((False, ~punch), (True, punch)):
+    flat = ~punch & (rgb == rgb[:, :1]).all((1, 2))
+    if flat.any():
+        c0, c1, idx = _one_colour(rgb[flat, 0])
+        out_c0[flat], out_c1[flat], out_idx[flat] = c0, c1, idx[:, None]
+    for three, sel in ((False, ~punch & ~flat), (True, punch)):
         if not sel.any():
             continue
         x = rgb[sel]
@@ -300,7 +341,18 @@ def _bytes(code):
 
 
 def _channel(v):
-    """BC4-style blocks ((n,) uint64) of one channel v (n, 16): the better of the 8-step and the 6-step mode."""
+    """BC4-style blocks ((n,) uint64) of one channel v (n, 16): the better of the 8-step and the 6-step mode; a block
+    of one value is that value at both ends (exact)."""
+    flat = (v == v[:, :1]).all(1)
+    if flat.all():
+        a = v[:, 0].astype(np.uint64)
+        return a | (a << np.uint64(8))
+    if flat.any():
+        out = np.empty(len(v), np.uint64)
+        a = v[flat, 0].astype(np.uint64)
+        out[flat] = a | (a << np.uint64(8))
+        out[~flat] = _channel(v[~flat])
+        return out
     x = v[..., None]
     valid = np.ones(v.shape, bool)
     c8, i8, e8 = _fit(x, valid, _W8, _candidates_byte, _palette(_W8), decode=_bytes, top=255)

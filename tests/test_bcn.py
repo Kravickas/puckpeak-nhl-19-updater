@@ -136,3 +136,31 @@ def test_blocks_of_every_kind_decode_as_the_spec_says():
     assert opaque.sum() >= 32 and (out[opaque][..., 3] == 255).all()
     one = decode('BC1', bcn.encode('BC1', px), 64, 64)
     assert ((one[..., 3] == 0) == (px[..., 3] < 128)).all() and set(np.unique(one[..., 3])) <= {0, 255}
+
+
+def test_a_block_of_one_colour_gets_the_best_pair_there_is():
+    """A one-colour block (most of a jersey) takes the table: its colour, decoded the encoder's way (c0, c1 and the
+    thirds between them, in floats), is the nearest any 5:6:5 pair can give; brute force over every pair checks it."""
+    rnd = np.random.default_rng(4)
+    e5 = np.array([(c << 3) | (c >> 2) for c in range(32)], float)
+    e6 = np.array([(c << 2) | (c >> 4) for c in range(64)], float)
+    best = {5: np.add.outer(2 * e5, e5) / 3, 6: np.add.outer(2 * e6, e6) / 3}     # (a, b) -> 2/3 a + 1/3 b
+    for colour in rnd.integers(0, 256, (60, 3)):
+        px = np.zeros((4, 4, 4), np.uint8)
+        px[..., :3], px[..., 3] = colour, 255
+        a = np.frombuffer(bcn.encode('BC1', px), '<u8')[0]
+        c0, c1, bits = int(a & 0xffff), int((a >> 16) & 0xffff), int(a >> 32)
+        idx = {(bits >> (2 * i)) & 3 for i in range(16)}
+        assert len(idx) == 1 and (c0 > c1 or (c0 == c1 and idx == {0}))
+        ex = lambda c: np.array([e5[c >> 11], e6[(c >> 5) & 63], e5[c & 31]])      # noqa: E731
+        got = [ex(c0), ex(c1), 2 / 3 * ex(c0) + 1 / 3 * ex(c1), 1 / 3 * ex(c0) + 2 / 3 * ex(c1)][idx.pop()]
+        floor = sum(np.min((best[b] - v) ** 2) for b, v in zip((5, 6, 5), colour))
+        assert ((got - colour) ** 2).sum() <= floor + 1e-6
+
+
+def test_a_channel_of_one_value_is_exact_in_bc3_and_bc5():
+    px = np.zeros((8, 8, 4), np.uint8)
+    px[..., :3] = (10, 200, 77)
+    px[..., 3] = 133
+    assert (decode('BC3', bcn.encode('BC3', px), 8, 8)[..., 3] == 133).all()
+    assert (decode('BC5', bcn.encode('BC5', px[..., :3]), 8, 8)[..., :2] == (10, 200)).all()

@@ -295,26 +295,46 @@ def _layout(folders, entries):
     return bytes(toc), slots, total
 
 
-def _stream(folders, entries):
+def _stream(folders, entries, context=None):
+    """The archive's bytes in order. With `context` (new_archive's) and every entry held in memory or a Stored (an
+    art pack's file, read and checked when it is written), the entries are read on every core ahead of the writing
+    (workers.ordered, each thread in its own `context`, art.reading) and written in their order: the same bytes."""
     toc, slots, total = _layout(folders, entries)
     yield toc
     pos = len(toc)
+    if context is not None and all(e.data is not None for _o, e in slots):
+        from . import workers
+        datas = (d for _i, d, _err in workers.ordered(((i, (e,)) for i, (_o, e) in enumerate(slots)), _whole, (),
+                                                       context=context))
+    else:
+        datas = None
     for o, e in slots:
         if o > pos:
             yield bytes(o - pos)
-        yield from e.chunks()
+        if datas is not None:
+            d = next(datas)
+            if len(d) != e.size:
+                raise ValueError(f'{e.path}: {len(d)} bytes, not the {e.size} its table names')
+            yield d
+        else:
+            yield from e.chunks()
         pos = o + e.size
     if total > pos:
         yield bytes(total - pos)
 
 
-def _write(out, folders, entries):
+def _whole(e):
+    """An in-memory entry's bytes (a Stored is read and checked here)."""
+    return e.data.read() if hasattr(e.data, 'read') else e.data
+
+
+def _write(out, folders, entries, context=None):
     """Write the archive through `out`.tmp (renamed at the end); returns its sha256."""
     h = hashlib.sha256()
     tmp = out + '.tmp'
     try:
         with open(tmp, 'wb') as f:
-            for b in _stream(folders, entries):
+            for b in _stream(folders, entries, context):
                 f.write(b)
                 h.update(b)
         os.replace(tmp, out)
@@ -352,11 +372,12 @@ def add_entry(src, out, path, data):
     return rebuild(src, out, {path: data})
 
 
-def new_archive(out, files):
-    """A new archive holding only `files` ({path: bytes}, stored raw). Returns its sha256."""
+def new_archive(out, files, context=None):
+    """A new archive holding only `files` ({path: bytes}, stored raw). Returns its sha256. `context`: see _stream (the
+    files read on every core)."""
     if not files:
         raise ValueError('an archive needs at least one entry')
-    return _write(out, *_changed([], [], files))
+    return _write(out, *_changed([], [], files), context)
 
 
 def archive_bytes(files):
