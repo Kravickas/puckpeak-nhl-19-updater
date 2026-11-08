@@ -17,6 +17,7 @@ NHL 27's other jerseys (the NHL's alternates, the national teams, the clubs) and
 the player's PC at Patch from small layer packs and the game's own files (make_kits, overtime_core.kitcompose), as the
 clubs' logos are (make_clubart, overtime_core.clubart): no game texture is downloaded for them.
 """
+import json
 import os
 
 from overtime_core import art, clubart, kitcompose, menus, overlay, photos, rosterupdate, teams
@@ -159,10 +160,11 @@ def art_packs(cache_dir=None, game_dir=None, kits=True, photos=True, extras=None
     checked when it is downloaded)."""
     from . import packdownload  # it imports this module
     packs, problems = [], []
+    checked = _load_checked(cache_dir)
 
     def add(path):
         try:
-            packs.append(art.load_pack(path, game_dir))
+            packs.append(art.load_pack(path, game_dir, checked))
         except art.ArtError as err:
             problems.append(str(err))
     # the jerseys made on this PC (make_kits): the NHL kits' pants with `kits`, the families switched on
@@ -193,7 +195,46 @@ def art_packs(cache_dir=None, game_dir=None, kits=True, photos=True, extras=None
     for path in (local, local_clubart(cache_dir)):     # the people's files are in no other pack; the clubs' come last:
         if path:                                        # they win over looks32's and ice_all's of the same art id
             add(path)
+    _save_checked(cache_dir, checked)
     return packs, problems
+
+
+CHECKED = 'packs_checked.json'      # the art pack zips art.load_pack checked in full: {path|size|mtime: true}
+
+
+def _load_checked(cache_dir):
+    """The record of fully checked pack zips (art.load_pack's `checked`): None without a cache folder, {} without a
+    readable record."""
+    if not cache_dir:
+        return None
+    try:
+        with open(os.path.join(cache_dir, CHECKED), encoding='utf-8') as f:
+            got = json.load(f)
+        return {k: True for k, v in got.items() if v is True} if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_checked(cache_dir, checked):
+    """Keep the record, without the zips no longer there or changed (their keys name size and time)."""
+    if not cache_dir or checked is None:
+        return
+    keep = {}
+    for k in checked:
+        path = k.rsplit('|', 2)[0]
+        try:
+            if path and art._checked_key(path) == k:
+                keep[k] = True
+        except OSError:
+            pass
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        tmp = os.path.join(cache_dir, CHECKED + '.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(keep, f, indent=1, sort_keys=True)
+        os.replace(tmp, os.path.join(cache_dir, CHECKED))
+    except OSError:
+        pass                            # only speed is lost: the next Patch checks the packs in full again
 
 
 def people_rows(cache_dir=None, game_dir=None):

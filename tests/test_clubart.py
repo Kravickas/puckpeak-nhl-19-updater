@@ -179,7 +179,7 @@ def test_compose_makes_the_files_on_the_games_own_templates(world):
     assert set(files) == {LOGO.format('large', 101), LOGO.format('extrasmall', 101), LOGO.format('large', 102),
                           ICE.format(102)}
     assert gnf.Gnf(files[LOGO.format('large', 101)]).texture.width == 128       # the archive that wins
-    assert gnf.Gnf(files[LOGO.format('large', 101)]).texture.fmt == 'BC3'       # BC7 is written as BC3
+    assert gnf.Gnf(files[LOGO.format('large', 101)]).texture.fmt == 'BC7'       # the game's own format
     assert near(gnf.to_image(files[LOGO.format('large', 102)]).getpixel((32, 32)), (230, 200, 20, 255))
     assert near(gnf.to_image(files[ICE.format(102)]).getpixel((32, 32)), (230, 200, 20, 255))   # Davos on the ice
     assert near(gnf.to_image(files[ICE.format(102)]).getpixel((2, 32)), clubart.ICE_WHITE + (255,))

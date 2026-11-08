@@ -234,11 +234,19 @@ def _zip_member(path, name):
 
 
 def _read_zipped(path, name, sha):
-    """A pack's file again (load_pack checked it; the pack may have changed since)."""
+    """A pack's file again (load_pack checked it, or a check of this very zip file before did; the pack may have
+    changed since): its sha256 and its kind checked again here, as it is written."""
     data = _zip_member(path, name)
     if _sha(data) != sha:
         raise ArtError(f'{path}: {name} does not match its checksum')
+    check_file(name, data)
     return data
+
+
+def _checked_key(path):
+    """What a record of a full load_pack check of `path` is kept under: the zip as it is on disk (path, size, mtime)."""
+    st = os.stat(path)
+    return f'{os.path.normcase(os.path.abspath(path))}|{st.st_size}|{st.st_mtime_ns}'
 
 
 def _read_delta(path, name, sha, base):
@@ -273,9 +281,18 @@ def listing(path):
     return Listing(name, meta, frozenset(shas), Pack(name, meta, dict.fromkeys(shas), path, shas).sha256)
 
 
-def load_pack(path, game_dir=None):
+def load_pack(path, game_dir=None, checked=None):
     """Read and check an art pack zip, keeping none of it in memory (Stored); a delta pack needs `game_dir` (its bases).
-    Raises ArtError when anything is off."""
+    Raises ArtError when anything is off.
+
+    `checked` (a dict the caller keeps, patch.art_packs) records the zips checked in full here. A zip recorded and not
+    changed since (same size and time) is not unpacked again: its files are taken from pack.json as listed (they must be
+    in the zip, under game texture paths) and each is unpacked and checked once, as it is written (_read_zipped, which
+    fails the Patch with nothing applied). A delta pack is always checked in full (its bases are the game's files)."""
+    try:
+        key = _checked_key(path) if checked is not None else None
+    except OSError as err:
+        raise ArtError(f'{path}: {err}') from err
     try:
         with reading(), zipfile.ZipFile(path) as z:
             try:
@@ -286,6 +303,16 @@ def load_pack(path, game_dir=None):
                 raise ArtError(f'{path}: pack format {info.get("format")} (this app reads {FORMAT}, {DELTA_FORMAT})')
             listed = info.get('files') or {}
             files, shas = {}, {}
+            if key is not None and checked.get(key) and not info.get('deltas'):
+                sizes = {i.filename: i.file_size for i in z.infolist()}
+                for p, sha in listed.items():
+                    if p not in sizes:
+                        raise ArtError(f'{path}: {p} is listed but missing')
+                    if not _PATH.match(p) or '..' in p.split('/'):
+                        raise ArtError(f'not a game texture path: {p}')
+                    files[p] = Stored(sizes[p], partial(_read_zipped, path, p, sha), sha)
+                    shas[p] = sha
+                listed = {}
             for p, sha in listed.items():
                 try:
                     data = z.read(p)
@@ -319,6 +346,8 @@ def load_pack(path, game_dir=None):
         raise ArtError(f'{path}: {err}') from err
     if not files:
         raise ArtError(f'{path}: the pack holds no textures')
+    if key is not None and not info.get('deltas'):
+        checked[key] = True             # checked in full (or as recorded): the next Patch skips the unpacking
     meta = {k: v for k, v in info.items() if k not in ('files', 'deltas')}
     return Pack(info.get('name') or os.path.splitext(os.path.basename(path))[0], meta, files, path, shas)
 

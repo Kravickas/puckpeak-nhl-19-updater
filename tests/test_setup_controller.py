@@ -1084,3 +1084,13 @@ def test_the_game_patch_card_says_a_match_setup_is_in_place():
     f = {'busy': '', 'checked': True, 'running': False, 'match_setup': True, 'error': '', 'patched': False,
          'problems': []}
     assert patch_ctl.state_line(f) == {'text': patch_ctl.MATCH_LOCKED, 'tone': 'caution'}
+
+
+def test_resolution_choice_takes_720_1080_1440_and_is_kept(sc):
+    """The Resolution choice: 720p and 1440p each turn their block on (never both), 1080p neither; anything else is
+    1080p; the next start keeps it; the patch file the Setup tab writes renders at it."""
+    for value, want in (('720', 720), (1440, 1440), (720, 720), (1080, 1080), ('bad', 1080), (900, 1080), (None, 1080)):
+        assert sc.setup_resolution(value)['ok']
+        assert sc.resolution == want and SC.xmlpatch.resolution(sc._xml()) == want
+    sc.setup_resolution(720)
+    assert sc.ctl.prefs['setup']['resolution'] == 720 and SC.SetupController(sc.ctl).resolution == 720

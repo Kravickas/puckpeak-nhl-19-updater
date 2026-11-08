@@ -32,7 +32,7 @@ import os
 import re
 import zipfile
 
-from . import art, eb, gamefiles, gnf, rosterupdate as R
+from . import art, eb, gamefiles, gnf, rosterupdate as R, workers
 
 PACK = 'clubart.zip'
 LOCAL_PACK = 'clubart_local.zip'
@@ -186,6 +186,17 @@ def on_ice(ice, logo):
     return out
 
 
+_ERRORS = (art.ArtError, gnf.GnfError, OSError, ValueError)
+
+
+def _make(ice, raw, pic):
+    """One file (on a worker): the centre ice with the logo on it, or the logo fitted to the game's own size."""
+    if ice:
+        return gnf.make(raw, on_ice(gnf.to_image(raw), pic))
+    t = gnf.Gnf(raw).texture
+    return gnf.make(raw, fit(pic, t.width, t.height))
+
+
 def _key(source, targets, game_dir):
     from PIL import __version__ as pillow
     arcs = []
@@ -194,7 +205,8 @@ def _key(source, targets, game_dir):
             arcs.append((os.path.basename(big), os.path.getsize(big)))
         except OSError:
             arcs.append((os.path.basename(big), None))
-    text = json.dumps([source.sha256, pillow, arcs, sorted((p, c['art'], m) for p, (c, m) in targets.items())])
+    text = json.dumps([source.sha256, pillow, gnf.ENCODER, arcs,
+                       sorted((p, c['art'], m) for p, (c, m) in targets.items())])
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
@@ -235,22 +247,28 @@ def compose(source, teams, game_dir, out_path, log=None, today=None):
     by_arc = collections.defaultdict(list)
     for p in targets:
         by_arc[where[p]].append(p)
-    for big, ps in sorted(by_arc.items()):
-        with eb.EbArchive(big) as arc:
-            for p in sorted(ps):
-                club, member = targets[p]
-                try:
-                    if member is None:
-                        full = arc.read(p)
-                        files[p] = gnf.make(full, on_ice(gnf.to_image(full), picture(club['logos']['large'])))
-                    else:
-                        head = arc.head(p, HEAD)
-                        if gnf.Gnf(head).data_off > len(head):
-                            head = arc.read(p)
-                        t = gnf.Gnf(head).texture
-                        files[p] = gnf.make(head, fit(picture(member), t.width, t.height))
-                except (art.ArtError, gnf.GnfError, OSError, ValueError) as err:
-                    say(f'club art: {p} not made ({err})')
+
+    def jobs():
+        """(path, (ice?, the game's file, the picture)) of each file, read here in order (workers.ordered)."""
+        for big, ps in sorted(by_arc.items()):
+            with eb.EbArchive(big) as arc:
+                for p in sorted(ps):
+                    club, member = targets[p]
+                    try:
+                        if member is None:
+                            yield p, (True, arc.read(p), picture(club['logos']['large']).copy())
+                        else:
+                            head = arc.head(p, HEAD)
+                            if gnf.Gnf(head).data_off > len(head):
+                                head = arc.read(p)
+                            yield p, (False, head, picture(member).copy())
+                    except _ERRORS as err:
+                        yield p, err
+    for p, data, err in workers.ordered(jobs(), _make, _ERRORS):
+        if err is not None:
+            say(f'club art: {p} not made ({err})')
+        else:
+            files[p] = data
     if not files:
         return counts
     built = (today or datetime.date.today()).isoformat()

@@ -63,9 +63,10 @@ if ($CheckOnly) {
     }
     # pywebview shows the window (WebView2 through pythonnet); certifi brings Mozilla's list of trusted certificates
     # (Windows' own list can lack the one the update server uses); Pillow draws the photos the packs lack on the
-    # player's PC (overtime_core.photos; imported inside functions only, the server stays stdlib)
-    & $py -m pip install --quiet --upgrade pip pyinstaller "pywebview==6.2.1" certifi "pillow==12.1.1"
-    if ($LASTEXITCODE -ne 0) { throw "could not install PyInstaller, pywebview, certifi and Pillow" }
+    # player's PC (overtime_core.photos) and numpy writes the textures made on it (overtime_core.bcn: BC1 / BC3 / BC5 /
+    # BC7); both imported inside functions only, the server stays stdlib
+    & $py -m pip install --quiet --upgrade pip pyinstaller "pywebview==6.2.1" certifi "pillow==12.1.1" "numpy==2.5.4"
+    if ($LASTEXITCODE -ne 0) { throw "could not install PyInstaller, pywebview, certifi, Pillow and numpy" }
 }
 
 $version = (& $py -c "import overtime_roster; print(overtime_roster.VERSION)").Trim()

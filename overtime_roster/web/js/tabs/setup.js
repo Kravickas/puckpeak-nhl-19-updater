@@ -123,10 +123,11 @@ function WhereCard({ s }) {
 const BOOST_INFO = [
   { head: 'What it does', items: ["Plays NHL 19 on Kravickas's NHL 19 build of shadPS4, for better performance and graphics.", 'Saves, patch and ShadNet login stay the same.'] },
   { head: 'Your own shadPS4', items: ['It stays where it is, untouched.', 'Disable puts it back, in this app and in QtLauncher.'] },
-  { head: 'Resolution', items: ["1080p is the game's own. 1440p renders at 2560x1440 (Kravickas's patch): sharper, needs a stronger GPU.", '1440p also sets Additional DMem to 3500 MB; 1080p puts your own value back.', 'Works with any shadPS4, with or without Boost. Takes effect at the next start of NHL 19.'] },
+  { head: 'Resolution', items: ["1080p is the game's own. 1440p renders at 2560x1440 (Kravickas's patch): sharper, needs a stronger GPU.", "720p renders at 1280x720 (Kravickas's patch): softer, for a weaker GPU.", '1440p also sets Additional DMem to 3500 MB; 720p and 1080p put your own value back.', 'Works with any shadPS4, with or without Boost. Takes effect at the next start of NHL 19.'] },
   { head: 'Replays at 60 fps', items: ["Kravickas's patch, on for everyone: replays, celebrations and cutscenes run at 60 instead of 30."] },
 ];
 const RESOLUTIONS = [
+  { value: 720, label: '720p', title: 'Renders at 1280x720 (Kravickas patch), for a weaker GPU' },
   { value: 1080, label: '1080p', title: "The game's own resolution" },
   { value: 1440, label: '1440p', title: 'Renders at 2560x1440 (Kravickas patch), needs a stronger GPU' },
 ];

@@ -175,7 +175,7 @@ class SetupController(Part):
         self.asked = set()      # the core asset switches (patch_ctl.PACK_KEYS) switched on here: their packs download
         self.boost = prefs.get('boost') or {}   # Boost performance: {sha256, emulator, selected}, what comes back when off
         self.boost_part = None  # how far its download is (0..1)
-        self.resolution = 1440 if prefs.get('resolution') == 1440 else 1080   # the eboot patch's res1440 block
+        self.resolution = prefs.get('resolution') if prefs.get('resolution') in xmlpatch.RESOLUTIONS else 1080
         # Folders list: what the player set by hand ({'emulator': bool, 'game': bool, 'saves': bool, 'data': path}); a
         # folder set here is never replaced by what a look finds (a tester's portable shadPS4, 2026-11-07)
         self.custom = {k: v for k, v in (prefs.get('custom') or {}).items() if k in FOLDERS and v}
@@ -188,8 +188,8 @@ class SetupController(Part):
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
 
     def _xml(self):
-        return xmlpatch.with_res1440(xmlpatch.build(self.server['host'], self.server.get('nucleus_url')),
-                                     self.resolution == 1440)
+        return xmlpatch.with_resolution(xmlpatch.build(self.server['host'], self.server.get('nucleus_url')),
+                                        self.resolution)
 
     def _wait(self):
         """True (and the Help bar says so) while another job runs."""
@@ -985,9 +985,14 @@ class SetupController(Part):
                 'can': (on or pub is not None) and not c.busy, 'resolution': self.resolution}
 
     def setup_resolution(self, value):
-        """The Resolution choice (Boost performance card): 1080 (the game's own) or 1440 (Kravickas's res1440 block, with
-        Additional DMem 3500 MB). A patched game takes it now, or at its next Play while shadPS4 runs; no Patch."""
-        value = 1440 if int(value or 0) == 1440 else 1080
+        """The Resolution choice (Boost performance card): 720 (Kravickas's res720 block), 1080 (the game's own) or
+        1440 (Kravickas's res1440 block, with Additional DMem 3500 MB). A patched game takes it now, or at its next Play
+        while shadPS4 runs; no Patch."""
+        try:
+            value = int(value or 0)
+        except (TypeError, ValueError):
+            value = 1080
+        value = value if value in xmlpatch.RESOLUTIONS else 1080
         with self.ctl.lock:
             changed = value != self.resolution
             self.resolution = value

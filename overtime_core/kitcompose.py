@@ -29,7 +29,7 @@ import json
 import os
 import zipfile
 
-from . import art, eb, gamefiles, gnf
+from . import art, eb, gamefiles, gnf, workers
 
 KIND, FORMAT = 'kitlayers', 1
 # family: the source pack (a download with its own switch), the switch (patch_ctl), the pack served (its name)
@@ -421,7 +421,7 @@ def _key(source, targets, game_dir):
             arcs.append((os.path.basename(big), os.path.getsize(big)))
         except OSError:
             arcs.append((os.path.basename(big), None))
-    text = json.dumps([source.sha256, pillow, DRAWING, arcs, sorted(targets)])
+    text = json.dumps([source.sha256, pillow, DRAWING, gnf.ENCODER, arcs, sorted(targets)])
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
@@ -479,30 +479,66 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
     return counts
 
 
+_STEP_ERRORS = (art.ArtError, gnf.GnfError, OSError, ValueError, KeyError)
+
+
+def _needs(step, picture, read):
+    """The pictures and other game files `step` reads, read here (the reading thread), each picture its own copy."""
+    op, pics, files = step.get('op'), {}, {}
+    if op == 'make':
+        members = [step['picture']]
+    elif op == 'cover':
+        members = [step['mask']] + ([step['plain_mask']] if step.get('plain_mask') else [])
+    else:
+        members = []
+    for m in members:
+        pics[m] = picture(m).copy()     # no picture is shared between threads
+    if op == 'font' and step.get('shape'):
+        files[step['shape']] = read(step['shape'])
+    return pics, files
+
+
+def _jobs(source, by_arc, picture, where):
+    """(path, (step, raw, pictures, files) or the read error) of each texture, in the pack's order (workers.ordered)."""
+    for big, ps in sorted(by_arc.items()):
+        with eb.EbArchive(big) as arc:
+            for p in ps:
+                step = source.files[p]
+                try:
+                    raw = arc.read(p) if step.get('op') in WHOLE else arc.head(p, HEAD)
+                    if gnf.Gnf(raw).data_off > len(raw):
+                        raw = arc.read(p)
+                    pics, files = _needs(step, picture, lambda q: _read_other(where, q, big, arc))
+                except _STEP_ERRORS as err:
+                    yield p, err
+                    continue
+                yield p, (p, step, raw, pics, files)
+
+
+def _make(p, step, raw, pics, files):
+    """One texture (on a worker): its GNF and sha256."""
+    data = run(step, raw, pics.__getitem__, files.__getitem__)
+    art.check_file(p, data)
+    return data, hashlib.sha256(data).hexdigest()
+
+
 def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where):
+    """The pack, its textures made on every core (workers.ordered: read and written here, in order, so the pack is the
+    one a single thread writes)."""
     done = 0
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
-        for big, ps in sorted(by_arc.items()):
-            with eb.EbArchive(big) as arc:
-                for p in ps:
-                    step = source.files[p]
-                    try:
-                        raw = arc.read(p) if step.get('op') in WHOLE else arc.head(p, HEAD)
-                        if gnf.Gnf(raw).data_off > len(raw):
-                            raw = arc.read(p)
-                        data = run(step, raw, picture, lambda q: _read_other(where, q, big, arc))
-                        art.check_file(p, data)
-                    except (art.ArtError, gnf.GnfError, OSError, ValueError, KeyError) as err:
-                        say(f'jerseys: {p} not made ({err})')
-                        counts['failed'] += 1
-                        continue
-                    shas[p] = hashlib.sha256(data).hexdigest()
-                    zi = zipfile.ZipInfo(p, STAMP)
-                    zi.compress_type = zipfile.ZIP_DEFLATED
-                    z.writestr(zi, data, compresslevel=1)
-                    done += 1
-                    if progress:
-                        progress(done / len(targets))
+        for p, made, err in workers.ordered(_jobs(source, by_arc, picture, where), _make, _STEP_ERRORS):
+            if err is not None:
+                say(f'jerseys: {p} not made ({err})')
+                counts['failed'] += 1
+                continue
+            data, shas[p] = made
+            zi = zipfile.ZipInfo(p, STAMP)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(zi, data, compresslevel=1)
+            done += 1
+            if progress:
+                progress(done / len(targets))
         info = {'format': art.FORMAT, 'name': name, 'built': (today or datetime.date.today()).isoformat(),
                 'source': SOURCE, 'files': dict(sorted(shas.items())), 'made': key,
                 'alternates': [a for a in source.info.get('alternates') or [] if _rows_made(a, source, shas)]}

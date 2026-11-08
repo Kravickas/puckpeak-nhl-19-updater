@@ -18,7 +18,11 @@ loaded eboot only. `build` makes the file from the FEATURES table below; `build(
               (the game picks every 2nd there). By Kravickas, github.com/Kravickas/ps4_cheats PATCHES/NHL19.xml
               (CUSA11116 v1.60); its sites are byte-identical in CUSA11126 v1.60 (docs/notes/boost-performance.md)
   res1440     render at 2560x1440 instead of 1920x1080, by Kravickas (same file, "Resolution 2560x1440 (16:9)"). Written
-              off (isEnabled="false"); with_res1440 switches it (the Setup tab's Resolution choice, with Additional DMem)
+              off (isEnabled="false"); with_resolution switches it (the Setup tab's Resolution choice, with Additional
+              DMem)
+  res720      render at 1280x720, by Kravickas ("Resolution 1280x720 (16:9)"): res1440's five in-place lines with
+              1280x720 (below the stock 1600x900, so no memory line and no Additional DMem). Written off; with_resolution turns
+              on at most one of the two. Local only, like res1440
   threes_rewards  a not-found check on the hero/mascot lookup of Online Threes' unlock lists (0x1406990), whose miss read
               past the vector's end and crashed the setup at 0x1406fc5 (docs/notes/threes-otp.md 10.4). Local only
   ledger_cap  a capacity check on the Franchise per-team list append in 0x423ad80 (a daily per-team ledger, cleared at
@@ -50,6 +54,7 @@ NUCLEUS = ('0x526E089', '0x526E0A2', '0x526E0BA')
 E32_DEFAULT, E32_STOCK = '0x6F7963', 'C6051E2EC50500'
 BAP32_TITLE = 'BAP32: Seattle in Be a Pro'
 RES1440_TITLE = 'Resolution 2560x1440 (Kravickas)'
+RES720_TITLE = 'Resolution 1280x720 (Kravickas)'
 THREES_REWARDS_TITLE = 'T1: not-found check on the Threes unlock lookup'
 
 
@@ -91,6 +96,14 @@ FEATURES = {
         [('0x2D3BD70', 'B8000A0000'), ('0x2D3BD75', 'BA000A0000'), ('0x2D3BD7A', 'B9A0050000'),
          ('0x2D3BD7F', 'BEA0050000'), ('0x2D3BDAA', '41C74558000A0000'), ('0x5736EA', 'E988198C049090'),
          ('0x4E35077', '483D00000040721348B90000C090000000004839C8740448C1E001498B0E483B4DE8E953E673FB')],
+        enabled=False),
+    'res720': Feature(
+        RES720_TITLE,
+        """  <!-- By Kravickas ("Resolution 1280x720 (16:9)", NHL 19 v1.60, PatchVer 1.0). The render size immediates at
+       0x293bd70..0x293bdaa (res1440's in-place lines) -> 1280x720, 921 600 pixels: below the stock 1600x900, so no
+       memory line is needed. Off by default: the Setup tab's Resolution choice turns it on (res1440 off). -->""",
+        [('0x2D3BD70', 'B800050000'), ('0x2D3BD75', 'BA00050000'), ('0x2D3BD7A', 'B9D0020000'),
+         ('0x2D3BD7F', 'BED0020000'), ('0x2D3BDAA', '41C7455800050000')],
         enabled=False),
     'nucleus': Feature(
         'Nucleus hosts: $nucleus',
@@ -159,12 +172,17 @@ FEATURES = {
                        '0041C78424EC0300002000000031D24C89E7C3')]),
 }
 # bap32 and expansion32 stay last: DEFAULT[:-2] is the patch without the 32-team switch (xmlpatch.expansion32_off)
-DEFAULT = ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'threes_rewards', 'ledger_cap', 'bap32',
-           'expansion32')
+DEFAULT = ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'res720', 'threes_rewards',
+           'ledger_cap', 'bap32', 'expansion32')
 # what earlier versions wrote: repoint takes such a file as its own and writes today's DEFAULT (a player's next Play
 # brings new blocks in without Patch)
 EARLIER = (('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'ledger_cap', 'bap32', 'expansion32'),
-           ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'ledger_cap', 'bap32', 'expansion32'))
+           ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'ledger_cap', 'bap32', 'expansion32'),
+           ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'threes_rewards', 'ledger_cap',
+            'bap32', 'expansion32'))        # 0.80.0: no res720
+# the Resolution choice: 1080 is the game's own (no block on), the others one block each
+RESOLUTION_BLOCKS = {720: RES720_TITLE, 1440: RES1440_TITLE}
+RESOLUTIONS = (720, 1080, 1440)
 
 _HOST = re.compile(r'[A-Za-z0-9.-]+\Z')
 _URL = re.compile(r'(https?)://([A-Za-z0-9.-]+(?::\d{1,5})?)/\Z')
@@ -295,13 +313,27 @@ def res1440(text):
     return any(b['enabled'] and b['name'] == RES1440_TITLE for b in parse(text))
 
 
-def with_res1440(text, on):
-    """The patch file with the 1440p block on or off (1080p, the game's own). A file without the block comes back as it
-    is when `on` is False; asking for 1440p there is a PatchError (an earlier version's file: repoint brings it up)."""
-    want = 'true' if on else 'false'
-    out = re.sub(f'(<Metadata Name="{re.escape(RES1440_TITLE)}"[^>]*?isEnabled=")(?:true|false)"', rf'\g<1>{want}"', text)
-    if res1440(out) != bool(on):
-        raise PatchError('the patch file has no resolution block this tool can switch')
+def resolution(text):
+    """The resolution a patch file renders at: 720, 1440 (its block enabled) or 1080 (the game's own). Both blocks on
+    (they write the same lines) is a PatchError."""
+    on = [r for r, title in RESOLUTION_BLOCKS.items() if any(b['enabled'] and b['name'] == title for b in parse(text))]
+    if len(on) > 1:
+        raise PatchError('the patch file turns on more than one resolution')
+    return on[0] if on else 1080
+
+
+def with_resolution(text, value):
+    """The patch file rendering at `value` (RESOLUTIONS): that block on, the other off; 1080 both off. A file without
+    the blocks comes back as it is for 1080; asking another resolution there is a PatchError (an earlier version's
+    file: repoint brings it up)."""
+    if value not in RESOLUTIONS:
+        raise PatchError(f'no resolution {value!r}')
+    out = text
+    for r, title in RESOLUTION_BLOCKS.items():
+        want = 'true' if r == value else 'false'
+        out = re.sub(f'(<Metadata Name="{re.escape(title)}"[^>]*?isEnabled=")(?:true|false)"', rf'\g<1>{want}"', out)
+    if resolution(out) != value:
+        raise PatchError(f'the patch file has no {value}p block this tool can switch')
     return out
 
 
@@ -323,8 +355,8 @@ def repoint(text, host, nucleus_url=None):
     own = f"https://{old['redirector']}/"
     nucleus = next((u for u in old['nucleus'] if u != own), None)
     newline = '\r\n' if '\r\n' in text else '\n'
-    e32, bap, res = expansion32(text), bap32(text), res1440(text)
-    plain = with_res1440(text, False)
+    e32, bap, res = expansion32(text), bap32(text), resolution(text)
+    plain = with_resolution(text, 1080)
     same = False
     for features in (DEFAULT,) + EARLIER:
         try:
@@ -335,13 +367,13 @@ def repoint(text, host, nucleus_url=None):
             break
     if not same:
         raise PatchError('the patch file is not the one this Overtime writes; Patch the game again')
-    return with_res1440(_switched(build(host, nucleus_url, newline=newline), e32, bap), res)
+    return with_resolution(_switched(build(host, nucleus_url, newline=newline), e32, bap), res)
 
 
 # Blocks and lines that never reach the other game: the picture size (Setup's Resolution), Be a Pro (offline only, off
 # with the league switch), the Threes unlock guard (only a lookup that would crash changes) and the server's name (one
 # lobby is one server, whatever name or address the app was given).
-LOCAL_ONLY_TITLES = (RES1440_TITLE, BAP32_TITLE, THREES_REWARDS_TITLE)
+LOCAL_ONLY_TITLES = (RES1440_TITLE, RES720_TITLE, BAP32_TITLE, THREES_REWARDS_TITLE)
 LOCAL_ONLY_LINES = (REDIRECTOR,) + NUCLEUS
 
 

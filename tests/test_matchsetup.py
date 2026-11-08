@@ -64,13 +64,17 @@ def _snapshot(w):
 
 def test_match_patch_carries_the_host_netplay_bytes_and_my_local_blocks():
     host = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
-    mine = xmlpatch.with_res1440(xmlpatch.build('ot.example.org', 'https://10.0.0.2/'), True)
+    mine = xmlpatch.with_resolution(xmlpatch.build('ot.example.org', 'https://10.0.0.2/'), 1440)
     r = MS.recipe(host)
     text = MS.match_xml(r, mine)
     assert xmlpatch.netplay_fingerprint(text) == xmlpatch.netplay_fingerprint(host)
     assert xmlpatch.res1440(text)                                   # my picture size
     assert xmlpatch.targets(text)['redirector'] == 'ot.example.org'   # my server name
     assert not xmlpatch.res1440(MS.match_xml(r, host))              # the host's 1080p stays the host's
+    low = MS.match_xml(MS.recipe(xmlpatch.with_resolution(host, 720)), xmlpatch.with_resolution(host, 720))
+    assert xmlpatch.resolution(low) == 720                          # 720p is a picture size too: local, carried
+    assert xmlpatch.netplay_fingerprint(low) == xmlpatch.netplay_fingerprint(host)
+    assert xmlpatch.resolution(MS.match_xml(MS.recipe(xmlpatch.with_resolution(host, 720)), host)) == 1080
 
 
 def test_recipe_check_refuses_what_does_not_read():

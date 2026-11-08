@@ -20,9 +20,10 @@ import io
 import json
 import os
 import re
+import struct
 import urllib.request
 
-from . import art, clubdata, gnf, net, nhlcom
+from . import art, clubdata, gnf, net, nhlcom, workers
 
 LOCAL_PACK = 'people_local.zip'
 LOCAL_NAME = 'people_local'
@@ -306,6 +307,42 @@ def draw(data):
     return out.getvalue()
 
 
+def _made_path(folder, key, template, picture):
+    """Where the GNF of a drawn portrait is kept: named by the picture's key and a hash of the picture, the template's
+    header and the encoder, so a new picture, game portrait or encoder makes it again."""
+    from PIL import __version__ as pillow
+    h = hashlib.sha256(picture)
+    h.update(template[:gnf.Gnf(template).data_off])
+    h.update(f'{gnf.ENCODER} {pillow}'.encode('ascii'))
+    return os.path.join(folder, f'{file_name(key)}.{h.hexdigest()[:16]}.gnf')
+
+
+def made_gnf(folder, key, template):
+    """The GNF of the portrait drawn as `key` in `folder` (to_gnf), kept next to it: made once, read back after (a
+    BC7 portrait takes a while to make). Other GNFs of the same picture (an older encoder's) go."""
+    with open(os.path.join(folder, file_name(key) + '.webp'), 'rb') as f:
+        picture = f.read()
+    path = _made_path(folder, key, template, picture)
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        g = gnf.Gnf(data)
+        if g.file_size == len(data) and g.data_off + g.texture.size <= len(data):
+            return data
+    except (OSError, gnf.GnfError, struct.error):
+        pass
+    data = to_gnf(template, picture)
+    _write(path, data)
+    stem = file_name(key) + '.'
+    for name in os.listdir(folder):
+        if name.startswith(stem) and name.endswith('.gnf') and os.path.join(folder, name) != path:
+            try:
+                os.remove(os.path.join(folder, name))
+            except OSError:
+                pass
+    return data
+
+
 def to_gnf(template, picture):
     """GNF bytes of a drawn portrait (WebP bytes) shaped like the game's own `template`: scaled to its height, the
     middle kept (as tools/build_people.py does)."""
@@ -394,16 +431,21 @@ def supplement(pack_links, people, folder, template, get=fetch, today=None, limi
                 else:
                     failed[key] = today.isoformat()
                     counts['failed'] += 1
-    files, rows = {}, []
+    files, rows, made = {}, [], []
     for person, (_f, _l, url) in sorted(want.items()):
         key = picture_key(url)
         if not os.path.isfile(drawn_path(key)):
             continue
         artid = index[person][0] if person in index else next(free)
         index[person] = (artid, key)
-        with open(drawn_path(key), 'rb') as f:
-            files[art.PORTRAIT.format(artid)] = to_gnf(template, f.read())
+        made.append((art.PORTRAIT.format(artid), key))
         rows.append([*person, artid])
+    keys = sorted({k for _p, k in made})      # one picture made once, even when two people share it
+    data = {}
+    for key, gnf_data, err in workers.ordered(((k, (folder, k, template)) for k in keys), made_gnf, ()):
+        data[key] = gnf_data
+    for path, key in made:
+        files[path] = data[key]
     counts['kept'] = len(rows) - counts['drawn']
     _write(os.path.join(folder, INDEX), json.dumps(
         {'people': [[*p, a, k] for p, (a, k) in sorted(index.items())], 'failed': dict(sorted(failed.items()))},
