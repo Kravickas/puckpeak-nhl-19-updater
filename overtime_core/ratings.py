@@ -17,6 +17,7 @@ import gzip
 import json
 import os
 
+from . import durable
 from .matching import Matcher, Person
 
 DEFAULT_PACK_URL = 'https://puckpeak.com/legacy-roster/datapack.json.gz'
@@ -72,7 +73,7 @@ def load_pack(cache_dir, fetch=None, offline=False, log=lambda msg: None):
                 os.makedirs(cache_dir, exist_ok=True)
                 with open(path + '.part', 'wb') as f:
                     f.write(raw)
-                os.replace(path + '.part', path)
+                durable.replace(path + '.part', path)
                 log(f"data pack {pack.get('generated', '')}: downloaded")
                 return pack
             log('the published data pack needs a newer Overtime')

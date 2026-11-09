@@ -22,10 +22,10 @@ import time
 import urllib.error
 import webbrowser
 
-from overtime_core import overlay, rosterupdate, tdb, xmlpatch
+from overtime_core import gamefiles, overlay, rosterupdate, tdb, xmlpatch
 
 from .. import SITE, VERSION
-from . import boost, gamesetup, jobs, launch, packdownload, patch, patch_ctl, paths, selfupdate
+from . import boost, cachemove, gamesetup, jobs, launch, packdownload, patch, patch_ctl, paths, selfupdate
 from .registry import Part
 from .shell import friendly_date
 
@@ -68,7 +68,8 @@ def patch_cache():
 # Find game's picker: the launcher, the emulator or the game itself
 FIND_KINDS = 'shadPS4 or NHL 19 (*.exe;eboot.bin)'
 # Setup's Folders list, in its order: key -> label
-FOLDERS = {'emulator': 'shadPS4', 'game': 'NHL 19', 'data': 'shadPS4 data', 'saves': 'Saves'}
+FOLDERS = {'emulator': 'shadPS4', 'game': 'NHL 19', 'data': 'shadPS4 data', 'saves': 'Saves',
+           'cache': 'Downloads and cache'}
 
 
 def _game_of(path):
@@ -175,8 +176,9 @@ class SetupController(Part):
         self.asked = set()      # the core asset switches (patch_ctl.PACK_KEYS) switched on here: their packs download
         self.boost = prefs.get('boost') or {}   # Boost performance: {sha256, emulator, selected}, what comes back when off
         self.boost_part = None  # how far its download is (0..1)
-        self.resolution = 1440 if prefs.get('resolution') == 1440 else 1080   # the eboot patch's res1440 block
-        # Folders list: what the player set by hand ({'emulator': bool, 'game': bool, 'saves': bool, 'data': path}); a
+        self.resolution = prefs.get('resolution') if prefs.get('resolution') in xmlpatch.RESOLUTIONS else 1080
+        # Folders list: what the player set by hand ({'emulator': bool, 'game': bool, 'saves': bool, 'data': path,
+        # 'cache': path (paths.cache_dir reads it from the settings itself)}); a
         # folder set here is never replaced by what a look finds (a tester's portable shadPS4, 2026-11-07)
         self.custom = {k: v for k, v in (prefs.get('custom') or {}).items() if k in FOLDERS and v}
         gamesetup.set_custom_data(self.custom.get('data') or '')
@@ -188,8 +190,8 @@ class SetupController(Part):
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
 
     def _xml(self):
-        return xmlpatch.with_res1440(xmlpatch.build(self.server['host'], self.server.get('nucleus_url')),
-                                     self.resolution == 1440)
+        return xmlpatch.with_resolution(xmlpatch.build(self.server['host'], self.server.get('nucleus_url')),
+                                        self.resolution)
 
     def _wait(self):
         """True (and the Help bar says so) while another job runs."""
@@ -610,7 +612,8 @@ class SetupController(Part):
         emu = self.known_emulator()
         data = (gamesetup.emu_user_dir(emu) if emu else gamesetup.custom_data()) or f.get('user_dir') or ''
         return {'emulator': emu, 'game': self.ctl.game_dir or '', 'data': data,
-                'saves': getattr(self.ctl, 'save_dir', '') or ''}[key]
+                'saves': getattr(self.ctl, 'save_dir', '') or '',
+                'cache': paths.chosen_cache_dir() or paths.default_cache_dir()}[key]
 
     def _boosted(self):
         emu = self.known_emulator()
@@ -654,6 +657,8 @@ class SetupController(Part):
                 return None, ('Boost performance is on, and it uses %APPDATA%\\shadPS4. Disable Boost performance '
                               'first to use another data folder.')
             return os.path.abspath(path), None
+        if key == 'cache':
+            return self._check_cache(path)
         if not os.path.isdir(path):           # saves: the game's save folder, or a folder above it
             return None, f'{path} is not a folder.'
         title = gamesetup.active_title()      # shadPS4's Home folder, home, savedata or the game's folder itself
@@ -674,6 +679,8 @@ class SetupController(Part):
         if why:
             self.ctl.say(why, 'bad')
             return {'error': why}
+        if key == 'cache':
+            return self._cache_move(use)
         with self.ctl.lock:
             self.custom[key] = use if key == 'data' else True
             if key == 'data':
@@ -691,6 +698,8 @@ class SetupController(Part):
         """Auto: the folder is found again (shadPS4: the one QtLauncher selects, else the newest found)."""
         if key not in FOLDERS:
             return {'error': f'no folder {key}'}
+        if key == 'cache':
+            return self._cache_move(None)
         with self.ctl.lock:
             self.custom.pop(key, None)
             if key == 'data':
@@ -707,9 +716,84 @@ class SetupController(Part):
         for key, label in FOLDERS.items():
             path = self._folder_now(key)
             ok = {'emulator': bool(path), 'game': bool(((self.found or {}).get('game') or {}).get('ok')),
-                  'data': gamesetup.is_data_dir(path), 'saves': os.path.isdir(path)}[key]
+                  'data': gamesetup.is_data_dir(path), 'saves': os.path.isdir(path),
+                  'cache': not self.custom.get('cache') or os.path.isdir(path)}[key]
             rows.append({'key': key, 'label': label, 'path': path, 'custom': bool(self.custom.get(key)), 'ok': ok})
         return rows
+
+    def _check_cache(self, path):
+        """(folder to use, None) or (None, why not) for the cache folder the player picked: a folder of its own on a
+        drive that is there (a picked folder that holds other files gets one inside it: cachemove.pick, since a later
+        move takes every file of the cache folder), never inside the game, its update or mods folder, shadPS4's data or
+        the saves (the game would see the files, or Patch and Unpatch would meet them), and one this program may write
+        to."""
+        path = os.path.abspath(path)
+        if os.path.dirname(path) == path:
+            return None, f'Pick a folder on {path}, not the drive itself: the cache puts its files in that folder.'
+        if not os.path.isdir(os.path.dirname(path)):
+            return None, f'{os.path.dirname(path)} is not there. Pick a folder on a drive this PC has.'
+        if not cachemove.same(path, paths.default_cache_dir()):
+            try:
+                path = cachemove.pick(path)
+            except cachemove.CacheMoveError as err:
+                return None, str(err)
+        game = self.ctl.game_dir
+        keep_out = []
+        if game:
+            base, update = gamefiles.roots(game)
+            keep_out += [(base, 'NHL 19'), (update, "NHL 19's update"), (gamefiles.mods_dir(game), "NHL 19's mods")]
+        keep_out += [(self._folder_now('data'), "shadPS4's data"), (self._folder_now('saves'), 'the saves')]
+        for folder, what in keep_out:
+            if folder and (cachemove.inside(path, folder) or cachemove.inside(folder, path)):
+                return None, f'Pick a folder outside {what} ({folder}): the cache must not mix with it.'
+        try:
+            os.makedirs(path, exist_ok=True)
+            probe = os.path.join(path, '.overtime-write-test')
+            with open(probe, 'wb') as f:
+                f.write(b'ok')
+            os.remove(probe)
+        except OSError as err:
+            return None, f'This program cannot write to {path} ({err}).'
+        return path, None
+
+    def _cache_move(self, dst):
+        """Downloads and cache: Change... (`dst`) or Auto (None, the default folder). The files move in a job
+        (cachemove: on another drive copied first, the setting changes once all are there, then the old ones go)."""
+        if self._wait():
+            return None
+        c = self.ctl
+        src, target = paths.cache_dir(), dst or paths.default_cache_dir()
+
+        def switch():
+            with c.lock:
+                if dst:
+                    self.custom['cache'] = dst
+                else:
+                    self.custom.pop('cache', None)
+                self._remember()
+            paths.set_cache_dir(dst)
+            c.host.log(f'Downloads and cache: {target}')
+
+        def progress(done, total):
+            share = done / total if total else -1
+            c.say(f'Moving the downloads and cache to {target}... {round(share * 100) if total else 0} %', 'info',
+                  share)
+
+        def work():
+            return cachemove.move(src, target, switch, progress, log=c.host.log, default=paths.default_cache_dir())
+
+        def said(out):
+            if out.get('kept'):
+                return (f"Downloads and cache: {target}. The files in {out['kept']} stay there: that folder may hold "
+                        'files that are not the cache, so the program does not move them. Download the packs again, or '
+                        'move them by hand.'), 'caution'
+            if not out['files']:
+                return f'Downloads and cache: {target}.', 'good'
+            text = f"Downloads and cache moved to {target}: {out['files']} files, {out['bytes'] / 2**20:.0f} MB."
+            if out['left']:
+                text += f" {out['left']} old file(s) were in use and stay in {src}; they can be deleted."
+            return text, 'good'
+        return self._job('Moving the downloads and cache...', work, said, expected=(cachemove.CacheMoveError,))
 
     # --- Downloads: the picture packs --------------------------------------------------------------------------------
     def _pack_row(self, name):
@@ -985,9 +1069,14 @@ class SetupController(Part):
                 'can': (on or pub is not None) and not c.busy, 'resolution': self.resolution}
 
     def setup_resolution(self, value):
-        """The Resolution choice (Boost performance card): 1080 (the game's own) or 1440 (Kravickas's res1440 block, with
-        Additional DMem 3500 MB). A patched game takes it now, or at its next Play while shadPS4 runs; no Patch."""
-        value = 1440 if int(value or 0) == 1440 else 1080
+        """The Resolution choice (Boost performance card): 720 (Kravickas's res720 block), 1080 (the game's own) or
+        1440 (Kravickas's res1440 block, with Additional DMem 3500 MB). A patched game takes it now, or at its next Play
+        while shadPS4 runs; no Patch."""
+        try:
+            value = int(value or 0)
+        except (TypeError, ValueError):
+            value = 1080
+        value = value if value in xmlpatch.RESOLUTIONS else 1080
         with self.ctl.lock:
             changed = value != self.resolution
             self.resolution = value

@@ -513,10 +513,11 @@ class MultiplayerCtl(Part):
         self.online_exe = exe
         return exe
 
-    def _restore(self, note_on_fail=True):
-        """The player's own setup back (the game has closed). '' or why it could not (logged, said on the card)."""
+    def _restore(self, note_on_fail=True, only=None):
+        """The player's own setup back (the game has closed). '' or why it could not (logged, said on the card).
+        `only`: that match setup alone (matchsetup.identity), not a newer one a start made meanwhile."""
         try:
-            got = matchsetup.restore(running=self.running, log=self.ctl.host.log)
+            got = matchsetup.restore(running=self.running, log=self.ctl.host.log, only=only)
         except (matchsetup.MatchSetupError, OSError) as err:
             self.ctl.host.log(f'Multiplayer: your own setup could not be put back yet ({err}).')
             if note_on_fail:
@@ -1329,10 +1330,11 @@ class MultiplayerCtl(Part):
         c = self.ctl
         if self.running() or not (c.game_dir and c.game.ok):
             return
+        seen = matchsetup.identity()                # first: a start after this look makes another one
         with self.mlock:
             launching = bool(self.job and self.job.is_alive())
-        if matchsetup.active() and not launching:   # a match setup left by a crash: the player's own setup back
-            self._restore(note_on_fail=False)
+        if seen is not None and not launching:      # a match setup left by a crash: the player's own setup back
+            self._restore(note_on_fail=False, only=seen)
         try:
             layer = ((overlay.status(c.game_dir) or {}).get('layers') or {}).get('menus') or {}
             if layer.get('autoplay_until'):

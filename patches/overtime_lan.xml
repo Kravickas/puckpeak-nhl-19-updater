@@ -57,6 +57,18 @@
       <Line Type="bytes" Address="0x4E35077" Value="483D00000040721348B90000C090000000004839C8740448C1E001498B0E483B4DE8E953E673FB"/>
     </PatchList>
   </Metadata>
+  <!-- By Kravickas ("Resolution 1280x720 (16:9)", NHL 19 v1.60, PatchVer 1.0). The render size immediates at
+       0x293bd70..0x293bdaa (res1440's in-place lines) -> 1280x720, 921 600 pixels: below the stock 1600x900, so no
+       memory line is needed. Off by default: the Setup tab's Resolution choice turns it on (res1440 off). -->
+  <Metadata Name="Resolution 1280x720 (Kravickas)" AppVer="01.60" AppElf="eboot.bin" isEnabled="false">
+    <PatchList>
+      <Line Type="bytes" Address="0x2D3BD70" Value="B800050000"/>
+      <Line Type="bytes" Address="0x2D3BD75" Value="BA00050000"/>
+      <Line Type="bytes" Address="0x2D3BD7A" Value="B9D0020000"/>
+      <Line Type="bytes" Address="0x2D3BD7F" Value="BED0020000"/>
+      <Line Type="bytes" Address="0x2D3BDAA" Value="41C7455800050000"/>
+    </PatchList>
+  </Metadata>
   <!-- Online Threes' setup builds the unlock lists (herounlocks / mascotunlocks) in 0x1406990: each hero or mascot
        reward's player id is looked up (equal_range) in a sorted {id, def} vector with no not-found check, so a missing
        id reads the def pointer one entry past the end (heap garbage; 0xc0000005 at 0x1406fc5 in most runs, docs/notes/

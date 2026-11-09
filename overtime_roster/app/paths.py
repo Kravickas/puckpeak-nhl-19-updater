@@ -1,4 +1,5 @@
 """Where things are: the game, the emulator's saves, and the app's own folder (settings, cache, backups)."""
+import json
 import os
 import sys
 import tempfile
@@ -37,7 +38,53 @@ def app_home():
     return home
 
 
+CACHE = 'cache'
+_cache = {}     # app_home() -> the cache folder set in Setup (None: the default), read from settings.json once
+
+
+def default_cache_dir():
+    """%APPDATA%\\OvertimeRoster\\cache: where the downloads and the files made on this PC go unless Setup says."""
+    return os.path.join(app_home(), CACHE)
+
+
+def _cache_setting():
+    """The cache folder set in Setup's Folders list (settings.json: setup.custom.cache), or None. Read here, not
+    through settings (which imports this module), so every app_dir('cache') sees it from the first call on."""
+    try:
+        with open(os.path.join(app_home(), 'settings.json'), encoding='utf-8') as f:
+            folder = ((json.load(f).get('setup') or {}).get('custom') or {}).get(CACHE)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return folder if isinstance(folder, str) and folder and not temporary(folder) else None
+
+
+def set_cache_dir(folder):
+    """Use `folder` for the cache from now on (None: the default). Setup's Folders list calls it once the files are
+    there (cachemove)."""
+    _cache[app_home()] = folder or None
+
+
+def chosen_cache_dir():
+    """The cache folder set in Setup, or None (the default)."""
+    home = app_home()
+    if home not in _cache:
+        _cache[home] = _cache_setting()
+    return _cache[home]
+
+
+def cache_dir():
+    """The cache folder in use: the one set in Setup while its drive is there (an unplugged drive: the default, so
+    nothing writes to a missing disk), else the default."""
+    folder = chosen_cache_dir()
+    if folder and os.path.isdir(os.path.dirname(os.path.normpath(folder)) or folder):
+        return folder
+    return default_cache_dir()
+
+
 def app_dir(*parts):
-    path = os.path.join(app_home(), *parts)
+    if parts and parts[0] == CACHE:        # the cache can be on another drive (Setup, Folders)
+        path = os.path.join(cache_dir(), *parts[1:])
+    else:
+        path = os.path.join(app_home(), *parts)
     os.makedirs(os.path.dirname(path) if os.path.splitext(path)[1] else path, exist_ok=True)
     return path

@@ -683,7 +683,7 @@ def test_1440p_sets_additional_dmem_and_1080p_or_remove_puts_the_players_own_bac
     path = world['user'] / 'custom_configs' / 'CUSA11126.json'
     path.write_text(json.dumps({'General': {'extra_dmem_in_mbytes': 512}}))
     emu, base = str(world['emu']), xmlpatch.build('localhost')
-    hi = xmlpatch.with_res1440(base, True)
+    hi = xmlpatch.with_resolution(base, 1440)
 
     def dmem():
         return json.loads(path.read_text())['General'].get('extra_dmem_in_mbytes')
@@ -693,6 +693,11 @@ def test_1440p_sets_additional_dmem_and_1080p_or_remove_puts_the_players_own_bac
     assert dmem() == gamesetup.DMEM_1440
     gamesetup.install(emu, base, running=lambda: False)
     assert dmem() == 512                                    # back to 1080p: the player's own value
+    gamesetup.install(emu, xmlpatch.with_resolution(base, 720), running=lambda: False)
+    assert dmem() == 512                                    # 720p: below the stock size, no DMem needed
+    gamesetup.install(emu, hi, running=lambda: False)
+    gamesetup.install(emu, xmlpatch.with_resolution(base, 720), running=lambda: False)
+    assert dmem() == 512                                    # 1440p -> 720p: the player's own value again
     gamesetup.install(emu, hi, running=lambda: False)
     gamesetup.remove(running=lambda: False)
     assert dmem() == 512
@@ -701,7 +706,7 @@ def test_1440p_sets_additional_dmem_and_1080p_or_remove_puts_the_players_own_bac
 def test_1440p_keeps_a_bigger_dmem_and_a_first_install_at_1440p_is_undone(world):
     path = world['user'] / 'custom_configs' / 'CUSA11126.json'
     path.write_text(json.dumps({'General': {'extra_dmem_in_mbytes': 6000}}))
-    hi = xmlpatch.with_res1440(xmlpatch.build('localhost'), True)
+    hi = xmlpatch.with_resolution(xmlpatch.build('localhost'), 1440)
     gamesetup.install(str(world['emu']), hi, running=lambda: False)
     assert json.loads(path.read_text())['General']['extra_dmem_in_mbytes'] == 6000
     path.write_text(json.dumps({'General': {}}))

@@ -469,3 +469,74 @@ def test_listing_is_what_load_pack_says_without_reading_the_files(tmp_path):
         z.writestr('x.txt', 'x')
     with pytest.raises(art.ArtError, match='no pack.json'):
         art.listing(str(tmp_path / 'bare.zip'))
+
+
+def test_a_pack_checked_in_full_once_is_not_unpacked_again_until_it_changes(tmp_path, monkeypatch):
+    path = str(tmp_path / 'looks.zip')
+    files = {LOGO: gnf('utah'), KIT: gnf('utah kit')}
+    art.write_pack(path, 'looks', files, source='test', built='2026-10-18')
+    checked = {}
+    first = art.load_pack(path, checked=checked)
+    assert list(checked) == [art._checked_key(path)] and first.files == files
+    read = []
+    real = zipfile.ZipFile.read
+    monkeypatch.setattr(zipfile.ZipFile, 'read', lambda self, name, *a: read.append(name) or real(self, name, *a))
+    again = art.load_pack(path, checked=checked)
+    assert read == [art.MANIFEST]                                   # pack.json only: no texture unpacked
+    assert again.shas == first.shas
+    assert {p: len(f) for p, f in again.files.items()} == {p: len(d) for p, d in files.items()}
+    assert again.files[LOGO].read() == files[LOGO]                  # unpacked and checked when it is written
+
+
+def test_a_recorded_pack_damaged_later_fails_when_its_file_is_written(tmp_path):
+    """A zip recorded as checked whose bytes changed with its size and time (a bit flip on disk): taken as recorded,
+    the damaged file fails as it is read for the archive."""
+    path = str(tmp_path / 'looks.zip')
+    art.write_pack(path, 'looks', {LOGO: gnf('utah')}, source='test', built='2026-10-18')
+    with zipfile.ZipFile(path) as z:
+        info, size = z.read(art.MANIFEST), len(z.read(LOGO))
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_STORED) as z:
+        z.writestr(art.MANIFEST, info)
+        z.writestr(LOGO, b'GNF ' + bytes(size - 4))
+    checked = {art._checked_key(path): True}                       # as if recorded before the damage
+    pack = art.load_pack(path, checked=checked)
+    with pytest.raises(art.ArtError, match='checksum'):
+        pack.files[LOGO].read()
+    with pytest.raises(art.ArtError, match='checksum'):
+        art.load_pack(path, checked={})                             # unrecorded: the full check finds it first
+
+
+def test_patch_checks_every_written_archive_at_the_end_and_removes_one_that_does_not_match(game, tmp_path,
+                                                                                              monkeypatch):
+    looks = pack(tmp_path, 'looks', {LOGO: gnf('utah'), KIT: gnf('utah kit')})
+    real = eb.new_archive
+    monkeypatch.setattr(eb, 'new_archive',              # the 3D archive lands other than it was written (a bad disk)
+                        lambda out, files, **kw: real(out, files, **kw) if 'inxp' in out
+                        else (real(out, files, **kw), '0' * 64)[1])
+    with pytest.raises(overlay.PatchError, match='did not read back as written'):
+        overlay.apply(game, ('art',), art=[looks], **IDLE)
+    st = overlay._load_state(game)
+    assert all('game' not in rel for rel in st['files'])          # the 3D archive is gone, with its record
+    assert not any(os.path.exists(overlay._target(game, rel)) for rel in ('databigs/patch_game_97.big',))
+    monkeypatch.setattr(eb, 'new_archive', real)
+    st = overlay.apply(game, ('art',), art=[looks], **IDLE)        # Patch again: written again
+    assert any('game' in rel for rel in st['files'])
+
+
+def test_patch_keeps_the_record_of_checked_packs_in_the_cache(tmp_path, monkeypatch):
+    from overtime_roster.app import patch, sources
+    monkeypatch.delenv(patch.ART_ENV, raising=False)
+    monkeypatch.setattr(sources, 'BUILD_PACKS', str(tmp_path / 'exe-packs'))
+    monkeypatch.setattr(sources, 'REPO_PACKS', str(tmp_path / 'repo-packs'))
+    cache = tmp_path / 'cache'
+    cache.mkdir()
+    path = str(cache / patch.LOOKS32_PACK)
+    art.write_pack(path, 'looks32', {LOGO: gnf('utah')}, source='test', built='2026-10-18')
+    packs, problems = patch.art_packs(str(cache), kits=False, photos=False, extras=[])
+    assert not problems and [p.name for p in packs] == ['looks32']
+    record = json.loads((cache / patch.CHECKED).read_text())
+    assert record == {art._checked_key(path): True}
+    art.write_pack(path, 'looks32', {LOGO: gnf('utah 2')}, source='test', built='2026-10-19')   # a new download
+    os.utime(path, ns=(1, 1))
+    patch.art_packs(str(cache), kits=False, photos=False, extras=[])
+    assert json.loads((cache / patch.CHECKED).read_text()) == {art._checked_key(path): True}   # the old key gone

@@ -272,6 +272,19 @@ class Table:
         v = (v & ~mask) | (stored << f.bit)
         self.data[start:start + n] = v.to_bytes(n, 'little')
 
+    def column(self, name):
+        """[value of field `name` for each record], the same as [get(r, name) for r in range(count)] in one pass:
+        the header, the field and the record length are read once, and only the bytes the field sits in are
+        unpacked (a whole-table scan with get() re-reads them per row)."""
+        f = self._field(name)
+        count, n = self.count, self.record_length
+        if f.is_huff or f.is_string:
+            return [self.get(r, name) for r in range(count)]
+        b0, b1 = f.bit // 8, (f.bit + f.depth + 7) // 8
+        shift, mask, low = f.bit - 8 * b0, (1 << f.depth) - 1, f.low
+        view, fb = memoryview(self.data), int.from_bytes
+        return [((fb(view[o + b0:o + b1], 'little') >> shift) & mask) + low for o in range(0, count * n, n)]
+
     def row(self, row):
         """All fields of one record as a dict (field name -> value)."""
         start, n = self._rec(row)

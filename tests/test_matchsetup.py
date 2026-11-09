@@ -64,13 +64,17 @@ def _snapshot(w):
 
 def test_match_patch_carries_the_host_netplay_bytes_and_my_local_blocks():
     host = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
-    mine = xmlpatch.with_res1440(xmlpatch.build('ot.example.org', 'https://10.0.0.2/'), True)
+    mine = xmlpatch.with_resolution(xmlpatch.build('ot.example.org', 'https://10.0.0.2/'), 1440)
     r = MS.recipe(host)
     text = MS.match_xml(r, mine)
     assert xmlpatch.netplay_fingerprint(text) == xmlpatch.netplay_fingerprint(host)
     assert xmlpatch.res1440(text)                                   # my picture size
     assert xmlpatch.targets(text)['redirector'] == 'ot.example.org'   # my server name
     assert not xmlpatch.res1440(MS.match_xml(r, host))              # the host's 1080p stays the host's
+    low = MS.match_xml(MS.recipe(xmlpatch.with_resolution(host, 720)), xmlpatch.with_resolution(host, 720))
+    assert xmlpatch.resolution(low) == 720                          # 720p is a picture size too: local, carried
+    assert xmlpatch.netplay_fingerprint(low) == xmlpatch.netplay_fingerprint(host)
+    assert xmlpatch.resolution(MS.match_xml(MS.recipe(xmlpatch.with_resolution(host, 720)), host)) == 1080
 
 
 def test_recipe_check_refuses_what_does_not_read():
@@ -229,3 +233,52 @@ def test_app_start_puts_a_left_setup_back_once_shadps4_closed(world):
     got = MS.restore_when_closed(running=lambda: seq.pop(0), sleep=slept.append, every=3)
     assert got == 'done' and slept == [3, 3] and _snapshot(w) == before and MS.tag() is None
     assert MS.restore_when_closed(running=w['off']) == 'none'
+
+
+def test_a_second_restore_waits_for_the_first_and_the_players_folder_comes_back_once(world, monkeypatch):
+    """The app-start thread and the Multiplayer tab restore at once: the second waits on the lock, then has nothing to
+    do (unlocked, it renamed the player's own folder to -mods.match-old)."""
+    import threading
+    w = world
+    before = _snapshot(w)
+    MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'])
+    real_rename, second, got = os.rename, [], {}
+
+    def rename(a, b):
+        if not second and a == w['mods']:          # the first restore takes the view out of the way
+            t = threading.Thread(target=lambda: got.update(b=MS.restore(running=w['off'])))
+            second.append(t)
+            t.start()
+            t.join(0.3)
+            got['waited'] = t.is_alive()
+        real_rename(a, b)
+    monkeypatch.setattr(os, 'rename', rename)
+    got['a'] = MS.restore(running=w['off'])
+    second[0].join(5)
+    monkeypatch.setattr(os, 'rename', real_rename)
+    assert got == {'waited': True, 'a': 'done', 'b': 'none'}
+    assert _snapshot(w) == before and not os.path.exists(w['mods'] + MS.TRASH_SUFFIX)
+
+
+def test_a_restore_for_one_setup_leaves_a_newer_one_in_place(world):
+    """The app-start thread saw the setup a crash left; a lobby start meanwhile made a new one: that one stays until
+    its own start puts it back."""
+    w = world
+    before = _snapshot(w)
+    MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'], tag='m1')
+    seen = MS.identity()
+    MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'], tag='m2')
+    assert MS.restore(running=w['off'], only=seen) == 'none'
+    assert MS.tag() == 'm2' and os.path.isfile(os.path.join(w['mods'], MS.MARKER))
+    assert MS.restore_when_closed(running=w['off']) == 'done'
+    assert _snapshot(w) == before
+
+
+def test_the_match_view_layers_keep_the_text_file_the_patch_used(monkeypatch):
+    calls = []
+    monkeypatch.setattr(overlay, 'apply', lambda gd, layers, **kw: calls.append((tuple(layers), kw)))
+    monkeypatch.setattr(overlay, 'status', lambda gd, **kw: {'layers': {'text': {'file': 'eng_gb'}, 'names': {}}})
+    MS._add_layers('game', ['names', 'text', 'menus'])
+    monkeypatch.setattr(overlay, 'status', lambda gd, **kw: {'layers': {'league': {}}})
+    MS._add_layers('game', ['league', 'menus'])
+    assert calls == [(('names', 'text', 'menus'), {'lang': 'eng_gb'}), (('league', 'menus'), {})]

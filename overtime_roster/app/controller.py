@@ -13,7 +13,8 @@ import threading
 
 from overtime_core import calendar, overlay, rosterupdate as U, teams as T
 
-from . import editors_controller, gamesetup, install, jobs, labels as L, patch, paths, registry, settings, sources, update
+from . import (editors_controller, gamesetup, install, jobs, labels as L, patch, paths, registry, savegame, settings,
+               sources, update)
 
 # beta1's slice names (pushed as before: changed() turns them into the new slices that show the same things)
 OLD_SLICES = ('source', 'editor', 'lines', 'save', 'update', 'strategy', 'calendar', 'patch', 'status', 'faces',
@@ -114,6 +115,7 @@ class Controller:
         self.prefs = prefs
         self.game_dir = game_dir or prefs.get('game_dir') or paths.default_game_dir()
         self.save_dir = save_dir or prefs.get('save_dir') or paths.default_save_dir(gamesetup.use_game(self.game_dir))
+        savegame.recover_swaps(self.save_dir)    # a roster save swap a power cut stopped halfway: put back
         self.game = sources.GameData(self.game_dir)
         self.sources = []
         self.selected = None

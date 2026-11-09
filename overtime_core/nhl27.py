@@ -48,7 +48,7 @@ import json
 import os
 import struct
 
-from . import calendar, careerstats, tdb
+from . import calendar, careerstats, durable, tdb
 from .matching import Matcher, Person
 from .schema import parse_schema
 
@@ -307,7 +307,7 @@ def write_pack(pack, path):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path + '.part', 'wb') as f:
         f.write(gzip.compress(raw, mtime=0))
-    os.replace(path + '.part', path)
+    durable.replace(path + '.part', path)
     return hashlib.sha256(raw).hexdigest()
 
 

@@ -1,6 +1,6 @@
 """PS4 GNF textures of NHL 19 (CUSA11126 v1.60): header, GCN tiling (detile / retile), new textures shaped like a
-stock one. Header and tiling are stdlib; making BCn data from a picture and decoding to a picture use Pillow (dev
-tools only: the art layer only copies ready textures). Facts: docs/notes/gnf-format.md.
+stock one. Header and tiling are stdlib; making BCn data from a picture uses Pillow (resizing) and bcn (numpy: the
+blocks), decoding to a picture Pillow; both are imported inside those functions only. Facts: docs/notes/gnf-format.md.
 
 GNF (little-endian): "GNF " | u32 contents size (0xf8: data at 8 + that = 0x100) | u8 version 2 | u8 texture count |
 u8 log2 alignment | u8 0 | u32 file size | count x sce::Gnm::Texture (8 dwords, GCN T# image resource; dword 7 holds
@@ -13,10 +13,12 @@ T# fields (AMD Sea Islands SQ_IMG_RSRC_WORD0-7, as in shadPS4 video_core/amdgpu/
 
 Every GNF of the game uses tiling index 13 (thin 1D): 8x8-element micro tiles (an element is a 4x4 BCn block or one
 pixel), row by row across the padded pitch, the 64 elements of a tile in Morton order (x0 y0 x1 y1 x2 y2). Mips follow
-each other, largest first, each whole micro tiles. Pillow encodes BC1 / BC3 / BC5 but not BC7, so a texture made from
-a BC7 template (the UI art) is BC3: same 16 bytes per block, so the size and layout stay the template's.
+each other, largest first, each whole micro tiles. A texture made from a template keeps its format: bcn writes BC1, BC3,
+BC5 and BC7 (the UI art), Pillow's own BCn writer is not used (bcn's docstring says why).
 """
+import functools
 import struct
+from array import array
 
 MAGIC = b'GNF '
 DATA_FORMATS = {1: '8', 2: '16', 3: '8_8', 4: '32', 5: '16_16', 10: '8_8_8_8', 12: '16_16_16_16', 14: '32_32_32_32',
@@ -30,7 +32,8 @@ FMT_BPE = {'BC1': (8, 4), 'BC4': (8, 4), 'BC2': (16, 4), 'BC3': (16, 4), 'BC5': 
            '8_8_8_8': (4, 1), '8': (1, 1), '8_8': (2, 1), '16': (2, 1), '32': (4, 1), '5_6_5': (2, 1),
            '16_16_16_16': (8, 1)}
 BCN = {'BC1': 1, 'BC2': 2, 'BC3': 3, 'BC4': 4, 'BC5': 5, 'BC6': 6, 'BC7': 7}
-ENCODABLE = ('BC1', 'BC3', 'BC5')  # what Pillow can write
+ENCODABLE = ('BC1', 'BC3', 'BC5', 'BC7')  # what bcn writes
+ENCODER = '6'   # in the keys of the textures made on the player's PC: a new one makes them again (1: Pillow's)
 
 
 class GnfError(ValueError):
@@ -141,8 +144,46 @@ def _pairs(ew, eh, pitch_e):
     return out
 
 
+# the copy unit of the fast path: an element moves as `n` array items of `code` (bytes per element: (code, n))
+_UNITS = {1: ('B', 1), 2: ('H', 1), 4: ('I', 1), 8: ('Q', 1), 16: ('Q', 2)}
+
+
+@functools.lru_cache(maxsize=64)
+def _order(ew, eh, pitch_e, n, retile):
+    """The item gather order of the fast path, made once per mip shape (a jersey family is a few shapes over
+    thousands of textures). detile: for each linear element, its tiled one. retile: for each tiled element, its linear
+    one, or the zero element appended after the picture (ew * eh) for the pitch padding."""
+    pairs = _pairs(ew, eh, pitch_e)
+    if retile:
+        src = [ew * eh] * (_a(pitch_e or ew, 8) * _a(eh, 8))
+        for s, d in pairs:
+            src[s] = d
+    else:
+        src = [0] * (ew * eh)
+        for s, d in pairs:
+            src[d] = s
+    return array('I', [e * n + k for e in src for k in range(n)])
+
+
+def _gather(data, ew, eh, bpe, pitch_e, retile):
+    """detile / retile as one gather of whole elements, or None where the plain loop must run (an element size with
+    no copy unit, or data not exactly the length the shape asks for, which the loop handles as it always has)."""
+    unit = _UNITS.get(bpe)
+    want = ew * eh if retile else _a(pitch_e or ew, 8) * _a(eh, 8)
+    if unit is None or len(data) != want * bpe or array(unit[0]).itemsize * unit[1] != bpe:
+        return None
+    code, n = unit
+    src = memoryview(bytes(data) + (bytes(bpe) if retile else b'')).cast(code)
+    out = array(code)
+    out.extend(map(src.__getitem__, _order(ew, eh, pitch_e, n, retile)))
+    return out.tobytes()
+
+
 def detile_thin1d(data, ew, eh, bpe, pitch_e=None):
     """Tiled bytes -> linear rows of ew x eh elements of bpe bytes. pitch_e = the padded pitch in elements."""
+    fast = _gather(data, ew, eh, bpe, pitch_e, False)
+    if fast is not None:
+        return fast
     out = bytearray(ew * eh * bpe)
     for s, d in _pairs(ew, eh, pitch_e):
         out[d * bpe:d * bpe + bpe] = data[s * bpe:s * bpe + bpe]
@@ -150,6 +191,9 @@ def detile_thin1d(data, ew, eh, bpe, pitch_e=None):
 
 
 def retile_thin1d(lin, ew, eh, bpe, pitch_e=None):
+    fast = _gather(lin, ew, eh, bpe, pitch_e, True)
+    if fast is not None:
+        return fast
     out = bytearray(_a(pitch_e or ew, 8) * _a(eh, 8) * bpe)
     for d, s in _pairs(ew, eh, pitch_e):
         out[d * bpe:d * bpe + bpe] = lin[s * bpe:s * bpe + bpe]
@@ -218,8 +262,8 @@ def from_mips(template, mips, fmt=None, num=None):
 # --- pictures (Pillow) ------------------------------------------------------------------------------------------------
 
 def encode_fmt(t, fmt=None):
-    """The format a new texture like `t` gets: `fmt`, else t's own, BC7 (no Pillow encoder) -> BC3."""
-    fmt = fmt or ('BC3' if t.fmt == 'BC7' else t.fmt)
+    """The format a new texture like `t` gets: `fmt`, else t's own."""
+    fmt = fmt or t.fmt
     if fmt not in ENCODABLE:
         raise GnfError(f'cannot encode {fmt}')
     return fmt
@@ -227,8 +271,12 @@ def encode_fmt(t, fmt=None):
 
 def make(template, img, fmt=None, resample=None):
     """GNF bytes shaped like `template` from a Pillow picture: the picture is resized to the template's size, the
-    mips are box-filtered from it. `fmt` defaults to the template's (BC7 -> BC3); the number format stays."""
+    mips are scaled from it the way the game's own were (_mips, MIP_FILTER). `fmt` defaults to the template's; the
+    number format stays. A mip that does not fill its last blocks (2 x 2, 1 x 1) is widened by repeating its edge
+    pixels, so those blocks are fitted to its colours."""
+    import numpy as np
     from PIL import Image
+    from . import bcn
     t = Gnf(template).texture
     fmt = encode_fmt(t, fmt)
     nt = t.with_format(fmt)
@@ -236,13 +284,47 @@ def make(template, img, fmt=None, resample=None):
     img = img.convert(mode)
     if img.size != (t.width, t.height):
         img = img.resize((t.width, t.height), resample if resample is not None else Image.LANCZOS)
+    layout = mip_layout(nt)
+    levels = _mips(img, [(max(1, t.width >> lvl), max(1, t.height >> lvl)) for lvl, *_r in layout])
     mips = []
-    for lvl, ew, eh, _pe, _o, _n in mip_layout(nt):
-        m = img if lvl == 0 else img.resize((max(1, t.width >> lvl), max(1, t.height >> lvl)), Image.BOX)
-        canvas = Image.new(mode, (ew * 4, eh * 4))
-        canvas.paste(m, (0, 0))
-        mips.append(canvas.tobytes('bcn', BCN[fmt]))
+    for px, (_lvl, ew, eh, _pe, _o, _n) in zip(levels, layout):
+        px = np.pad(px, ((0, eh * 4 - px.shape[0]), (0, ew * 4 - px.shape[1]), (0, 0)), mode='edge')
+        mips.append(bcn.encode(fmt, px))
     return pack(template, nt, retile(nt, mips))
+
+
+# How the game's own textures were mipped, measured on NHL 19's Czech jerseys (jersey_nineties_* and jersey_rbk_wc_*
+# colour maps, 2048 BC1 sRGB): each mip of theirs is closest to its mip 0 scaled down with a bicubic filter in the
+# stored (sRGB) numbers (mip 1: 40.6 to 45.9 dB), then Lanczos, then box; scaled in linear light it is 3 to 7 dB
+# further off; from mip 0 or from the mip above cannot be told apart. So the mips here are made the same way.
+MIP_FILTER = 'BICUBIC'
+
+
+def _mips(img, sizes):
+    """Each mip of `img` (RGB / RGBA, already the first mip's size) as (h, w, C) uint8, the first as it is. The others
+    are scaled from it with MIP_FILTER in the stored numbers, as the game's own (see MIP_FILTER), in floats and weighted
+    by alpha (a clear pixel's colour does not bleed into its neighbours)."""
+    import numpy as np
+    from PIL import Image
+    first = np.asarray(img, np.uint8)
+    out = [first]
+    if len(sizes) == 1:
+        return out
+    a = first.astype(np.float32) / 255
+    alpha = a[..., 3:] if a.shape[2] == 4 else None
+    rgb = a[..., :3] if alpha is None else a[..., :3] * alpha
+    planes = [rgb[..., c] for c in range(3)] + ([alpha[..., 0]] if alpha is not None else [])
+    planes = [Image.fromarray(np.ascontiguousarray(p, np.float32), 'F') for p in planes]
+    method = getattr(Image.Resampling, MIP_FILTER)
+    for size in sizes[1:]:
+        small = np.stack([np.asarray(p.resize(size, method), np.float32) for p in planes], -1)
+        rgb = small[..., :3]
+        if alpha is not None:
+            al = np.clip(small[..., 3:], 0, 1)      # a bicubic filter overshoots at hard edges: kept in range
+            rgb = np.where(al > 0, rgb / np.maximum(al, 1e-12), 0)
+        mip = rgb if alpha is None else np.concatenate([rgb, al], -1)
+        out.append(np.clip(np.rint(mip * 255), 0, 255).astype(np.uint8))
+    return out
 
 
 def to_image(data, level=0):

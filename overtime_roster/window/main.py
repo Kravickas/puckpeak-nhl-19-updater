@@ -467,6 +467,18 @@ def selftest():
     except Exception as err:  # noqa: BLE001
         bad += 1
         lines.append(f'FAIL  certificates: {err}')
+    try:    # the textures made on this PC (overtime_core.bcn): numpy in the exe, a BC7 block reads back as written
+        import numpy as np
+        from PIL import Image
+        from overtime_core import bcn
+        px = np.zeros((8, 8, 4), np.uint8)
+        px[...] = (200, 30, 40, 255)
+        ok = bool((np.asarray(Image.frombytes('RGBA', (8, 8), bcn.encode('BC7', px), 'bcn', 7)) == px).all())
+        bad += not ok
+        lines.append(f'{"ok  " if ok else "FAIL"}  textures: numpy {np.__version__}, BC7 read back')
+    except Exception as err:  # noqa: BLE001
+        bad += 1
+        lines.append(f'FAIL  textures: {err}')
     try:
         _found, failed = _pack_lines(lines)
         bad += failed

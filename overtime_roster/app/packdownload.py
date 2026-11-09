@@ -29,7 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from overtime_core import art, clubart, kitcompose
+from overtime_core import art, clubart, durable, kitcompose
 
 from . import defaultdb, paths, selfupdate, sources
 from .patch import ART_ENV, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK, PEOPLE_PACK, PHOTOS_PACK
@@ -168,7 +168,7 @@ def _save(cache_dir, rec):
     path = os.path.join(cache_dir, RECORD)
     with open(path + '.tmp', 'w', encoding='utf-8') as f:
         json.dump(rec, f, indent=1, sort_keys=True)
-    os.replace(path + '.tmp', path)
+    durable.replace(path + '.tmp', path)
 
 
 class _Record:
@@ -499,7 +499,7 @@ def _get(name, release, cache_dir, report=None, cancelled=None, game_dir=None):
             raise PackError(WRONG_ROSTER)
     with _Record(cache_dir) as rec:
         try:
-            os.replace(part, target)
+            durable.replace(part, target)
         except OSError as err:          # Windows: the old pack is open (a patch reads it)
             _drop(part)
             raise PackError(f'The old pack is in use, so the new one was not put in. Try again in a moment. '

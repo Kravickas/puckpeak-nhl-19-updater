@@ -29,10 +29,11 @@ def test_targets_and_blocks():
     assert [b['name'] for b in blocks] == [
         'ProtoHttp: accept EAGAIN while waiting for the status code', 'Redirector host: ot.puckpeak.com',
         'QoS coordinator: skip TLS cert validation', 'Nucleus hosts: ot.puckpeak.com, 91.98.195.150',
-        '60 FPS replays (Kravickas)', 'Resolution 2560x1440 (Kravickas)', xmlpatch.THREES_REWARDS_TITLE,
-        'R1: cap check on the Franchise per-team list append', 'BAP32: Seattle in Be a Pro',
-        'E32: 32 teams in every mode']
-    assert all(b['enabled'] == (b['name'] != xmlpatch.RES1440_TITLE) and b['app_ver'] == '01.60' for b in blocks)
+        '60 FPS replays (Kravickas)', 'Resolution 2560x1440 (Kravickas)', 'Resolution 1280x720 (Kravickas)',
+        xmlpatch.THREES_REWARDS_TITLE, 'R1: cap check on the Franchise per-team list append',
+        'BAP32: Seattle in Be a Pro', 'E32: 32 teams in every mode']
+    off = (xmlpatch.RES1440_TITLE, xmlpatch.RES720_TITLE)
+    assert all(b['enabled'] == (b['name'] not in off) and b['app_ver'] == '01.60' for b in blocks)
 
 
 def test_feature_subset_keeps_order():
@@ -372,8 +373,10 @@ def test_replays60_matches_the_stock_eboot(game_dir):
     text = [h for h in (struct.unpack_from('<IIQQQQQQ', elf, phoff + k * 56) for k in range(phnum))
             if h[0] == 1 and h[1] & 1][0]
     _t, _fl, off, va, *_ = text
-    for name, stock in (('replays60', REPLAYS60_STOCK), ('res1440', RES1440_STOCK)):
+    res720 = {at: sha for at, sha in RES1440_STOCK.items() if at != 0x1736ea}   # res1440's in-place lines only
+    for name, stock in (('replays60', REPLAYS60_STOCK), ('res1440', RES1440_STOCK), ('res720', res720)):
         lines = {int(a, 16) - 0x400000: bytes.fromhex(v) for a, v in xmlpatch.FEATURES[name].lines}
+        assert set(stock) <= set(lines)
         caves = set(lines) - set(stock)
         assert caves == ({0x4a35077} if name == 'res1440' else set())
         for at, sha in stock.items():
@@ -398,24 +401,54 @@ def test_repoint_brings_an_earlier_versions_file_up_to_date():
             assert (xmlpatch.expansion32(new), xmlpatch.bap32(new)) == (xmlpatch.expansion32(old), xmlpatch.bap32(old))
 
 
-def test_res1440_is_written_off_and_switches():
+def test_the_resolution_blocks_are_written_off_and_switch_one_at_a_time():
     text = xmlpatch.build('localhost')
-    assert not xmlpatch.res1440(text)
-    on = xmlpatch.with_res1440(text, True)
-    assert xmlpatch.res1440(on) and xmlpatch.with_res1440(on, False) == text
-    block = next(b for b in xmlpatch.parse(on) if b['name'] == xmlpatch.RES1440_TITLE)
+    assert xmlpatch.resolution(text) == 1080 and not xmlpatch.res1440(text)
+    hi, lo = xmlpatch.with_resolution(text, 1440), xmlpatch.with_resolution(text, 720)
+    assert xmlpatch.resolution(hi) == 1440 and xmlpatch.res1440(hi) and xmlpatch.with_resolution(hi, 1080) == text
+    assert xmlpatch.resolution(lo) == 720 and not xmlpatch.res1440(lo) and xmlpatch.with_resolution(lo, 1080) == text
+    assert xmlpatch.with_resolution(hi, 720) == lo and xmlpatch.with_resolution(lo, 1440) == hi   # never both on
+    block = next(b for b in xmlpatch.parse(hi) if b['name'] == xmlpatch.RES1440_TITLE)
     assert block['lines'][0] == ('0x2D3BD70', 'B8000A0000') and len(block['lines']) == 7
-    old = xmlpatch.build('localhost', features=xmlpatch.EARLIER[0])
-    assert xmlpatch.with_res1440(old, False) == old
+    block = next(b for b in xmlpatch.parse(lo) if b['name'] == xmlpatch.RES720_TITLE)
+    assert block['lines'] == [('0x2D3BD70', 'B800050000'), ('0x2D3BD75', 'BA00050000'), ('0x2D3BD7A', 'B9D0020000'),
+                              ('0x2D3BD7F', 'BED0020000'), ('0x2D3BDAA', '41C7455800050000')]
+    both = hi.replace(f'Name="{xmlpatch.RES720_TITLE}" AppVer="01.60" AppElf="eboot.bin" isEnabled="false"',
+                      f'Name="{xmlpatch.RES720_TITLE}" AppVer="01.60" AppElf="eboot.bin" isEnabled="true"')
     with pytest.raises(xmlpatch.PatchError):
-        xmlpatch.with_res1440(old, True)
+        xmlpatch.resolution(both)
+    with pytest.raises(xmlpatch.PatchError):
+        xmlpatch.with_resolution(text, 900)
+    for old in (xmlpatch.build('localhost', features=f) for f in xmlpatch.EARLIER):
+        assert xmlpatch.with_resolution(old, 1080) == old
+        with pytest.raises(xmlpatch.PatchError):
+            xmlpatch.with_resolution(old, 720)                    # no 720p block before 0.80.1
+
+
+def test_the_720p_block_is_kravickas_lines_on_res1440s_addresses():
+    """1280 = 0x500, 720 = 0x2d0 in the same instructions res1440 writes 2560 / 1440 into; no memory line."""
+    hi, lo = (dict(xmlpatch.FEATURES[n].lines) for n in ('res1440', 'res720'))
+    assert set(lo) < set(hi) and set(hi) - set(lo) == {'0x5736EA', '0x4E35077'}
+    for addr, value in lo.items():
+        assert value == hi[addr].replace('000A0000', '00050000').replace('A0050000', 'D0020000'), addr
 
 
 def test_repoint_keeps_the_resolution():
-    on = xmlpatch.with_res1440(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/'), True)
-    moved = xmlpatch.repoint(on, '192.168.1.15')
-    assert xmlpatch.res1440(moved) and xmlpatch.targets(moved)['redirector'] == '192.168.1.15'
-    assert xmlpatch.repoint(moved, 'ot.puckpeak.com', 'https://91.98.195.150/') == on
+    base = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
+    for value in xmlpatch.RESOLUTIONS:
+        on = xmlpatch.with_resolution(base, value)
+        moved = xmlpatch.repoint(on, '192.168.1.15')
+        assert xmlpatch.resolution(moved) == value and xmlpatch.targets(moved)['redirector'] == '192.168.1.15'
+        assert xmlpatch.repoint(moved, 'ot.puckpeak.com', 'https://91.98.195.150/') == on
+
+
+def test_repoint_brings_a_0_70_7_or_0_80_0_file_up_with_its_resolution():
+    nucleus = 'https://91.98.195.150/'
+    for features, value in ((f, v) for f in xmlpatch.EARLIER[1:] for v in (1080, 1440)):
+        old = xmlpatch.with_resolution(xmlpatch.build('ot.puckpeak.com', nucleus, features), value)
+        assert xmlpatch.RES720_TITLE not in old
+        new = xmlpatch.repoint(old, 'ot.puckpeak.com', nucleus)
+        assert new == xmlpatch.with_resolution(xmlpatch.build('ot.puckpeak.com', nucleus), value)
 
 
 def test_netplay_fingerprint_counts_only_what_reaches_the_other_game():
@@ -423,13 +456,16 @@ def test_netplay_fingerprint_counts_only_what_reaches_the_other_game():
     base = xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/')
     fp = xmlpatch.netplay_fingerprint(base)
     assert len(fp) == 20
-    assert xmlpatch.netplay_fingerprint(xmlpatch.with_res1440(base, True)) == fp
+    for value in xmlpatch.RESOLUTIONS:                                              # the picture size: local
+        assert xmlpatch.netplay_fingerprint(xmlpatch.with_resolution(base, value)) == fp
     assert xmlpatch.netplay_fingerprint(xmlpatch.bap32_off(base)) == fp               # league switch off: Be a Pro only
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('91.98.195.150')) == fp         # the same server by its address
     assert xmlpatch.netplay_fingerprint(base.replace('\r\n', '\n')) == fp
     # the Threes unlock guard only changes a lookup that would crash: a game without it still plays one with it
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/',
                                                        features=xmlpatch.EARLIER[1])) == fp
+    assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/',
+                                                       features=xmlpatch.EARLIER[2])) == fp   # 0.80.0: no 720p block
     # the 32-team switch changes the online team list: that one counts, and so does any other game byte
     assert xmlpatch.netplay_fingerprint(xmlpatch.expansion32_off(base)) != fp
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/', features=xmlpatch.EARLIER[0])) != fp

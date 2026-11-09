@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 
-from overtime_core import gamefiles, overlay, sfo, xmlpatch
+from overtime_core import durable, gamefiles, overlay, sfo, xmlpatch
 
 from . import paths
 
@@ -79,7 +79,7 @@ def _write(path, data):
     tmp = path + '.overtime-tmp'
     with open(tmp, 'wb') as f:
         f.write(data)
-    os.replace(tmp, path)
+    durable.replace(tmp, path)
 
 
 def _refuse_while_running(running=None):
@@ -166,7 +166,7 @@ def _write_keeping(path, text):
         shutil.copy2(path, backup)
     with open(path + '.tmp', 'w', encoding='utf-8', newline='') as f:
         f.write(text)
-    os.replace(path + '.tmp', path)
+    durable.replace(path + '.tmp', path)
 
 
 def _read_launcher(data):

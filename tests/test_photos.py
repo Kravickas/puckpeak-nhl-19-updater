@@ -171,3 +171,20 @@ def test_update_counts_the_local_photos_only_as_the_patch_served_them(cache, mon
     assert patch.served_portraits('game', cache) == (set(), [])
     monkeypatch.setenv(patch.ART_ENV, str(tmp_path / 'elsewhere'))
     assert patch.local_people(cache) is None and patch.art_packs(cache)[0] == []
+
+
+def test_a_made_portrait_is_kept_and_made_again_only_when_its_inputs_change(tmp_path, monkeypatch):
+    raw = template(512, 340, 'BC7')
+    links = [link(ANN)]
+    files, _rows, _c = photos.supplement(links, [], tmp_path, raw, get=lambda url: headshot(), today=DAY)
+    made = sorted(p.name for p in tmp_path.glob('*.gnf'))
+    assert len(made) == 1 and gnf.Gnf(next(iter(files.values()))).texture.fmt == 'BC7'
+    calls = []
+    real = photos.to_gnf
+    monkeypatch.setattr(photos, 'to_gnf', lambda *a: calls.append(1) or real(*a))
+    again, _rows, _c = photos.supplement(links, [], tmp_path, raw, get=lambda url: headshot(), today=DAY)
+    assert again == files and not calls                                     # read back, not made again
+    monkeypatch.setattr(gnf, 'ENCODER', gnf.ENCODER + 'x')
+    photos.supplement(links, [], tmp_path, raw, get=lambda url: headshot(), today=DAY)
+    assert calls == [1] and sorted(p.name for p in tmp_path.glob('*.gnf')) != made   # a new encoder: made again
+    assert len(list(tmp_path.glob('*.gnf'))) == 1                                      # the old one gone

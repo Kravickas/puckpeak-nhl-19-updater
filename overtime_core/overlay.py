@@ -44,7 +44,7 @@ import struct
 import subprocess
 import sys
 
-from . import art as art_mod, eb, gamefiles, menus as menus_mod, textpack
+from . import art as art_mod, durable, eb, gamefiles, menus as menus_mod, textpack
 from .schema import parse_schema
 from .tdb import Database
 
@@ -343,6 +343,9 @@ def _load_state(game_dir):
             return json.load(f)
     except FileNotFoundError:
         return None
+    except (ValueError, UnicodeDecodeError) as err:     # written with durable.replace since 0.70.7: a disk fault
+        raise PatchError(f'{state_path(game_dir)} is damaged ({err}): delete the {overlay_dir(game_dir)} folder, '
+                         'then press Patch') from err
 
 
 def _rel(game_dir, path):
@@ -679,7 +682,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
         tmp = state_path(game_dir) + '.tmp'
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(st, f, indent=1)
-        os.replace(tmp, state_path(game_dir))
+        durable.replace(tmp, state_path(game_dir))     # on the disk before the next file is renamed in
         return st
 
     try:
@@ -691,15 +694,21 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
             tmps.append((tmp, target, rel))
             new = not os.path.exists(archive)
             if new:  # the art layer's own archive: only its entries
-                hashed[rel] = eb.new_archive(tmp, entries)     # hashed as it was written: no second read of it
+                # hashed as it was written; each file was checked against its pack's sha256 as it was read for it.
+                # Its table is checked here (every entry, at its size); the bytes at the end (_verify_written)
+                hashed[rel] = eb.new_archive(tmp, entries, context=art_mod.reading)    # read on every core
+                with eb.EbArchive(tmp) as arc:
+                    for entry, data in entries.items():
+                        if arc.entries.get(entry.lower(), (0, -1))[1] != len(data):
+                            raise PatchError(f'{rel}: {entry} is not in the written archive at its size')
             else:
                 _base_copy(archive, tmp)
                 for entry, data in entries.items():
                     eb.append_entry(tmp, entry, data)
-            with eb.EbArchive(tmp) as arc:
-                for entry, data in entries.items():
-                    if arc.read(entry) != data:
-                        raise PatchError(f'{rel}: {entry} did not read back')
+                with eb.EbArchive(tmp) as arc:      # a few small files: read back at once
+                    for entry, data in entries.items():
+                        if arc.read(entry) != data:
+                            raise PatchError(f'{rel}: {entry} did not read back')
             if new:
                 written[rel] = {'new': True, 'entries': sorted(entries), 'size': os.path.getsize(tmp)}
             else:
@@ -718,7 +727,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
                 written[rel]['backup'] = True
             ours[rel] = dict(written[rel])
             save(ours, partial)
-            os.replace(tmp, target)
+            durable.replace(tmp, target)    # its data on the disk before the state below lists its hash
             written[rel]['sha256'] = ours[rel]['sha256'] = hashed.get(rel) or _sha256(target)
             save(ours, partial)
     except art_mod.ArtError as err:     # a pack changed after it was read (art.Stored)
@@ -739,11 +748,34 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
                 save(ours, dict(info, partial=True))
     if edits:
         state = save(written, info)
+        _verify_written(game_dir, written, hashed, ours, save, info)
     else:
         state = {'version': VERSION, 'applied': datetime.datetime.now().isoformat(timespec='seconds'),
                  'game_dir': os.path.abspath(game_dir), 'layers': info, 'files': written}
         _forget(game_dir)
     return state
+
+
+def _verify_written(game_dir, written, hashed, ours, save, info):
+    """The end of a Patch: every new archive read back from disk whole and its sha256 compared with the one taken as it
+    was written (the bytes shadPS4 will read, through the same file cache). A file that does not match is removed with
+    its record, so the next Patch writes it again from the packs (they stay in the cache), and the Patch fails saying
+    so. Several files are read at once (workers.ordered)."""
+    from . import workers
+    jobs = ((rel, (_target(game_dir, rel),)) for rel in sorted(hashed) if rel in written)
+    bad = [rel for rel, sha, _err in workers.ordered(jobs, _sha256, ()) if sha != hashed[rel]]
+    if not bad:
+        return
+    for rel in bad:
+        try:
+            os.remove(_target(game_dir, rel))
+        except OSError:
+            pass
+        written.pop(rel, None)
+        ours.pop(rel, None)
+    save(written, dict(info, partial=True))
+    raise PatchError(f'{", ".join(bad)} did not read back as written (disk or memory error?): removed. '
+                     'Press Patch again to write it again.')
 
 
 def _backup(game_dir, rel):
@@ -830,7 +862,7 @@ def set_menus(game_dir, launch=None, running=None):
                     if arc.read(entry) != data:
                         raise PatchError(f'{rel}: {entry} did not read back')
             st = os.stat(archive)
-            os.replace(tmp, target)
+            durable.replace(tmp, target)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -841,7 +873,7 @@ def set_menus(game_dir, launch=None, running=None):
     tmp = state_path(game_dir) + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(state, f, indent=1)
-    os.replace(tmp, state_path(game_dir))
+    durable.replace(tmp, state_path(game_dir))
     return state
 
 

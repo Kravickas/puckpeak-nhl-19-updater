@@ -1048,8 +1048,8 @@ class MatchRig(Rig):
         monkeypatch.setattr(onlineemu, 'ensure', lambda cache, want=None, progress=None:
                             (self.events.append(('ensure', want)) or 'C:/online/shadPS4.exe', 'f' * 64))
         monkeypatch.setattr(matchsetup, 'apply', self.apply)
-        monkeypatch.setattr(matchsetup, 'restore', lambda running=None, log=None: self.events.append(('restore',))
-                            or 'done')
+        monkeypatch.setattr(matchsetup, 'restore', lambda running=None, log=None, only=None:
+                            self.events.append(('restore',)) or 'done')
         monkeypatch.setattr(matchsetup, 'tag', lambda: self.tag)
         monkeypatch.setattr(overlay, 'status', lambda gd, **kw: {'layers': {}})
 

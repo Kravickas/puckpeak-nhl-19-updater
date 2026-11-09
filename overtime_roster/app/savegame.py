@@ -22,7 +22,7 @@ import struct
 import time
 from dataclasses import dataclass
 
-from overtime_core import lz4f, savefile, sfo
+from overtime_core import durable, lz4f, savefile, sfo
 
 FILE_INFO = b'{\n"IsBackup":false\n}'
 VER_PAYLOAD = struct.pack('<d', 45.0) + b'1.60'.ljust(64, b'\0')
@@ -74,9 +74,10 @@ def meta_json(meta):
     return ('{\n' + body + '\n}').encode('utf-8')
 
 
-def read(folder):
-    """A roster save folder (any slot whose own file is a packed t3db)."""
-    name = os.path.basename(os.path.normpath(folder))
+def read(folder, name=None):
+    """A roster save folder (any slot whose own file is a packed t3db). `name`: the slot's name when the folder is
+    not named after it yet (a copy being written)."""
+    name = name or os.path.basename(os.path.normpath(folder))
     entries = savefile.read_folder(folder)
     by = {e.name: e for e in entries}
     slot = by.get(name)
@@ -193,8 +194,36 @@ def slot_names():
 
 
 def used_slots(save_dir):
-    """The custom roster folders the game lists that exist in `save_dir`, in slot order."""
+    """The custom roster folders the game lists that exist in `save_dir`, in slot order (a swap a power cut stopped
+    is put back first: recover_swaps)."""
+    recover_swaps(save_dir)
     return [n for n in slot_names() if os.path.isdir(os.path.join(save_dir, n))]
+
+
+_ASIDE = re.compile(r'^\.overtime-old-(.+)-(\d+)$')
+
+
+def recover_swaps(save_dir):
+    """Put back a save a swap moved aside (write_new_folder, repair_trailer) when the power went between its two
+    renames: `.overtime-old-<name>-<pid>` whose <name> is missing becomes <name> again. Only another run's (its pid is
+    not this process's: this one may be between the renames right now). Never raises: the names put back."""
+    back = []
+    try:
+        names = os.listdir(save_dir)
+    except OSError:
+        return back
+    for n in names:
+        m = _ASIDE.match(n)
+        if not m or int(m.group(2)) == os.getpid():
+            continue
+        final = os.path.join(save_dir, m.group(1))
+        if not os.path.exists(final):
+            try:
+                os.rename(os.path.join(save_dir, n), final)
+                back.append(m.group(1))
+            except OSError:
+                pass
+    return back
 
 
 def next_free_name(save_dir, prefix=CUSTOM):
@@ -283,6 +312,7 @@ def write_new_folder(save_dir, name, index, data, sfo_raw, icon=None, labels=Non
         if icon:
             with open(os.path.join(tmp, 'sce_sys', 'icon0.png'), 'wb') as f:
                 f.write(icon)
+        durable.flush_tree(tmp)     # whole on the disk before it takes the slot's name (a power cut: old or new)
         if replace:
             aside = os.path.join(save_dir, f'.overtime-old-{name}-{os.getpid()}')
             os.rename(final, aside)
@@ -332,20 +362,38 @@ def zero_trailers(save_dir):
 
 
 def repair_trailer(folder, template=None):
-    """Give a roster save with trailer word 0 the word of `template` (see trailer_for), in place: the same database,
-    metadata, slot and param.sfo. Both files are written beside the old ones first. Back the save folder up before."""
+    """Give a roster save with trailer word 0 the word of `template` (see trailer_for): the same database, metadata,
+    slot and param.sfo. The folder is copied with the new INDEX and DATA, put on the disk, then swapped in whole, so
+    INDEX and DATA always belong together (a power cut: the old folder, or the new one; recover_swaps puts the old
+    one back if it came between the renames). Back the save folder up before."""
     rs = read(folder)
     ver = next((e.payload for e in rs.entries if e.name == '__SaveloadVer'), CUSTOM_VER_PAYLOAD)
     index, data = build_container(rs.name, rs.db_bytes, rs.meta, template, ver)
     check_container(rs.name, index, data, rs.db_bytes)
-    files = (('INDEX', index), ('DATA', data))
-    for rel, payload in files:
-        with open(os.path.join(folder, rel + '.new'), 'wb') as f:
-            f.write(payload)
-    for rel, _ in files:
-        os.replace(os.path.join(folder, rel + '.new'), os.path.join(folder, rel))
-    if read(folder).db_bytes != rs.db_bytes:
-        raise SaveError(f'{rs.name} does not read back the same after the repair')
+    folder = os.path.normpath(folder)
+    save_dir, name = os.path.split(folder)
+    tmp = os.path.join(save_dir, f'.overtime-tmp-{name}-{os.getpid()}')
+    aside = os.path.join(save_dir, f'.overtime-old-{name}-{os.getpid()}')
+    if os.path.exists(tmp):
+        shutil.rmtree(tmp)
+    try:
+        shutil.copytree(folder, tmp)
+        for rel, payload in (('INDEX', index), ('DATA', data)):
+            with open(os.path.join(tmp, rel), 'wb') as f:
+                f.write(payload)
+        if read(tmp, name).db_bytes != rs.db_bytes:
+            raise SaveError(f'{rs.name} does not read back the same after the repair')
+        durable.flush_tree(tmp)
+        os.rename(folder, aside)
+        try:
+            os.rename(tmp, folder)
+        except OSError:
+            os.rename(aside, folder)
+            raise
+        shutil.rmtree(aside, ignore_errors=True)    # the backup made before holds it
+    finally:
+        if os.path.exists(tmp):
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def backup(save_dir, dest):

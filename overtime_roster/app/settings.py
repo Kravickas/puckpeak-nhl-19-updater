@@ -1,6 +1,8 @@
 """The app's remembered choices (settings.json in %APPDATA%\\OvertimeRoster)."""
 import json
 
+from overtime_core import durable
+
 from . import paths
 
 FILE = 'settings.json'
@@ -17,9 +19,11 @@ def load():
 
 def save(values):
     """False when the file could not be written."""
+    path = paths.app_dir(FILE)
     try:
-        with open(paths.app_dir(FILE), 'w', encoding='utf-8') as f:
+        with open(path + '.tmp', 'w', encoding='utf-8') as f:     # whole or not at all, even on a power cut
             json.dump(values, f, indent=1)
+        durable.replace(path + '.tmp', path)
         return True
     except OSError:
         return False

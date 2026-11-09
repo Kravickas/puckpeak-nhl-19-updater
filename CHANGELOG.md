@@ -2,6 +2,79 @@
 
 What changed in each version, for players.
 
+## 0.80.1 (2026-11-08)
+
+### Added
+
+- **720p.** The Resolution choice (Boost performance card) has 720p next to 1080p and 1440p: Kravickas's
+  "Resolution 1280x720 (16:9)" patch, for a weaker GPU. It renders below the game's own 1600x900 size, so it needs no
+  memory patch and no Additional DMem (your own value stays). Built into the app like 1440p, nothing to download;
+  a patched game takes it at its next start, no Patch needed.
+- **Setup, Folders: Downloads and cache.** Where the downloaded packs and the files made on this PC (jerseys, club
+  logos, photos, several GB with every pack) go, a folder like the others: Change... moves them to a folder you pick,
+  for example on the drive NHL 19 is on, so nothing big stays on C:. Auto moves them back. On another drive every file
+  is copied and checked first, the program switches to the new folder only once all are there, and only then removes
+  the old ones; a copy that fails changes nothing. A folder inside NHL 19, its update or mods, shadPS4's data or the
+  saves is refused. When the drive of the folder you picked is not there, the program uses its own folder until it is
+  back.
+- **Setup is wider on the left** (as the Game patch tab), the rosters on the right take less room. **Each folder is
+  one line in a tile** like the Update tab's switches: its bar green when the folder is there and good (found or
+  yours), red when it is not; the paths line up.
+
+### Fixed
+
+- **Sharper jerseys, club logos and photos made on this PC.** They were compressed with Pillow's own BCn writer, which
+  picks a block's two colours badly, never gives BC3 alpha its own ends and cannot write BC7. A new encoder (numpy,
+  in the exe) does it properly, checked against two decoders. Every texture keeps the game's own size, format, mips and
+  header (checked byte for byte on the game's Czech jerseys). How close a made texture is to its picture (100 % =
+  identical, from the average difference of every colour value), and how much smaller that difference got, measured on
+  the national team pack (10 of each kind, at the game's sizes):
+  - 3D jerseys 98.7 % to 99.8 % (the difference 84 % smaller), socks 98.6 % to 99.9 % (93 % smaller), the numbers
+    99.2 % to 99.9 % (85 % smaller);
+  - UI jerseys, logos and photos (the game's BC7 art) stay BC7 instead of turning into BC3: UI jerseys 99.7 % to 99.8 %
+    (45 % smaller), a photo 98.9 % to 99.7 % (73 % smaller), a logo with soft edges 98.9 % to 99.6 % (61 % smaller);
+  - the Czech chest logo on the game's own jersey textures 98.2 % to 99.5 % (home, 71 % smaller), 98.8 % to 99.4 %
+    (away, 48 % smaller): no stair steps, specks or pink white;
+  - a block of one colour (three quarters of a jersey) gets the best colour pair there is, from a table.
+- **Mips made like the game's own.** Measured on NHL 19's own Czech jerseys, their mips are their full size scaled
+  down with a bicubic filter in the stored colour numbers; the made ones were box-filtered, which is softer. The mips
+  (what shows a few metres away: the screenshot's chest logo is mip 2) are now made that way, weighted by alpha, and
+  the smallest ones are no longer darkened by black padding.
+- The textures made before are made again once, at the first Update or Patch that makes them.
+- **Nothing breaks when the power goes.** Every file the program writes now reaches the disk before it takes the old
+  one's name: the patch files and their record, roster saves, settings, your edits, shadPS4's and QtLauncher's files,
+  the downloads, the jerseys, club logos and photos made on this PC, the record of the packs checked, and the program
+  itself when it updates. Before, a power cut right after a write could leave a file of the right size full of zeros,
+  which Patch's quick check took as intact.
+  - Settings were written in place: a cut while saving them lost them. Now whole or not at all.
+  - Repairing a roster save swaps the whole folder, so its two files always belong together; a swap the power stopped
+    halfway is put back at the next start.
+  - A damaged patch record now says what to do instead of stopping the Game patch tab.
+
+### Changed
+
+- **Patch reads the art once, then checks it at the end.** It used to unpack every texture of every art pack three
+  times: a full check before writing, again to write it, and once more from the written archive. Now a pack zip
+  checked in full once is not unpacked again until it changes (size or time; the record is `packs_checked.json` in
+  the cache): each texture is unpacked once, checked against its pack's sha256 as it is written. At the end of
+  Patch every written archive is read back whole and its sha256 compared with the one taken while writing; one that
+  does not match is removed and Patch says so (press Patch again: the packs are still in the cache). 27 % less
+  time on 560 MB of test art from the second Patch on (2.98 to 2.17 s, warm disk here).
+- **Every core.** Jerseys, club logos and photos are made on every core the program may use. The game's archives and
+  the packs are read on one thread and the packs are written in order, so they are byte for byte the ones one thread
+  makes (checked with 1 and 6 workers). A texture made on its own splits its blocks over the cores instead.
+- Making a texture takes longer: a jersey colour map (2048 x 2048, its mips included) about 2.7 s instead of 0.5 s
+  on one core, a 512 x 340 BC7 photo about 1.4 s. A photo is made once and kept in the photo cache, next to its
+  picture.
+- **The art archive is read on every core while Patch writes it**: each texture is unpacked and checked against its
+  pack on its own thread, written in order (byte for byte the archive one core writes). The game's normal and colour
+  maps the jerseys cover are unpacked on the workers too, not on the one thread that reads the archives.
+- The exe is about 10 MB larger (numpy).
+- **A faster Update**: each team's look at the roster reads a table's column in one pass instead of one field at a
+  time. Measured on tables of 11,000 players: 57 to 21 ms and 37 to 12 ms per team. The roster it writes is the same.
+- **Texture blocks put in the PS4's order in one pass**, in an order worked out once per texture size (a 1024 x 1024
+  BC3 texture with its mips: 45 to 14 ms to retile). The bytes are the same (checked on 3360 shapes).
+
 ## 0.80.0 (2026-11-08)
 
 ### Added

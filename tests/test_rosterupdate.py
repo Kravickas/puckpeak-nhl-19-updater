@@ -53,6 +53,9 @@ class Rows:
     def get(self, i, name):
         return self.rows_[i][name]
 
+    def column(self, name):
+        return [r[name] for r in self.rows_]
+
 
 def test_main_record_is_the_clubs():
     # game_id: (bio team, [(playerindex, roster table or 'FA' or None, team)])
