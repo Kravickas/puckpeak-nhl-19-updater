@@ -2,27 +2,20 @@
 
 What changed in each version, for players.
 
-## 0.80.1 (2026-11-08)
+## 0.82.0 (not released yet)
 
-### Added
-
-- **720p.** The Resolution choice (Boost performance card) has 720p next to 1080p and 1440p: Kravickas's
-  "Resolution 1280x720 (16:9)" patch, for a weaker GPU. It renders below the game's own 1600x900 size, so it needs no
-  memory patch and no Additional DMem (your own value stays). Built into the app like 1440p, nothing to download;
-  a patched game takes it at its next start, no Patch needed.
-- **Setup, Folders: Downloads and cache.** Where the downloaded packs and the files made on this PC (jerseys, club
-  logos, photos, several GB with every pack) go, a folder like the others: Change... moves them to a folder you pick,
-  for example on the drive NHL 19 is on, so nothing big stays on C:. Auto moves them back. On another drive every file
-  is copied and checked first, the program switches to the new folder only once all are there, and only then removes
-  the old ones; a copy that fails changes nothing. A folder inside NHL 19, its update or mods, shadPS4's data or the
-  saves is refused. When the drive of the folder you picked is not there, the program uses its own folder until it is
-  back.
-- **Setup is wider on the left** (as the Game patch tab), the rosters on the right take less room. **Each folder is
-  one line in a tile** like the Update tab's switches: its bar green when the folder is there and good (found or
-  yours), red when it is not; the paths line up.
+0.80.1 and 0.81.0 were never published; what they had is in here. The texture encoder, 720p, the movable downloads
+folder, the power-cut-safe writes and the faster Patch are Kravickas's work (pull request #1).
 
 ### Fixed
 
+- **Intel and AMD PCs play each other online without drifting apart.** Two instructions the game uses in its movement
+  math give slightly different answers on Intel and AMD CPUs, so the two games drifted apart (a goal not counted, then
+  LOST CONNECTION). The game patch now has a **Cross-CPU fix** that makes those answers the same on every CPU, and on
+  an Intel PC the app also turns on shadPS4's AMD math (its `redzone_patches` setting) when it installs the patch, so
+  online play outside a lobby has it too. A 10th gen Intel against a Ryzen 7 9800X3D stayed in step for the whole
+  test match.
+- The app finds your saves when shadPS4's first player is not user 1000.
 - **Sharper jerseys, club logos and photos made on this PC.** They were compressed with Pillow's own BCn writer, which
   picks a block's two colours badly, never gives BC3 alpha its own ends and cannot write BC7. A new encoder (numpy,
   in the exe) does it properly, checked against two decoders. Every texture keeps the game's own size, format, mips and
@@ -50,9 +43,52 @@ What changed in each version, for players.
   - Repairing a roster save swaps the whole folder, so its two files always belong together; a swap the power stopped
     halfway is put back at the next start.
   - A damaged patch record now says what to do instead of stopping the Game patch tab.
+- Two match setups can no longer run over each other (a lobby match starting while the app still puts the last one
+  back): each one is put back only by what made it.
+- A lobby match keeps the text language your patch was made with (it fell back to English).
+- Downloads and cache: a picked folder that already holds other files gets a folder of its own inside it, and moving
+  away from such a folder leaves its other files where they are.
+
+### Added
+
+- The Game patch card's Online row checks the Cross-CPU fix after NHL 19 starts: "Cross-CPU: ready", or a red line
+  not to play online in that session (with the reason).
+- **3 min** in Period length, and **new lobbies start at 3-minute periods** (quick games). 4 to 20 minutes are still
+  there.
+- Each match game's log is kept (`%APPDATA%\OvertimeRoster\match\logs`, the newest 8), so a desync can be checked.
+- **Check my CPU** (Multiplayer → Advanced, the CPU row): it downloads a small test program
+  (`cpu-estimates.exe`; its source is `tools/cpu_estimates.py` in this repository), runs it for about a minute (two on
+  a CPU with two kinds of cores) and says whether your CPU gives the same answers as the tested AMD or Intel CPUs. It
+  runs only when you press it and sends nothing by itself; "Send the result..." asks first.
+- **Reports, off unless you turn them on.** After a crash, or a match the server saw end early, the app can send the
+  game's log so the problem can be found. It asks once after the update; Multiplayer → Advanced has the switch and a
+  "Send a report" button that asks every time. Folder paths, user and computer names, your Online ID, IP and e-mail
+  addresses are taken out of the log, and a password never goes. The Privacy list there says everything a report
+  holds. Reports are kept for 30 days.
+- **720p.** The Resolution choice (Boost performance card) has 720p next to 1080p and 1440p: Kravickas's
+  "Resolution 1280x720 (16:9)" patch, for a weaker GPU. It renders below the game's own 1600x900 size, so it needs no
+  memory patch and no Additional DMem (your own value stays). Built into the app like 1440p, nothing to download;
+  a patched game takes it at its next start, no Patch needed.
+- **Setup, Folders: Downloads and cache.** Where the downloaded packs and the files made on this PC (jerseys, club
+  logos, photos, several GB with every pack) go, a folder like the others: Change... moves them to a folder you pick,
+  for example on the drive NHL 19 is on, so nothing big stays on C:. Auto moves them back. On another drive every file
+  is copied and checked first, the program switches to the new folder only once all are there, and only then removes
+  the old ones; a copy that fails changes nothing. A folder inside NHL 19, its update or mods, shadPS4's data or the
+  saves is refused. When the drive of the folder you picked is not there, the program uses its own folder until it is
+  back.
+- **Setup is wider on the left** (as the Game patch tab), the rosters on the right take less room. **Each folder is
+  one line in a tile** like the Update tab's switches: its bar green when the folder is there and good (found or
+  yours), red when it is not; the paths line up.
 
 ### Changed
 
+- **Everyone needs 0.82.0.** An older app and 0.82.0 are never paired, because only one of the two games would have
+  the Cross-CPU fix. When one app is older, the lobby says who updates.
+- **Games meet only games set up like them.** The app gives the game an online version that stands for its patch and
+  shadPS4 build, so the server pairs only games that stay in step. Lobby matches always play on the same shadPS4 build
+  (the Boost one). If a game started from Game patch → Start runs another build or has no Cross-CPU fix, Start says so.
+- **The Boost and lobby shadPS4 build is the newest Kravickas NHL19-Build** (749170d, 2026-11-09): graphics, file and
+  save fixes since the last one. Boost players get it as an update; lobby matches use it.
 - **Patch reads the art once, then checks it at the end.** It used to unpack every texture of every art pack three
   times: a full check before writing, again to write it, and once more from the written archive. Now a pack zip
   checked in full once is not unpacked again until it changes (size or time; the record is `packs_checked.json` in
@@ -74,6 +110,12 @@ What changed in each version, for players.
   time. Measured on tables of 11,000 players: 57 to 21 ms and 37 to 12 ms per team. The roster it writes is the same.
 - **Texture blocks put in the PS4's order in one pass**, in an order worked out once per texture size (a 1024 x 1024
   BC3 texture with its mips: 45 to 14 ms to retile). The bytes are the same (checked on 3360 shapes).
+
+### Known
+
+- The Cross-CPU fix is made for the v1.60 `eboot.bin` (CUSA11126 and CUSA11116 have the same one). A game with
+  another `eboot.bin` gets the patch without it and meets only games like its own; the Game patch card says so.
+- Intel 12th to 14th gen (performance and efficiency cores) is not measured yet.
 
 ## 0.80.0 (2026-11-08)
 

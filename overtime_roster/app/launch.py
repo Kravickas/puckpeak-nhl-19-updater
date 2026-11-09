@@ -16,7 +16,7 @@ import time
 
 from overtime_core import gamefiles, overlay
 
-from . import gamesetup, selfupdate
+from . import gamesetup, onlinetag, selfupdate
 
 
 class LaunchError(RuntimeError):
@@ -50,6 +50,10 @@ def start(emu_exe, game_dir, patch_file=None, running=None, popen=subprocess.Pop
         raise LaunchError(f'shadPS4 cannot use the data folder {gamesetup.emu_user_dir(emu_exe)}: it reads the "user" '
                           'folder inside the folder it starts from, or %APPDATA%\\shadPS4. Pick one of those in Setup, '
                           'Folders, shadPS4 data.')
+    try:        # the matchmaking tag of this very start: only games that stay in step meet (onlinetag.py)
+        onlinetag.apply(emu_exe, game_dir, patch_file, exe)
+    except onlinetag.TagError as err:
+        raise LaunchError(str(err)) from err
     flags = 0
     if sys.platform == 'win32':
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP

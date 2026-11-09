@@ -36,6 +36,11 @@ LOCAL_VERSION = 2                       # versions.json: a version added by hand
 PATCH_FOLDER, PATCH_FILE = 'Overtime', 'overtime.xml'
 NETWORK = {'connected_to_network': True, 'shad_net_enabled': True}  # custom_configs\CUSA11126.json, "General"
 DMEM_KEY, DMEM_1440 = 'extra_dmem_in_mbytes', 3500   # "General": what the 1440p block (xmlpatch res1440) needs
+# "General": shadPS4's static patching, which swaps Intel's rcpps/rsqrtps for its AMD tables; on Windows it runs only
+# with this per-game key on (off by default; docs/notes/cross-vendor-desync.md). install() turns it on where
+# amd_math_needed(), and an AMD PC keeps its own value.
+AMD_MATH_KEY = 'redzone_patches'
+WINDOWS = os.name == 'nt'
 # the ShadNet servers the game's "Network" section needs filled (live 2026-11-07: a tester's game-specific Network tab
 # was empty and the game stopped at SIGN IN REQUIRED until he typed them); the shared config.json's are used if set
 SERVERS = {'shadnet_server': 'srv.shadps4.net:31313', 'shadnet_webapi_server': 'http://srv.shadps4.net:31315'}
@@ -430,7 +435,7 @@ def _scandirs(root):
 def shadnet_users(user_dir):
     """The emulator's users as far as Overtime needs them: [{'user_id', 'name', 'shadnet', 'npid', 'password'}].
     Only these fields are read out of users.json ('password': whether one is filled in); e-mail, password and token
-    never leave it."""
+    are read only by report_secrets (to take them out of a report) and are never written elsewhere or sent."""
     return [_user_row(u) for u in _raw_users(user_dir) if isinstance(u, dict)]
 
 
@@ -446,6 +451,26 @@ def _raw_users(user_dir):
 def _user_row(u):
     return {'user_id': u.get('user_id'), 'name': u.get('user_name') or '', 'shadnet': bool(u.get('shadnet_enabled')),
             'npid': u.get('shadnet_npid') or '', 'password': bool(u.get('shadnet_password'))}
+
+
+_REPORT_SECRETS = (('shadnet_npid', '<npid>'), ('user_name', '<name>'), ('shadnet_email', '<email>'),
+                   ('shadnet_password', '<secret>'), ('shadnet_token', '<secret>'))
+
+
+def report_secrets(user_dir):
+    """What a report must never carry, out of users.json: [(value, placeholder)] for every user's Online ID, name,
+    e-mail, ShadNet password and token. Only crashreport.scrub reads it, to take them out of a log before it leaves the
+    PC. shadPS4's default user names ('shadPS4', ...) are left out: they name the emulator, not the player."""
+    out = []
+    for u in _raw_users(user_dir):
+        if not isinstance(u, dict):
+            continue
+        for key, placeholder in _REPORT_SECRETS:
+            value = u.get(key)
+            value = value.strip() if isinstance(value, str) else ''
+            if value and not (key == 'user_name' and value.casefold().startswith('shadps4')):
+                out.append((value, placeholder))
+    return out
 
 
 # ShadNet accounts: the app makes them through the site's own form endpoint (shadnet.register), the site is the
@@ -599,9 +624,14 @@ def shadnet_why(log):
             'Check again.')
 
 
-def save_dir(user_dir, user_id=1000):
+def save_dir(user_dir, user_id=None):
     """The game's save folder: in shadPS4's home folder, `home\\` in its data folder unless its settings move it
-    (Paths tab, "Home Folder Location": config.json General.home_dir; a tester keeps it on another drive)."""
+    (Paths tab, "Home Folder Location": config.json General.home_dir; a tester keeps it on another drive), under the
+    user NHL 19 plays as (users.json's player 1, the same one shadnet_player reads), 1000 when users.json names none.
+    A player 1 other than 1000 keeps its saves in its own home folder (Kravickas's PC, 2026-11-07)."""
+    if user_id is None:
+        one = _player_one(_raw_users(user_dir)) or {}
+        user_id = one.get('user_id') if isinstance(one.get('user_id'), int) else 1000
     try:
         with open(os.path.join(user_dir, 'config.json'), encoding='utf-8-sig') as f:
             home = ((json.load(f).get('General') or {}).get('home_dir') or '').strip()
@@ -775,14 +805,63 @@ CRLF, LF = chr(13) + chr(10), chr(10)
 
 
 _IDENTITY = {}
+VERSION_INIS = ('ww', 'na', 'eu')     # the game opens <region>_versioninfo.ini in this order and takes the first there
+_IDENTITY_TEXT = re.compile(r'[A-Za-z0-9._,+?-]{1,80}')   # what the lobby takes in an identity field (lobby._GAME_TEXT)
+
+
+VERSION_DIR = ('nhl', 'data', 'kettle', 'config')
+
+
+def version_ini(game_dir, mods=True):
+    """(region, path) of the `<region>_versioninfo.ini` the game reads: the first region of VERSION_INIS that has one,
+    the `-mods` overlay's file (with `mods`; onlinetag writes the matchmaking tag there) over the update's over the
+    base's. (None, None) when there is none."""
+    base, update = gamefiles.roots(game_dir)
+    roots = ((gamefiles.mods_dir(game_dir),) if mods else ()) + (update, base)
+    for region in VERSION_INIS:
+        for root in roots:
+            path = os.path.join(root, *VERSION_DIR, f'{region}_versioninfo.ini') if root else None
+            if path and os.path.isfile(path):
+                return region, path
+    return None, None
+
+
+def ini_value(text, name):
+    """The value of `name=` in an ini text (comment lines start with ';'), or None."""
+    for line in text.splitlines():
+        key, sep, value = line.partition('=')
+        if sep and not key.strip().startswith(';') and key.strip() == name:
+            return value.strip()
+    return None
+
+
+def online_version(game_dir, mods=True):
+    """(region, onlineVersion) of the game folder, read as the game does (version_ini): with `mods` the value the game
+    sends (the matchmaking tag, onlinetag.py), without it the game's own. onlineVersion is EA's key for which games
+    may meet (`NHL19_1.60` for CUSA11126 and CUSA11116 alike, docs/notes/crossplay.md); ('?', '?') when there is none
+    or it cannot be read."""
+    region, path = version_ini(game_dir, mods)
+    if path is None:
+        return '?', '?'
+    try:
+        value = ini_value(_read(path).decode('utf-8', 'replace'), 'onlineVersion')
+    except OSError:
+        return region, '?'
+    return region, value if value is not None and _IDENTITY_TEXT.fullmatch(value) else '?'
 
 
 def game_identity(game_dir):
     """What the lobby logs and compares about this install besides the patch (overtime_server/lobby.py _game):
     {'title': CUSA11126 | CUSA11116, 'data': a short hash of the disc maps (which release's archives these are),
-    'layers': the data patch layers on}. Live 2026-11-08: pairs desynced with installs nobody could see."""
+    'layers': the data patch layers on, 'region' / 'online': online_version}. Live 2026-11-08: pairs desynced with
+    installs nobody could see. A server older than the crossplay change (2026-11-09) refuses the 'region' / 'online'
+    keys (422 at Ready): deploy it before an app that sends them."""
     info = read_game(game_dir)
     out = {'title': info.get('title_id') or '?'}
+    try:
+        out['region'], out['online'] = online_version(game_dir)
+    except Exception:   # a look must never stop Ready
+        out['region'], out['online'] = '?', '?'
     base, update = gamefiles.roots(game_dir)
     names = [os.path.join(update or base, n) for n in ('sce_discmap.plt', 'sce_discmap_patch.plt')]
     try:
@@ -800,6 +879,89 @@ def game_identity(game_dir):
     except Exception:   # a look must never stop Ready
         out['layers'] = '?'
     return out
+
+
+_VENDOR = []
+_VENDOR_IDS = (('genuineintel', 'intel'), ('authenticamd', 'amd'), ('hygongenuine', 'amd'))
+
+
+def vendor_of(text):
+    """'intel' | 'amd' | '?' from a CPU description: the CPUID vendor id when it is there ('..., GenuineIntel'), else
+    the family prefix ('Intel64 Family 6 ...', 'AMD64 Family 25 ...')."""
+    t = (text or '').lower()
+    for key, vendor in _VENDOR_IDS:
+        if key in t:
+            return vendor
+    return 'intel' if t.startswith('intel') else 'amd' if t.startswith('amd') else '?'
+
+
+def cpu_vendor():
+    """Who made this PC's CPU: 'intel' | 'amd' | '?'. shadPS4 runs the game's x86 as it is, and Intel's rcpps/rsqrtps
+    give other low bits than AMD's (a PS4 is AMD): an AMD and an Intel PC desync in lockstep play unless shadPS4 puts
+    its AMD tables in on Intel (docs/notes/cross-vendor-desync.md)."""
+    if not _VENDOR:
+        text = os.environ.get('PROCESSOR_IDENTIFIER', '')
+        if vendor_of(text) == '?' and sys.platform == 'win32':
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'HARDWARE\DESCRIPTION\System\CentralProcessor\0') as k:
+                    text = str(winreg.QueryValueEx(k, 'VendorIdentifier')[0])
+            except OSError:
+                pass
+        elif vendor_of(text) == '?':
+            try:
+                with open('/proc/cpuinfo', encoding='utf-8', errors='replace') as f:
+                    text = next((ln for ln in f if ln.startswith('vendor_id')), '')
+            except OSError:
+                pass
+        _VENDOR.append(vendor_of(text))
+    return _VENDOR[0]
+
+
+_CPU_NAME = []
+
+
+def cpu_name():
+    """This PC's CPU model as Windows names it (ProcessorNameString; /proc/cpuinfo 'model name' elsewhere), '' when
+    unknown. For the lobby log and reports: a 12th-14th gen Intel (hybrid cores) is told apart by its name."""
+    if not _CPU_NAME:
+        text = ''
+        try:
+            if sys.platform == 'win32':
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'HARDWARE\DESCRIPTION\System\CentralProcessor\0') as k:
+                    text = str(winreg.QueryValueEx(k, 'ProcessorNameString')[0])
+            else:
+                with open('/proc/cpuinfo', encoding='utf-8', errors='replace') as f:
+                    text = next((ln.split(':', 1)[1] for ln in f if ln.startswith('model name')), '')
+        except (OSError, StopIteration, IndexError):
+            pass
+        _CPU_NAME.append(' '.join(text.split()))
+    return _CPU_NAME[0]
+
+
+def cpu_tag(name=None):
+    """cpu_name() in the lobby's short-text alphabet (overtime_server/lobby.py _GAME_TEXT), at most 48 characters:
+    'Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz' -> 'Intel-Core-i5-10210U-CPU-1.60GHz'; '?' when unknown."""
+    text = re.sub(r'\((?:R|TM|tm)\)|@', ' ', cpu_name() if name is None else name)
+    return re.sub(r'[^A-Za-z0-9._,+-]+', '-', text).strip('-')[:48].strip('-') or '?'
+
+
+def amd_math_needed():
+    """True when shadPS4 must put its AMD math in for this PC (AMD_MATH_KEY): Windows on a CPU that is not AMD's (an
+    unknown maker too: the key changes nothing on AMD, and a wrong 'off' desyncs)."""
+    return WINDOWS and cpu_vendor() != 'amd'
+
+
+def amd_math_on(user_dir):
+    """True when the game's own config has the AMD math key as this PC needs it (always, where it is not needed)."""
+    if not amd_math_needed():
+        return True
+    try:
+        with open(custom_config_path(user_dir), encoding='utf-8-sig') as f:
+            return (json.load(f).get('General') or {}).get(AMD_MATH_KEY) is True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def emulator_identity(emu_exe):
@@ -948,7 +1110,10 @@ def install(emu_exe, xml_text, running=None):
         dmem_want = dmem_now if isinstance(dmem_now, int) and dmem_now >= DMEM_1440 else DMEM_1440
     else:                               # 1080p: the player's own value comes back
         dmem_want = kept[DMEM_KEY] if DMEM_KEY in kept else dmem_now
-    if not _both_on(cfg) or cfg_path in entries or dmem_want != dmem_now:
+    amd_now = general.get(AMD_MATH_KEY)
+    amd = amd_math_needed()             # Intel on Windows: on; else the player's own value (back, if we set it)
+    amd_want = True if amd else kept[AMD_MATH_KEY] if AMD_MATH_KEY in kept else amd_now
+    if not _both_on(cfg) or cfg_path in entries or dmem_want != dmem_now or amd_want != amd_now:
         previous = kept or {k: general.get(k) for k in NETWORK}
         if dmem_want != dmem_now and DMEM_KEY not in previous:
             previous[DMEM_KEY] = dmem_now
@@ -958,6 +1123,14 @@ def install(emu_exe, xml_text, running=None):
             general.pop(DMEM_KEY, None)
         else:
             general[DMEM_KEY] = dmem_want
+        if amd_want != amd_now and AMD_MATH_KEY not in previous:
+            previous[AMD_MATH_KEY] = amd_now
+        elif not amd:
+            previous.pop(AMD_MATH_KEY, None)
+        if amd_want is None:
+            general.pop(AMD_MATH_KEY, None)
+        else:
+            general[AMD_MATH_KEY] = amd_want
         previous_network = (entries.get(cfg_path) or {}).get('previous_network') or {
             k: section[k] for k in NETWORK if k in section}
         general.update(NETWORK)
@@ -1071,6 +1244,24 @@ def status(emu_exe=None):
 # ---- the clean game ---------------------------------------------------------------------------------------------
 
 HASHED_ALWAYS = ('eboot.bin', os.path.join('sce_sys', 'param.sfo'))
+
+
+_EBOOT_SHA = {}     # (path, size, mtime_ns) -> sha256: eboot.bin is ~60 MB, hashed once per change of the file
+
+
+def eboot_sha(game_dir):
+    """sha256 of the eboot.bin shadPS4 runs for `game_dir` (the update folder's when it has one), or None."""
+    if not game_dir:
+        return None
+    path = gamefiles.locate(game_dir, 'eboot.bin')
+    try:
+        st = os.stat(path)
+        key = (os.path.normcase(os.path.abspath(path)), st.st_size, st.st_mtime_ns)
+        if key not in _EBOOT_SHA:
+            _EBOOT_SHA[key] = _file_sha(path)
+    except OSError:
+        return None
+    return _EBOOT_SHA[key]
 
 
 def _file_sha(path, chunk=1 << 20, progress=None):

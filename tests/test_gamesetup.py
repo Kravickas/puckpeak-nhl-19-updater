@@ -570,6 +570,18 @@ def test_trash_moves_only_roster_saves(tmp_path, monkeypatch):
     assert (saves / 'RosterCustom4').is_dir()
 
 
+def test_save_dir_follows_player_one(tmp_path):
+    """Saves are where the user NHL 19 plays as keeps them: users.json's player 1, else 1000."""
+    import json
+    user = tmp_path / 'shadPS4'
+    user.mkdir()
+    assert gamesetup.save_dir(str(user)) == str(user / 'home' / '1000' / 'savedata' / gamesetup.active_title())
+    rows = [{'user_id': 1000, 'player_index': 2}, {'user_id': 1001, 'player_index': 1}]
+    (user / 'users.json').write_text(json.dumps({'Users': {'user': rows}}), encoding='utf-8')
+    assert gamesetup.save_dir(str(user)) == str(user / 'home' / '1001' / 'savedata' / gamesetup.active_title())
+    assert gamesetup.save_dir(str(user), 1000).startswith(str(user / 'home' / '1000'))
+
+
 def test_other_disc_cusa11116_is_the_same_game(world, monkeypatch):
     """CUSA11116 is read as NHL 19; its id names the save folder, the custom config and the save's param.sfo."""
     from overtime_roster.app import paths, savegame
@@ -587,6 +599,48 @@ def test_other_disc_cusa11116_is_the_same_game(world, monkeypatch):
     assert entries['TITLE_ID'] == 'CUSA11116'
     # a folder that is not NHL 19 changes nothing
     assert gamesetup.use_game(str(_game(world['tmp'] / 'Third', title_id='CUSA00001'))) == 'CUSA11116'
+
+
+def _versioninfo(game, region, online='NHL19_1.60'):
+    cfg = game / 'nhl' / 'data' / 'kettle' / 'config'
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / f'{region}_versioninfo.ini').write_text(
+        '; skuVersion is the game\'s current version\nskuVersion=1.60\n\n; onlineVersion is used to segregate users\n'
+        f'onlineVersion={online}\n')
+
+
+def test_online_version_reads_the_region_file_the_game_reads(tmp_path):
+    """docs/notes/crossplay.md: the game takes the first of ww_, na_, eu_versioninfo.ini; NA and EU say NHL19_1.60."""
+    na = _game(tmp_path / 'NA')
+    assert gamesetup.online_version(str(na)) == ('?', '?')
+    _versioninfo(na, 'na')
+    assert gamesetup.online_version(str(na)) == ('na', 'NHL19_1.60')
+    eu = _game(tmp_path / 'EU', title_id='CUSA11116')
+    _versioninfo(eu, 'eu')
+    assert gamesetup.online_version(str(eu)) == ('eu', 'NHL19_1.60')
+    _versioninfo(eu, 'ww', 'NHL19_WW')                     # ww wins over the others, as in the game
+    assert gamesetup.online_version(str(eu)) == ('ww', 'NHL19_WW')
+    odd = _game(tmp_path / 'Odd')
+    _versioninfo(odd, 'na', 'NHL 19 / 1.60')                # a value the lobby would refuse is sent as unknown
+    assert gamesetup.online_version(str(odd)) == ('na', '?')
+
+
+def test_online_version_takes_the_update_folder_over_the_base(tmp_path):
+    base = _game(tmp_path, 'CUSA11116')
+    update = _game(tmp_path, 'CUSA11116-UPDATE', title_id='CUSA11116')
+    _versioninfo(base, 'eu', 'NHL19_1.00')
+    assert gamesetup.online_version(str(base)) == ('eu', 'NHL19_1.00')
+    _versioninfo(update, 'eu')
+    assert gamesetup.online_version(str(base)) == ('eu', 'NHL19_1.60')
+
+
+def test_game_identity_says_region_and_online_version(tmp_path):
+    eu = _game(tmp_path / 'EU', title_id='CUSA11116')
+    _versioninfo(eu, 'eu')
+    got = gamesetup.game_identity(str(eu))
+    assert (got['title'], got['region'], got['online']) == ('CUSA11116', 'eu', 'NHL19_1.60')
+    lobby = pytest.importorskip('overtime_server.lobby')    # not in the public tree
+    assert lobby._game(got) == got                          # every field is one the lobby takes
 
 
 def _launcher(tmp_path, monkeypatch, selected=True):
@@ -717,6 +771,34 @@ def test_1440p_keeps_a_bigger_dmem_and_a_first_install_at_1440p_is_undone(world)
     assert 'extra_dmem_in_mbytes' not in json.loads(path.read_text())['General']
 
 
+@pytest.mark.parametrize('vendor,windows,own,want', [
+    ('intel', True, None, True), ('?', True, False, True),
+    ('amd', True, None, None), ('amd', True, False, False), ('intel', False, None, None)])
+def test_install_turns_shadps4s_amd_math_on_where_the_pc_needs_it(world, monkeypatch, vendor, windows, own, want):
+    # 0.81.0: every start (open matchmaking too), not only a lobby match, plays with the AMD math on an Intel PC
+    monkeypatch.setattr(gamesetup, 'cpu_vendor', lambda: vendor)
+    monkeypatch.setattr(gamesetup, 'WINDOWS', windows)
+    path, user = world['user'] / 'custom_configs' / 'CUSA11126.json', str(world['user'])
+    path.write_text(json.dumps({'General': {} if own is None else {gamesetup.AMD_MATH_KEY: own}}))
+    emu = str(world['emu'])
+
+    def key():
+        return json.loads(path.read_text())['General'].get(gamesetup.AMD_MATH_KEY)
+    gamesetup.install(emu, xmlpatch.build('localhost'), running=lambda: False)
+    assert key() == want and gamesetup.amd_math_on(user)
+    gamesetup.install(emu, xmlpatch.build('localhost'), running=lambda: False)    # again: no change
+    assert key() == want
+    if want and own is None:
+        general = json.loads(path.read_text())
+        general['General'][gamesetup.AMD_MATH_KEY] = False                         # the launcher switched it off
+        path.write_text(json.dumps(general))
+        assert not gamesetup.amd_math_on(user)
+        gamesetup.install(emu, xmlpatch.build('localhost'), running=lambda: False)
+        assert key() is True
+    gamesetup.remove(running=lambda: False)
+    assert key() == own                                     # the player's own value (or none) comes back
+
+
 def test_emulator_identity_names_the_build_and_the_frame_timing(tmp_path, monkeypatch):
     # live 2026-11-08: gr4vity ran vblank 9999 Hz; the lobby logs it next to the other player's
     cfg = tmp_path / 'CUSA11126.json'
@@ -730,3 +812,16 @@ def test_emulator_identity_names_the_build_and_the_frame_timing(tmp_path, monkey
     assert gamesetup.emulator_identity('x.exe')['emu'] == 'feature-x-y.aaaaaaa'
     cfg.write_text('not json', encoding='utf-8')
     assert gamesetup.emulator_identity('x.exe')['timing'] == '?'
+
+
+@pytest.mark.parametrize('name,tag', [
+    ('Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz', 'Intel-Core-i5-10210U-CPU-1.60GHz'),
+    ('AMD Ryzen 7 9800X3D 8-Core Processor           ', 'AMD-Ryzen-7-9800X3D-8-Core-Processor'),
+    ('13th Gen Intel(R) Core(TM) i7-13700K', '13th-Gen-Intel-Core-i7-13700K'),
+    ('', '?'), ('(R)(TM)', '?'), ('x' * 70, 'x' * 48)])
+def test_the_cpu_tag_fits_the_lobbys_short_text(name, tag):
+    import re
+    game_text = re.compile(r'[A-Za-z0-9._,+?-]{0,80}')     # overtime_server/lobby.py _GAME_TEXT (not in the public tree)
+    got = gamesetup.cpu_tag(name)
+    assert got == tag and game_text.fullmatch(got) and len(got) <= 48
+    assert re.fullmatch(r'[^\s]*', gamesetup.cpu_tag())       # this PC's, whatever it is: never raises, no spaces

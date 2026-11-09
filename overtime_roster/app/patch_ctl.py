@@ -15,7 +15,8 @@ import time
 from overtime_core import gamefiles, nhlcom, overlay, rosterupdate, tdb, teams as T, textpack, xmlpatch
 
 from .. import VERSION
-from . import gamesetup, jobs, launch, matchsetup, packdownload, patch, paths, savegame, selfupdate, update
+from . import (crosscpu, gamesetup, jobs, launch, matchsetup, onlinetag, packdownload, patch, paths, savegame,
+               selfupdate, update)
 from .packdownload import PackError
 from .registry import Part
 from .shell import friendly_date
@@ -598,8 +599,9 @@ def one_unpatch(setup):
             raise Refused('shadPS4 is running. Close NHL 19, then press Unpatch again.')
         if matchsetup.active():
             raise Refused(MATCH_LOCKED)
+        tags = onlinetag.remove(game_dir) if game_dir else []     # first: overlay.undo then clears empty folders
         removed = overlay.undo(game_dir) if game_dir else []
-        return list(removed or []) + gamesetup.remove()
+        return tags + list(removed or []) + gamesetup.remove()
 
     def said(removed):
         for line in removed:
@@ -672,10 +674,11 @@ def verify_text(v, files=None):
 def online_facts(setup):
     """What "What's in your game now" says about playing online: the server the patch points at, whether shadPS4's
     network switches are on for NHL 19 (both config sections, gamesetup.network_written), and who NHL 19 signs in to
-    ShadNet as. {'server', 'network': True/False/None, 'shadnet': Online ID or ''} (None/'': shadPS4 not set up)."""
+    ShadNet as, and whether it plays in step with the other CPU maker (crosscpu.item). {'server', 'network':
+    True/False/None, 'shadnet': Online ID or '', 'cross': {tone, text, title} or None} (None/'': shadPS4 not set up)."""
     emu = setup.known_emulator()
     user = gamesetup.emu_user_dir(emu) if emu else ''
-    out = {'server': (setup.server or {}).get('host') or '', 'network': None, 'shadnet': ''}
+    out = {'server': (setup.server or {}).get('host') or '', 'network': None, 'shadnet': '', 'cross': None}
     if not user:
         return out
     try:
@@ -684,6 +687,10 @@ def online_facts(setup):
         out['shadnet'] = (one.get('npid') or '') if one.get('shadnet') else ''
     except (OSError, ValueError, gamesetup.SetupError):
         pass
+    try:
+        out['cross'] = crosscpu.item(setup)
+    except Exception as err:    # noqa: BLE001 (a look must never stop the tab; the block is for a bug report)
+        jobs.log_block(err, 'Cross-CPU check')
     return out
 
 
@@ -723,13 +730,14 @@ def refresh_network(setup):
     if text is None:
         return None
     try:
-        new = xmlpatch.repoint(text, setup.server['host'], setup.server.get('nucleus_url'))
+        new = xmlpatch.repoint(text, setup.server['host'], setup.server.get('nucleus_url'), setup.features())
         new = xmlpatch.with_resolution(new, getattr(setup, 'resolution', 1080))     # the Resolution choice
     except xmlpatch.PatchError as err:
         setup.ctl.host.log(f'The server was not put into the patch file: {err}')
         return None
     user = gamesetup.emu_user_dir(emu)
-    if new == text and gamesetup.network_on(user) and gamesetup.network_written(user):
+    if (new == text and gamesetup.network_on(user) and gamesetup.network_written(user)
+            and gamesetup.amd_math_on(user)):
         return 'same'
     if overlay.emulator_running() or matchsetup.active():
         return 'later'
@@ -774,6 +782,15 @@ def _refresh_before_start(setup):
         return None
 
 
+def _tag_why(emu, game_dir):
+    """onlinetag.why of this start: '' or why online it meets only games with the same setup. Never raises."""
+    try:
+        return onlinetag.why(onlinetag.start_inputs(emu, game_dir))
+    except Exception as err:    # noqa: BLE001 (a hint only)
+        jobs.log_block(err, 'Matchmaking tag hint at Start')
+        return ''
+
+
 def start(setup):
     """Start shadPS4 with NHL 19 (launch.start) and watch its log a few minutes (SetupController._watch_play). The
     server of Setup's field and the network keys go in first (refresh_network)."""
@@ -796,7 +813,8 @@ def start(setup):
     with ctl.lock:
         setup.play = {'state': 'starting', 'pid': proc.pid, 'log': None}
         ctl.patch_running = True    # Check again sees when it is closed
-    ctl.say('NHL 19 is starting in shadPS4...', 'info')
+    why = _tag_why(emu, game_dir)
+    ctl.say('NHL 19 is starting in shadPS4...' + (f' {why}' if why else ''), 'caution' if why else 'info')
     ctl.changed('setup', 'patch')
     threading.Thread(target=setup._watch_play, args=(emu, proc), daemon=True, name='play-watch').start()
     return {'ok': True}

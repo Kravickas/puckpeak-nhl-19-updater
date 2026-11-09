@@ -74,6 +74,10 @@ docs/plans/
 docs/release/
 docs/ui/
 re/
-tools/
+tools/*
+# the source of cpu-estimates.exe, the program "Check my CPU" downloads and runs
+!tools/__init__.py
+!tools/cpu_estimates.py
+!tools/cpu_estimates_compare.py
 overtime_server/
 deploy/

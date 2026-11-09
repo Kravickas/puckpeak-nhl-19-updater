@@ -86,7 +86,8 @@ class LobbyClient:
 
     # --- the API ----------------------------------------------------------------------------------------------------
     def create(self, name, ext, public=False, roster_crc=None, mode=None):
-        return self._call('POST', '/api/lobby', {'name': name, 'ext': ext, 'public': bool(public),
+        # quick: the lobby starts at the table's defaults (3-minute periods, 0.81.0), not the game's stock rules
+        return self._call('POST', '/api/lobby', {'name': name, 'ext': ext, 'public': bool(public), 'quick': True,
                                                   **({'roster_crc': roster_crc} if roster_crc else {}),
                                                   **({'mode': mode} if mode else {})})
 

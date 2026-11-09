@@ -177,14 +177,41 @@ function Option({ on, title, sub, onChange }) {
   </div>`;
 }
 
-function Advanced({ setup }) {
+// the one-time question after the update: crash and early-end reports, yes or no (remembered either way)
+function AskReports() {
+  return html`<div class="mp-notice"><b>Send a report when NHL 19 crashes or a match ends early?</b>
+    <div class="mp-row"><${Button} small kind="primary" onClick=${() => call('mp_set_reports', true)}>Yes<//>
+      <${Button} small onClick=${() => call('mp_set_reports', false)}>No<//></div></div>`;
+}
+
+// the opt-in reports (crashreport.py): the automatic switch, and a report sent now after a confirmation
+function Reports({ r }) {
+  const [ask, setAsk] = useState(false);
+  const busy = !!r.busy;
+  return html`<div class="mp-reports">
+    <${Option} on=${r.on} title="Send reports by itself"
+      sub="After a crash, or a match that ended early, send the game's log to the Overtime server. Off unless you turn it on."
+      onChange=${(v) => call('mp_set_reports', v)}/>
+    <div class="mp-row"><${Button} small disabled=${busy} onClick=${() => setAsk(true)}>${busy ? 'Sending...' : 'Send a report'}<//>
+      ${r.note && html`<span class="mp-note">${r.note}</span>`}
+      ${r.error && html`<span class="mp-note bad" role="alert">${r.error}</span>`}</div>
+    ${ask && html`<${Modal} title="Send a report now?" onClose=${() => setAsk(false)}
+      buttons=${html`<${Button} kind="ghost" onClick=${() => setAsk(false)}>Cancel<//>
+        <${Button} kind="primary" onClick=${() => { setAsk(false); call('mp_send_report'); }}>Send<//>`}>
+      <p class="mp-note">It sends the game's log (scrubbed, see What the Overtime server keeps below), this PC's app and
+        emulator versions and CPU, and your ShadNet account number. Only the log and the details above go; nothing else.</p>
+    <//>`}
+  </div>`;
+}
+
+function Advanced({ setup, reports }) {
   const [open, setOpen] = useState(false);
   return html`<div class=${cls('mp-adv', open && 'open')}>
     <button type="button" class="mp-adv-head" aria-expanded=${open} onClick=${() => setOpen(!open)}>
-      <span class="mp-adv-main"><span class="mp-lbl caps">Advanced</span><span class="mp-adv-d">Server address, firewall rule, what the server keeps</span></span>
+      <span class="mp-adv-main"><span class="mp-lbl caps">Advanced</span><span class="mp-adv-d">Server address, firewall rule, CPU check, reports, what the server keeps</span></span>
       <${Chevron}/>
     </button>
-    ${open && html`<div class="mp-adv-body"><${OnlineLines} s=${setup}/><${Privacy}/></div>`}
+    ${open && html`<div class="mp-adv-body"><${OnlineLines} s=${setup}/><${Reports} r=${reports}/><${Privacy}/></div>`}
   </div>`;
 }
 
@@ -197,6 +224,7 @@ function You({ s, setup, go }) {
     <div class="mp-body mp-fill">
       ${!s.you.shadnet?.npid && !s.you.ext && html`<${Name} you=${s.you}/>`}
       <${Identity} you=${s.you}/>
+      ${s.reports && !s.reports.asked && html`<${AskReports}/>`}
       ${fix > 0 && html`<div class="mp-notice bad"><b>${fix} ${fix === 1 ? 'thing' : 'things'} to fix</b>
         <span>before a lobby can start the game.</span></div>`}
       <div class="mp-checks">${rows.map((c) => html`<${Check} key=${c.key} c=${c} action=${c.action}/>`)}</div>
@@ -210,7 +238,7 @@ function You({ s, setup, go }) {
         sub=${hud.available ? 'Toasts and the result card, only over the game window.' : 'Windows only.'}
         onChange=${(v) => call('mp_set_hud', v)}/>`}
       <div class="mp-spacer"></div>
-      ${setup && setup.online && html`<${Advanced} setup=${setup}/>`}
+      ${setup && setup.online && html`<${Advanced} setup=${setup} reports=${s.reports || {}}/>`}
     </div>
   </${Card}>`;
 }
@@ -593,6 +621,12 @@ function Privacy() {
         with "Show me on the web board" off it shows you as "Hidden player" (your place and rating stay, so the others'
         numbers still add up).</li>
       <li>Lobby chat lasts only as long as the lobby and is never written down.</li>
+      <li>Reports, only when you turn them on (or send one by hand): the game's log (the first 3,000 lines and the last
+        20,000, with your folder path, user and computer names, Online ID, IP and e-mail addresses taken out), the app and emulator
+        versions, the emulator's file hash, your CPU and its maker, the Cross-CPU check, the game's online version, your
+        ShadNet account number and the match id. Never a password. Kept for 30 days.</li>
+      <li>A CPU check result, only when you send it: what your CPU's two estimate instructions return, its name and maker,
+        and the app and emulator details a report holds (no game log, no account number). Kept for 30 days.</li>
     </ul>
   </details>`;
 }

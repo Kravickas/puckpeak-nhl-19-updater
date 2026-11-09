@@ -30,8 +30,8 @@ def test_targets_and_blocks():
         'ProtoHttp: accept EAGAIN while waiting for the status code', 'Redirector host: ot.puckpeak.com',
         'QoS coordinator: skip TLS cert validation', 'Nucleus hosts: ot.puckpeak.com, 91.98.195.150',
         '60 FPS replays (Kravickas)', 'Resolution 2560x1440 (Kravickas)', 'Resolution 1280x720 (Kravickas)',
-        xmlpatch.THREES_REWARDS_TITLE, 'R1: cap check on the Franchise per-team list append',
-        'BAP32: Seattle in Be a Pro', 'E32: 32 teams in every mode']
+        xmlpatch.THREES_REWARDS_TITLE, 'Cross-vendor exact math (rcp/rsqrt)',
+        'R1: cap check on the Franchise per-team list append', 'BAP32: Seattle in Be a Pro', 'E32: 32 teams in every mode']
     off = (xmlpatch.RES1440_TITLE, xmlpatch.RES720_TITLE)
     assert all(b['enabled'] == (b['name'] not in off) and b['app_ver'] == '01.60' for b in blocks)
 
@@ -462,10 +462,16 @@ def test_netplay_fingerprint_counts_only_what_reaches_the_other_game():
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('91.98.195.150')) == fp         # the same server by its address
     assert xmlpatch.netplay_fingerprint(base.replace('\r\n', '\n')) == fp
     # the Threes unlock guard only changes a lookup that would crash: a game without it still plays one with it
+    no_xv = xmlpatch.netplay_fingerprint(xmlpatch.build('91.98.195.150', features=xmlpatch.NO_CROSSVENDOR))
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/',
-                                                       features=xmlpatch.EARLIER[1])) == fp
+                                                       features=xmlpatch.EARLIER[1])) == no_xv
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/',
-                                                       features=xmlpatch.EARLIER[2])) == fp   # 0.80.0: no 720p block
+                                                       features=xmlpatch.EARLIER[2])) == no_xv   # 0.80.0: no 720p block
+    # the 720p block is local (Setup's Resolution): the 0.81.0 candidate's file, without it, plays today's
+    assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/',
+                                                       features=xmlpatch.EARLIER[3])) == fp
+    # the cross-vendor block counts: a game without it (0.80, another eboot) never plays one with it
+    assert no_xv != fp
     # the 32-team switch changes the online team list: that one counts, and so does any other game byte
     assert xmlpatch.netplay_fingerprint(xmlpatch.expansion32_off(base)) != fp
     assert xmlpatch.netplay_fingerprint(xmlpatch.build('ot.puckpeak.com', 'https://91.98.195.150/', features=xmlpatch.EARLIER[0])) != fp

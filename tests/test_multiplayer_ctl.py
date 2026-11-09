@@ -1,5 +1,6 @@
 """The Multiplayer tab's controller (docs/plans/m3-multiplayer-tab.md): who the player is, the lobby calls against a fake
 service, the poller's state machine, and the game start with fakes for the hook, shadPS4 and the key presses."""
+import gzip
 import json
 import os
 import threading
@@ -51,6 +52,10 @@ class FakeService:
         self.recipe = None
         self.fail = None            # an exception the next call raises
         self.public = [{'code': 'AB123', 'host': 'Bo', 'players': 1, 'age': 130}]
+        self.hist = {'me': 1, 'matches': []}       # the history answer the report tests set
+
+    def history(self, ext=None, pid=None, limit=None):
+        return self.hist
 
     def _go(self, name, *args):
         self.calls.append((name, *args))
@@ -502,7 +507,8 @@ def test_the_game_start_bakes_the_hook_starts_presses_and_takes_it_off(mp, monke
     start_lobby(mp)
     mp._launch_job()
     assert kinds(rig) == ['hook', 'started', 'press', 'press', 'hook']
-    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS}) and rig.events[-1] == ('hook', None)
+    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS, 'rules': RU.DEFAULTS})
+    assert rig.events[-1] == ('hook', None)
     assert [e for e in rig.events if e[0] == 'press'] == [('press', 'n'), ('press', 'n')]
     assert ('sleep', MC.BOOT_WAIT) in rig.events and ('sleep', MC.TITLE_GAP) in rig.events
     assert mp.game['phase'] == 'ended'
@@ -829,12 +835,17 @@ def test_the_rules_are_fixed_once_the_game_is_starting(mp):
     assert 'fixed' in mp.set_rule('periodlength', 10)['error'] and mp.service.calls == []
 
 
-def test_the_launch_bakes_the_lobbys_rules_only_when_they_are_not_the_defaults(mp, monkeypatch):
+def test_the_launch_bakes_the_lobbys_rules_only_when_they_are_not_the_games_own(mp, monkeypatch):
     good_checks(mp)
     rig = Rig(mp, monkeypatch)
     start_lobby(mp)
     mp._launch_job()
-    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS})         # defaults: nothing baked
+    assert rig.events[0][1]['rules'] == RU.DEFAULTS                             # the 3-minute default is baked
+    assert RU.DEFAULTS['periodlength'] == '3' and RU.stock()['periodlength'] == '4'
+    mp.set_rule('periodlength', 4)
+    rig = Rig(mp, monkeypatch)
+    mp._launch_job()
+    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS})         # the game's own rules: nothing baked
     mp.set_rule('periodlength', 10)
     mp.set_rule('fighting', 0)
     rig = Rig(mp, monkeypatch)
@@ -1012,13 +1023,14 @@ def test_a_shootout_launch_hooks_the_shootout_hub_and_bakes_its_rules(mp, monkey
 
 
 # --- 0.80: the match-only setup (docs/plans/mellow-crunching-hippo.md) ---------------------------------------------
-from overtime_roster.app import matchsetup, onlineemu  # noqa: E402
+from overtime_roster.app import matchsetup, onlineemu, onlinetag  # noqa: E402
 
 
 def test_the_host_announces_its_recipe_and_caps_the_guest_its_caps(mp):
     start_lobby(mp)
     assert [a[0] for a in mp.service.announced] == ['match', 'ready']
-    assert mp.service.announced[-1][-1] == MC.CAPS
+    assert mp.service.announced[-1][-1] == MC.caps()
+    assert MC.caps()[:2] == ('match_setup', 'amd_math') and MC.caps()[-1] in ('cpu_intel', 'cpu_amd', 'cpu_unknown')
     matchsetup.check(mp.service.recipe)                  # what the guest's app will read
     assert mp.service.calls == [('create', 'iksperial', 16349, True)]   # no Ready said on the player's behalf
     guest = MC.MultiplayerCtl(mp.ctl)
@@ -1123,10 +1135,31 @@ def test_ready_in_a_match_lobby_gets_the_copy_and_sends_the_match_fingerprint(mp
     boosted = []
     mp.ctl.setup.online_boost = lambda note: boosted.append(1) or 'on'
     assert mp.ready(True) == {'ok': True}
-    assert boosted == [] and mp.service.caps == MC.CAPS
+    assert boosted == [] and mp.service.caps == MC.caps()
     own = mp._own_text()
     assert mp.service.patch == xmlpatch.netplay_fingerprint(matchsetup.match_xml(mp.service.recipe, own))
     assert mp.service.patch == xmlpatch.netplay_fingerprint(mp.ctl.setup._xml())   # the same as the host's
+
+
+def test_ready_sends_the_tag_the_match_start_will_write(mp, monkeypatch):
+    """game.online at Ready is onlinetag's value for the match patch on the online copy (the lobby refuses another)."""
+    MatchRig(mp, monkeypatch)
+    match_lobby(mp, emu_sha='a' * 64)
+    seen = []
+
+    def inputs(emu, game_dir, text, run):
+        seen.append((game_dir, run, xmlpatch.netplay_fingerprint(text)))
+        return {'base': 'NHL19_1.60', 'fingerprint': 'f', 'sha': 's', 'math': 'amd', 'crossvendor': True,
+                'key': True, 'vendor': 'amd', 'foreign': None}
+    monkeypatch.setattr(onlinetag, 'match_inputs', inputs)
+    assert mp.ready(True) == {'ok': True}
+    assert seen == [(mp.ctl.game_dir, 'C:/online/shadPS4.exe', mp.service.patch)]
+    assert mp.service.game['online'] == onlinetag.compute('NHL19_1.60', 'f', 's', 'amd')
+    # a refusal says what here keeps this game apart, beside the lobby's general advice
+    monkeypatch.setattr(onlinetag, 'why', lambda inp: 'Online you meet only players with the same setup: X.')
+    mp.service.fail = LC.LobbyRefused(409, 'the two games would drift apart')
+    assert mp.ready(True)['error'] == ('the two games would drift apart (here: Online you meet only players with '
+                                       'the same setup: X)')
 
 
 def test_ready_says_why_when_the_online_copy_cannot_be_had(mp, monkeypatch):
@@ -1158,3 +1191,153 @@ def test_an_unpatched_game_is_ready_for_online_in_the_pre_flight(mp):
     assert next(r for r in mp.view()['checks'] if r['key'] == 'roster')['tone'] == 'bad'   # only the patch row
     patch = next(r for r in mp.view()['checks'] if r['key'] == 'patch')
     assert patch['tone'] == 'good' and patch['text'] == MC.ONLINE_READY
+
+
+# --- crash and early-end reports (crashreport.py, 0.81.0 WP4) ----------------------------------------------------
+
+from overtime_roster.app import crashreport as CR  # noqa: E402
+
+
+def _match(mid, pid=1):
+    return {'id': mid, 'result': {'status': 'confirmed'}, 'players': [{'pid': pid}]}
+
+
+class Sent:
+    """Stands in for crashreport.send/wanted/collect: records what would have gone out."""
+
+    def __init__(self, monkeypatch, answers=(), send_error=None):
+        self.bodies, self.asks, self.answers = [], [], list(answers)
+        self.send_error = send_error
+        monkeypatch.setattr(CR, 'send', self.send)
+        monkeypatch.setattr(CR, 'wanted', self.wanted)
+        monkeypatch.setattr(CR, 'collect', lambda emu, game_dir, text='', ext=None, match=None:
+                            {'ext': ext, 'match': match, 'emu_sha256': 'ab' * 32})
+
+    def send(self, base, body, **k):
+        if self.send_error:
+            raise self.send_error
+        self.bodies.append(json.loads(gzip.decompress(body)))
+        return f'rid{len(self.bodies)}'
+
+    def wanted(self, base, ext, **k):
+        self.asks.append(ext)
+        return self.answers.pop(0) if self.answers else (False, None)
+
+
+def _game(mp, monkeypatch, tmp_path, log_text, reports, typed=16349):
+    """A game that just closed: its log says log_text, the controller has (or not) the reports on."""
+    log = tmp_path / 'shad_log.txt'
+    log.write_text(log_text, encoding='utf-8')
+    monkeypatch.setattr(MC.launch, 'log_path', lambda emu: str(log))
+    mp.reports, mp.reports_asked = reports, True
+    mp.typed_ext = typed
+    seq = [True, False]
+    mp.running = lambda: seq.pop(0) if seq else False
+    mp._watch('shadPS4.exe', hooked=False)
+    assert mp.game['phase'] == 'ended'
+
+
+CLEAN = 'Run: Vulkan gpuId: 0\nNormal game close\n'
+CRASH_LOG = CLEAN + 'SignalHandler: Unhandled Exception code 0xc0000005 at 0x809a91a5\n'
+
+
+def test_consent_off_sends_nothing_on_a_crash_or_an_early_end(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch, answers=[(True, 16)])
+    _game(mp, monkeypatch, tmp_path, CRASH_LOG, reports=False)
+    _game(mp, monkeypatch, tmp_path, CLEAN, reports=False)
+    assert sent.bodies == [] and sent.asks == []
+
+
+def test_consent_on_sends_a_crash_report(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch)
+    _game(mp, monkeypatch, tmp_path, CRASH_LOG, reports=True)
+    assert [b['reason'] for b in sent.bodies] == ['crash']
+    assert sent.asks == []                      # a crash needs no server question
+    assert mp.report == {'busy': False, 'note': 'Report sent (id rid1).', 'error': ''}
+
+
+def test_a_report_leaves_out_the_players_shadnet_details(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch)
+    user = tmp_path / 'user'
+    user.mkdir()
+    write_users(user, 'skater', password='hunter22')
+    monkeypatch.setattr(gamesetup, 'emu_user_dir', lambda emu: str(user))
+    _game(mp, monkeypatch, tmp_path, "[Lib.Np] signed in npid='skater' pw hunter22\n" + CRASH_LOG, reports=True)
+    log = sent.bodies[0]['log']
+    assert 'skater' not in log and 'hunter22' not in log and "npid='<npid>' pw <secret>" in log
+
+
+def test_an_early_end_is_sent_once_when_it_is_the_match_just_played(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch, answers=[(True, 16)])
+    mp.service.hist = {'me': 1, 'matches': [_match(16)]}
+    _game(mp, monkeypatch, tmp_path, CLEAN, reports=True)
+    assert [b['reason'] for b in sent.bodies] == ['early_end']
+    assert sent.bodies[0]['meta']['match'] == 16 and sent.bodies[0]['meta']['ext'] == 16349
+    assert sent.asks == [16349]
+
+
+def test_an_early_end_for_an_older_match_is_not_sent(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch, answers=[(True, 15)] * 4)
+    mp.service.hist = {'me': 1, 'matches': [_match(16)]}
+    _game(mp, monkeypatch, tmp_path, CLEAN, reports=True)
+    assert sent.bodies == []
+
+
+def test_an_early_end_with_no_match_id_is_sent_once(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch, answers=[(True, None)])
+    _game(mp, monkeypatch, tmp_path, CLEAN, reports=True)
+    assert [b['reason'] for b in sent.bodies] == ['early_end']
+    assert len(sent.asks) == 1                  # one answer ends the questions: never twice for one game end
+
+
+def test_nothing_wanted_asks_a_few_times_and_sends_nothing(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch)
+    _game(mp, monkeypatch, tmp_path, CLEAN, reports=True)
+    assert sent.bodies == [] and len(sent.asks) == MC.WANT_ASKS
+
+
+def test_a_failed_automatic_report_is_logged_and_the_game_end_goes_on(mp, tmp_path, monkeypatch):
+    Sent(monkeypatch, send_error=CR.ReportError('Too many reports from this PC lately.'))
+    _game(mp, monkeypatch, tmp_path, CRASH_LOG, reports=True)
+    assert mp.game['phase'] == 'ended'
+    assert any('Too many reports' in line for line in mp.ctl.host.lines)
+    assert mp.report['note'] == '' and mp.report['busy'] is False
+
+
+def test_the_manual_button_sends_with_consent_off(mp, tmp_path, monkeypatch):
+    sent = Sent(monkeypatch)
+    log = tmp_path / 'shad_log.txt'
+    log.write_text(CLEAN, encoding='utf-8')
+    monkeypatch.setattr(MC.launch, 'log_path', lambda emu: str(log))
+    mp.reports = False
+    mp.typed_ext = 16349
+    assert mp.send_report() == {'ok': True}
+    assert [b['reason'] for b in sent.bodies] == ['manual']
+    assert sent.asks == []
+    assert mp.report == {'busy': False, 'note': 'Report sent (id rid1).', 'error': ''}
+
+
+def test_the_manual_button_tells_why_a_report_did_not_go(mp, monkeypatch):
+    Sent(monkeypatch, send_error=CR.ReportError('The Overtime server does not take reports yet.'))
+    mp.send_report()
+    assert mp.report == {'busy': False, 'note': '', 'error': 'The Overtime server does not take reports yet.'}
+
+
+def test_the_reports_answer_is_remembered_and_ends_the_question(mp):
+    assert mp.set_reports(True) == {'ok': True}
+    assert mp.ctl.prefs['multiplayer']['reports'] is True
+    assert mp.ctl.prefs['multiplayer']['reports_asked'] is True
+    again = MC.MultiplayerCtl(mp.ctl)
+    assert again.reports is True and again.reports_asked is True
+    assert mp.set_reports(False) == {'ok': True}
+    assert MC.MultiplayerCtl(mp.ctl).reports is False
+
+
+def test_a_reports_answer_must_be_yes_or_no(mp):
+    assert mp.set_reports('yes') == {'error': 'Pick yes or no.'}
+    assert mp.reports is False and mp.reports_asked is False
+
+
+def test_the_view_carries_the_reports_state(mp):
+    view = mp.view()
+    assert view['reports'] == {'on': False, 'asked': False, 'busy': False, 'note': '', 'error': ''}

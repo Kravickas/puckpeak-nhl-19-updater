@@ -62,6 +62,10 @@
 :is(.tab-setup, .tab-multiplayer) .su-fw { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 26px; font-size: 13.5px; color: var(--text-soft); }
 :is(.tab-setup, .tab-multiplayer) .su-fwt { min-width: 0; }
 :is(.tab-setup, .tab-multiplayer) .su-fw.wide { grid-column: 2 / -1; }
+:is(.tab-setup, .tab-multiplayer) .su-cpu-st { grid-column: 2 / -1; align-items: flex-start; margin-top: -2px; font-size: 12.5px; line-height: 1.35; }
+:is(.tab-setup, .tab-multiplayer) .su-cpu-st { flex-wrap: wrap; row-gap: 6px; }
+:is(.tab-setup, .tab-multiplayer) .su-cpu-st .su-fwt { flex: 1 1 0; min-width: 60%; }
+:is(.tab-setup, .tab-multiplayer) .su-cpu-st .btn { margin-left: auto; }
 :is(.tab-setup, .tab-multiplayer) .su-fw.caution .su-fwt { color: var(--caution); }
 :is(.tab-setup, .tab-multiplayer) .su-fw.bad .su-fwt { color: #ff4f7b; }
 :is(.tab-setup, .tab-multiplayer) .su-fw.idle .su-fwt, :is(.tab-setup, .tab-multiplayer) .su-fw:not(.good):not(.caution):not(.bad) .su-fwt { color: var(--text-3); }

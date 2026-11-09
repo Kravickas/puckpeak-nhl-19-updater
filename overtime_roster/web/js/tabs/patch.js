@@ -135,6 +135,7 @@ function NowCard({ s }) {
           ${o.server && html`<span class="gp-on-item" title="The server the patch points NHL 19 at">${o.server}</span>`}
           <span class=${cls('gp-on-item', net[0])} title="shadPS4's Set Network Connected and Enable shadNet, for NHL 19"><span class=${cls('gp-dot', net[0])}></span>${net[1]}</span>
           <span class=${cls('gp-on-item', sn[0])} title="The ShadNet account NHL 19 signs in with"><span class=${cls('gp-dot', sn[0])}></span>${sn[1]}</span>
+          ${o.cross && html`<span class=${cls('gp-on-item', o.cross.tone)} title=${o.cross.title}><span class=${cls('gp-dot', o.cross.tone)}></span>${o.cross.text}</span>`}
         </dd></div>
         ${s.patched && html`<div><dt>Files</dt><dd class="gp-files-line">
           <span class=${g.files.bad ? 'bad-text' : 'good-text'}>${g.files.count} Overtime files${g.files.bad ? `, ${g.files.bad} not right` : ', all as written'}</span>

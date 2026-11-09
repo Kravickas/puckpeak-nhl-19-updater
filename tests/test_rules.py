@@ -8,7 +8,7 @@ def fake(**values):
     """A rules file in the game's shape: CRLF, 4-space indent, one block per rule, plus a gametype rule."""
     body = []
     for key in ('gametype',) + rules.KEYS:
-        value = values.get(key, rules.DEFAULTS.get(key, '23'))
+        value = values.get(key, rules.stock().get(key, '23'))
         body.append('                {\r\n'
                     f'                    "rulename": "{key}",\r\n'
                     f'                    "attributename": "NHL_{key.title()}",\r\n'
@@ -38,6 +38,17 @@ def test_validate_fills_defaults_and_stringifies():
 def test_validate_refuses(bad):
     with pytest.raises(rules.RulesError):
         rules.validate(bad)
+
+
+def test_lobbies_start_at_three_minute_periods_and_the_game_ships_four():
+    assert rules.DEFAULTS['periodlength'] == '3' and rules.RULES[0][2][0] == ('3', '3 min')
+    stock = rules.stock()
+    assert stock == dict(rules.DEFAULTS, periodlength='4')          # the game's file: match-rules.md "Stock defaults"
+    assert rules.stock(rules.SHOOTOUT) == rules.SHOOTOUT_DEFAULTS and rules.stock(rules.THREES) == {}
+    stock['periodlength'] = '20'
+    assert rules.stock()['periodlength'] == '4'                     # a copy each time
+    assert rules.read(rules.edit(fake(), {'periodlength': 3}))['periodlength'] == '3'
+    assert rules.summary(rules.stock()) == '4 min'
 
 
 def test_summary_names_only_what_differs():

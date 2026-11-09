@@ -28,9 +28,13 @@ def _opts(*pairs):
     return tuple((str(v), label) for v, label in pairs)
 
 
-# (key, label, ((value, label), ...), default). The order is the card's.
+# (key, label, ((value, label), ...), default). The order is the card's. The default is what a new lobby starts with;
+# stock() is what the game's own file ships, which a game plays when the app bakes nothing. 0.81.0: lobbies start at
+# 3-minute periods (quick games, the owner's pick); the game's menus offer 4-20, and its period clock follows any served
+# NHL_PeriodLength (1 in the lab, docs/notes/in-game.md).
 RULES = (
-    ('periodlength', 'Period length', _opts((4, '4 min'), (5, '5 min'), (10, '10 min'), (15, '15 min'), (20, '20 min')), '4'),
+    ('periodlength', 'Period length', _opts((3, '3 min'), (4, '4 min'), (5, '5 min'), (10, '10 min'), (15, '15 min'),
+                                            (20, '20 min')), '3'),
     ('skilllevel', 'Skill level', _opts((0, 'Rookie'), (1, 'Semi-pro'), (2, 'Pro'), (3, 'All-Star'), (4, 'Superstar')), '3'),
     ('gamestyle', 'Game style', _opts((0, 'Arcade'), (1, 'Traditional'), (2, 'Competitive'), (3, 'Full sim')), '2'),
     ('leaguerules', 'Rule set', _opts((1, 'NHL'), (2, 'International'), (3, 'CHL')), '1'),
@@ -68,6 +72,16 @@ def table(mode=VERSUS):
 
 def defaults(mode=VERSUS):
     return {key: default for key, _label, _options, default in table(mode)}
+
+
+# The game file's own values where a new lobby starts elsewhere (docs/notes/match-rules.md "Stock defaults").
+_STOCK = {VERSUS: {'periodlength': '4'}}
+
+
+def stock(mode=VERSUS):
+    """The rules the game's own file holds for `mode`: what a game plays when nothing is baked, and what a lobby made by
+    an app older than 0.81.0 starts with (that app bakes nothing when its lobby is at the stock rules)."""
+    return dict(defaults(mode), **_STOCK.get(mode, {}))
 
 
 def path(mode=VERSUS):

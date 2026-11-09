@@ -5,7 +5,7 @@
 import { html, cls, useState, useEffect, useRef } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, PathText, Checkbox, Info, Segmented, Tag } from '../ui.js';
+import { Card, Button, PathText, Checkbox, Info, Modal, Segmented, Tag } from '../ui.js';
 
 export const tip = 'Pick shadPS4 and the roster you work on. Everything else follows them.';
 
@@ -191,7 +191,32 @@ export function OnlineLines({ s, className }) {
       <span class=${cls('su-fw', fw.tone, !fw.can_fix && 'wide')}><${Mark} tone=${fw.tone}/><span class="su-fwt">${fw.text}</span></span>
       ${fw.can_fix && html`<${Button} small kind="primary" disabled=${s.busy} title="Windows asks you to allow it"
         onClick=${() => call('setup_firewall')}>Let it through...<//>`}
+      ${o.cpu && html`<${CpuLine} c=${o.cpu}/>`}
     </div>`;
+}
+
+// Check my CPU (cpucheck.py): does this CPU's estimate math match one proven to play in step? Sending asks first.
+function CpuLine({ c }) {
+  const [ask, setAsk] = useState(false);
+  const hint = c.error || c.note;
+  return html`
+    <span class="field-label">CPU</span>
+    <span class="su-fw su-cpu-name" title=${c.full_name || ''}><span class="su-fwt">${c.name || 'This PC'}</span></span>
+    <${Button} small disabled=${!c.can_check} title="Runs Overtime's CPU check program (downloaded the first time)"
+      onClick=${() => call('setup_cpu_check')}>${c.busy ? 'Checking...' : 'Check my CPU'}<//>
+    <span class=${cls('su-fw', 'su-cpu-st', c.tone)} title=${c.title || ''}><${Mark} tone=${c.tone}/>
+      <span class="su-fwt">${c.text}</span>
+      ${(c.can_send || c.sending) && html`<${Button} small disabled=${!c.can_send}
+        onClick=${() => setAsk(true)}>${c.sending ? 'Sending...' : 'Send the result...'}<//>`}</span>
+    ${hint && html`<span class=${cls('su-hint', c.error && 'bad')} role=${c.error ? 'alert' : null}>${hint}</span>`}
+    ${ask && html`<${Modal} title="Send the CPU check result?" onClose=${() => setAsk(false)}
+      buttons=${html`<${Button} kind="ghost" onClick=${() => setAsk(false)}>Cancel<//>
+        <${Button} kind="primary" onClick=${() => { setAsk(false); call('setup_cpu_send'); }}>Send<//>`}>
+      <p class="mp-note">It sends the check's result file (what this CPU's two estimate instructions return, about
+        200 KB), the CPU's name and maker, and this PC's app and emulator versions and settings (the emulator's file
+        hash, AMD math, the Cross-CPU check, the game's online version) to the Overtime server. No game log and no
+        account go.</p>
+    <//>`}`;
 }
 
 // --- This program ---------------------------------------------------------------------------------------------------------

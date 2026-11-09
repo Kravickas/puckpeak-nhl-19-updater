@@ -28,6 +28,8 @@
   background: rgba(248, 191, 0, .08); box-shadow: inset 3px 0 0 var(--caution); }
 .tab-multiplayer .mp-notice .sp { flex: 1; min-width: 0; }
 .tab-multiplayer .mp-notice b { color: var(--text); }
+.tab-multiplayer .mp-notice > b { flex: 1 1 auto; min-width: 0; }
+.tab-multiplayer .mp-notice > .mp-row { flex: none; }     /* the question's Yes / No stay whole in the narrow column */
 .tab-multiplayer .mp-notice.caution b { color: var(--caution); }
 .tab-multiplayer .mp-notice.bad { background: rgba(230, 0, 65, .1); box-shadow: inset 3px 0 0 var(--bad); gap: 8px; flex-wrap: wrap; }
 .tab-multiplayer .mp-notice.bad span { font-size: 13.5px; color: var(--text-2); }

@@ -28,7 +28,7 @@ param(
     [switch]$NoPacks,       # stage no packs and leave the NHL 27 data pack out (a spike, or before the packs are made)
     [switch]$Cli,           # also build OvertimeNHL19-cli.exe
     [switch]$NoSplash,      # no start-up splash (it needs Tcl/Tk in the exe: about 2 MB more)
-    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip', 'people.zip', 'ice_all.zip', 'rink.zip', 'clubart.zip', 'kitlayers_nhl.zip', 'kitlayers_intl.zip', 'kitlayers_clubs.zip', 'shadps4_nhl19.zip'),   # the packs to stage (packdownload.PACKS, EMULATOR_PACK)
+    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip', 'people.zip', 'ice_all.zip', 'rink.zip', 'clubart.zip', 'kitlayers_nhl.zip', 'kitlayers_intl.zip', 'kitlayers_clubs.zip', 'shadps4_nhl19.zip', 'cpu_estimates.zip'),   # the packs to stage (packdownload.KNOWN; cpu_estimates.zip: packaging\cpu_pack.ps1)
     [string]$Kits = '',     # the kits pack to stage too (e.g. re\extract\release-fixture\app\packs\kits.zip)
     [string]$DefaultDb = '',    # the verified default roster: a capture folder (or its nhl_game.db); main picks it
     [string]$DefaultDbSha = '', # its sha256, needed when the folder has no db.json (with one, both must agree)
@@ -99,7 +99,7 @@ if (-not $NoPacks) {
         if ($pack -in @('kits.zip', 'nhl27.json.gz')) { throw "$pack does not go in with -Packs (the kits: -Kits)." }
         $file = Join-Path $packDir $pack
         if (-not (Test-Path $file)) {
-            throw "No packs\$pack. Make it first (tools\build_looks.py, tools\build_photopack.py), or build with -NoPacks."
+            throw "No packs\$pack. Make it first (tools\build_looks.py, tools\build_photopack.py, packaging\cpu_pack.ps1), or build with -NoPacks."
         }
         $staged[$pack] = $file
     }

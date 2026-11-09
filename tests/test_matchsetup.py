@@ -111,6 +111,79 @@ def test_apply_then_restore_gives_the_players_files_back_byte_for_byte(world):
     assert not os.path.exists(w['mods'] + MS.VIEW_SUFFIX) and not os.path.exists(w['mods'] + MS.OWN_SUFFIX)
 
 
+@pytest.mark.parametrize('vendor,windows,own,want', [
+    ('intel', True, None, True), ('?', True, None, True), ('intel', True, False, True),
+    ('amd', True, None, None), ('amd', True, True, True), ('amd', True, False, False),   # AMD keeps its own value
+    ('intel', False, None, None)])                                                       # the gate is Windows only
+def test_an_intel_pc_plays_the_match_with_shadps4s_amd_math(world, monkeypatch, vendor, windows, own, want):
+    w = world
+    if own is not None:
+        with open(w['cfg'], 'w', encoding='utf-8', newline='') as f:
+            json.dump({'General': {'connected_to_network': False, MS.AMD_MATH_KEY: own}}, f)
+    before = _snapshot(w)
+    monkeypatch.setattr(gamesetup, 'cpu_vendor', lambda: vendor)
+    monkeypatch.setattr(gamesetup, "WINDOWS", windows)
+    MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'])
+    general = json.load(open(w['cfg'], encoding='utf-8'))['General']
+    assert general.get(MS.AMD_MATH_KEY) == want
+    assert MS.restore(running=w['off']) == 'done'
+    assert _snapshot(w) == before                                    # the player's own value comes back byte for byte
+
+
+@pytest.mark.parametrize('own', [None, {'filter': '*:Error', 'size_limit': 1234, 'separate': True, 'type': 'wincolor'},
+                                 'not a section'])
+def test_the_match_writes_a_log_a_desync_report_can_read(world, own):
+    w = world
+    if own is not None:
+        with open(w['cfg'], 'w', encoding='utf-8', newline='') as f:
+            json.dump({'General': {'connected_to_network': False}, 'Log': own}, f)
+    before = _snapshot(w)
+    MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'])
+    log = json.load(open(w['cfg'], encoding='utf-8'))['Log']
+    assert 'Core.Linker:Debug' in log['filter'] and log['filter'].startswith('*:Info')   # the AMD math patch counts
+    assert log['enable'] is True and log['separate'] is False and log['append'] is False
+    if isinstance(own, dict):
+        assert log['size_limit'] == 1234 and log['type'] == 'wincolor'                   # the rest stays the player's
+    assert MS.restore(running=w['off']) == 'done'
+    assert _snapshot(w) == before                         # the player's own Log (or none) comes back byte for byte
+
+
+def test_each_match_games_log_is_kept_and_a_crashs_log_survives_the_next_start(world, monkeypatch):
+    w = world
+    logs = os.path.join(os.environ['OVERTIME_ROSTER_HOME'], 'match', 'logs')
+    src = os.path.join(w['user'], gamesetup.LOG_FILE)
+    os.makedirs(os.path.dirname(src))
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('an own run before the match')
+    os.utime(src, (1000, 1000))                           # older than the setup: not a match game's log
+    MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'])
+    assert MS.restore(running=w['off']) == 'done'
+    assert not os.path.isdir(logs) or not os.listdir(logs)
+    stamps = iter(range(2_000_000_000, 2_000_000_000 + 100, 10))
+    for run in range(MS.KEEP_LOGS + 2):                   # the crashed boot, then Start again (apply restores first)
+        MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'])
+        with open(src, 'w', encoding='utf-8') as f:
+            f.write(f'match run {run}')
+        t = next(stamps)
+        os.utime(src, (t, t))
+    assert MS.restore(running=w['off']) == 'done'
+    kept = sorted(os.listdir(logs))
+    assert len(kept) == MS.KEEP_LOGS
+    texts = [open(os.path.join(logs, n), encoding='utf-8').read() for n in kept]
+    assert texts == [f'match run {i}' for i in range(2, MS.KEEP_LOGS + 2)]       # the newest, oldest first
+    assert MS.keep_log({'user_dir': None}) is None and MS.keep_log({}) is None
+
+
+@pytest.mark.parametrize('text,want', [
+    ('Intel64 Family 6 Model 183 Stepping 1, GenuineIntel', 'intel'),
+    ('AMD64 Family 26 Model 68 Stepping 0, AuthenticAMD', 'amd'),
+    ('GenuineIntel', 'intel'), ('AuthenticAMD', 'amd'), ('HygonGenuine', 'amd'),
+    ('vendor_id\t: GenuineIntel\n', 'intel'), ('Intel64 Family 6', 'intel'), ('AMD64 Family 25', 'amd'),
+    ('', '?'), (None, '?'), ('CentaurHauls', '?')])
+def test_the_cpu_maker_reads_from_every_description(text, want):
+    assert gamesetup.vendor_of(text) == want
+
+
 def test_restore_waits_while_the_game_runs(world):
     w = world
     MS.apply(w['game'], w['user'], MS.recipe(w['host']), w['host'], add_layers=w['add'], running=w['off'])

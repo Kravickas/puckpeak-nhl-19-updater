@@ -15,6 +15,7 @@ A shadPS4 found there is remembered, and the game and saves folders follow it wh
 line and settings. Its slice `setup` is `view()`, with beta1's keys (snap_setup) that re/scripts/oneclick_run.py reads.
 """
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -25,7 +26,8 @@ import webbrowser
 from overtime_core import gamefiles, overlay, rosterupdate, tdb, xmlpatch
 
 from .. import SITE, VERSION
-from . import boost, cachemove, gamesetup, jobs, launch, packdownload, patch, patch_ctl, paths, selfupdate
+from . import (boost, cachemove, cpucheck, crashreport, gamesetup, jobs, launch, packdownload, patch, patch_ctl,
+               paths, selfupdate)
 from .registry import Part
 from .shell import friendly_date
 
@@ -50,6 +52,8 @@ PACK_TITLE = 'Updated assets'     # the core packs as one (v0.10.0's card; v0.70
 PACK_SUB = ('Updated logos, menu jerseys, centre ice and 3D jerseys for all 32 teams, and NHL.com player photos. Kept '
             'on this PC.')
 PACK_SIZE = 'about 150 MB'      # the four packs of 2026-10-21 (148 MB) when the server cannot say
+CPU_IDLE = {'busy': False, 'stage': '', 'part': None, 'result': None, 'zip': '', 'output': '', 'sending': False,
+            'note': '', 'error': ''}
 
 
 def waiting(busy):
@@ -151,6 +155,7 @@ class SetupController(Part):
              'setup_patch': 'setup_patch', 'setup_unpatch': 'setup_unpatch', 'setup_verify': 'setup_verify',
              'setup_play': 'setup_play', 'setup_boost': 'setup_boost',
              'setup_boost_source': 'setup_boost_source', 'setup_resolution': 'setup_resolution',
+             'setup_cpu_check': 'cpu_check', 'setup_cpu_send': 'cpu_send',
              'setup_folder_pick': 'folder_pick', 'setup_folder_set': 'folder_set', 'setup_folder_auto': 'folder_auto'}
     TAB = 'setup'
 
@@ -176,6 +181,7 @@ class SetupController(Part):
         self.asked = set()      # the core asset switches (patch_ctl.PACK_KEYS) switched on here: their packs download
         self.boost = prefs.get('boost') or {}   # Boost performance: {sha256, emulator, selected}, what comes back when off
         self.boost_part = None  # how far its download is (0..1)
+        self.cpu = dict(CPU_IDLE)   # Check my CPU (cpucheck.py): the run and its last result, this session only
         self.resolution = prefs.get('resolution') if prefs.get('resolution') in xmlpatch.RESOLUTIONS else 1080
         # Folders list: what the player set by hand ({'emulator': bool, 'game': bool, 'saves': bool, 'data': path,
         # 'cache': path (paths.cache_dir reads it from the settings itself)}); a
@@ -189,9 +195,15 @@ class SetupController(Part):
                                  'resolution': self.resolution, 'custom': dict(self.custom),
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
 
+    def features(self):
+        """The eboot patch's features for this game: the one place that picks them, for a new patch file (_xml) and for
+        the next start's refresh (patch_ctl.refresh_network). The cross-vendor block only for the eboot it was made
+        for (xmlpatch.for_eboot)."""
+        return xmlpatch.for_eboot(gamesetup.eboot_sha(getattr(self.ctl, 'game_dir', None)))
+
     def _xml(self):
-        return xmlpatch.with_resolution(xmlpatch.build(self.server['host'], self.server.get('nucleus_url')),
-                                        self.resolution)
+        return xmlpatch.with_resolution(xmlpatch.build(self.server['host'], self.server.get('nucleus_url'),
+                                                       self.features()), self.resolution)
 
     def _wait(self):
         """True (and the Help bar says so) while another job runs."""
@@ -1068,6 +1080,106 @@ class SetupController(Part):
         return {'on': on, 'newer': newer, 'text': text, 'tone': tone, 'progress': part,
                 'can': (on or pub is not None) and not c.busy, 'resolution': self.resolution}
 
+    # --- Check my CPU (cpucheck.py; the page shows it in Multiplayer > Advanced) ----------------------------------------
+    def _cpu_set(self, **changes):
+        with self.ctl.lock:
+            self.cpu = {**self.cpu, **changes}
+        self.ctl.changed('setup')
+
+    def cpu_check(self):
+        """The Check my CPU button: the tool's pack downloaded (the first time), run, and its result judged. A job of
+        its own, so the rest of the app stays free; refused while shadPS4 runs (the check keeps a core busy)."""
+        c = self.ctl
+        if overlay.emulator_running():
+            no = 'Close NHL 19 first: the CPU check keeps one CPU core busy for about a minute.'
+            self._cpu_set(error=no, note='')
+            return {'error': no}
+        with c.lock:
+            if self.cpu['busy'] or self.cpu['sending']:
+                return {'error': 'The CPU check runs already.'}
+            self.cpu = {**self.cpu, 'busy': True, 'stage': 'download', 'part': 0.0, 'note': '', 'error': ''}
+        c.changed('setup')
+
+        def got(_name, done, total):
+            self._cpu_set(stage='download', part=min(1.0, done / total) if total else 0.0)
+
+        def work():
+            exe = cpucheck.ensure(patch_cache(), got)
+            self._cpu_set(stage='run', part=0.0)
+            path, output = cpucheck.run(exe, progress=lambda part: self._cpu_set(part=part))
+            return path, output, cpucheck.judge(path)
+
+        def done(out):
+            path, output, result = out
+            self._cpu_set(**{**CPU_IDLE, 'result': result, 'zip': path, 'output': output})
+            line, tone, _title = cpucheck.text(result)
+            c.host.log(f"Check my CPU: {result['verdict']} ({result['cpu']}, {len(result['runs'])} core types)")
+            c.say(f'CPU check: {line}', tone)
+
+        def failed(message):
+            self._cpu_set(busy=False, stage='', part=None, error=message)
+            c.host.log(f'Check my CPU: {message}')
+        jobs.run(work, done, failed, expected=(cpucheck.CheckError, packdownload.PackError, OSError, ValueError))
+        return {'ok': True}
+
+    def cpu_send(self):
+        """Send the last check's result (the page asked first): a 'cpu' report with the result zip attached and the
+        usual facts of this PC (crashreport.collect), to the server Setup uses."""
+        c = self.ctl
+        with c.lock:
+            cpu = dict(self.cpu)
+            if cpu['busy'] or cpu['sending']:
+                return {'error': 'Wait for the CPU check to end.'}
+            if cpu['result'] is None or not cpu['zip']:
+                return {'error': 'Check the CPU first.'}
+            self.cpu = {**self.cpu, 'sending': True, 'note': '', 'error': ''}
+        c.changed('setup')
+        emu, game_dir, base = self.known_emulator(), c.game_dir, f"https://{self.server['host']}"
+
+        def work():
+            with open(cpu['zip'], 'rb') as f:
+                data = f.read()
+            meta = {**crashreport.collect(emu, game_dir), **cpucheck.report_meta(cpu['result'])}
+            body = crashreport.build('cpu', cpu['output'], meta, extra=crashreport.own_secrets(emu),
+                                     attach=(os.path.basename(cpu['zip']), data))
+            return crashreport.send(base, body)
+
+        def done(rid):
+            self._cpu_set(sending=False, note=f'Result sent (id {rid}). Thank you.')
+            c.host.log(f'Check my CPU: result sent ({rid})')
+
+        def failed(message):
+            self._cpu_set(sending=False, error=message)
+        jobs.run(work, done, failed, expected=(crashreport.ReportError, OSError, ValueError))
+        return {'ok': True}
+
+    def _cpu_card(self):
+        """The CPU line (Multiplayer > Advanced): this PC's CPU, the check's state or verdict, what the buttons do."""
+        s = self.cpu
+        pub = (self.boost_table or {}).get(cpucheck.PACK)
+        here = os.path.isfile(cpucheck.tool_exe())
+        title = ''
+        if s['busy']:
+            pct = round((s['part'] or 0) * 100)
+            text, tone = ((f'Downloading the CPU check... {pct} %', 'info') if s['stage'] == 'download' else
+                          (f'Checking... {pct} % (about a minute; a CPU with two core types takes two)', 'info'))
+        elif s['result'] is not None:
+            text, tone, title = cpucheck.text(s['result'])
+        elif pub is not None or here:
+            text, tone = 'Not checked. The check takes about a minute; it sends nothing by itself.', ''
+        elif self.found is None:
+            text, tone = 'Looking...', ''
+        elif self.boost_table is None:
+            text, tone = 'The Overtime server does not answer: check your internet connection.', 'caution'
+        else:
+            text, tone = 'The CPU check is not available for download yet.', 'caution'
+        free = not s['busy'] and not s['sending']
+        full = gamesetup.cpu_name()
+        name = ' '.join(re.sub(r'\((?:R|TM|tm)\)|\bCPU\b|@.*$|\b\d+-Core\b|\bProcessor\b', ' ', full).split())
+        return {'name': name, 'full_name': full, 'text': text, 'tone': tone, 'title': title, 'busy': s['busy'],
+                'sending': s['sending'], 'note': s['note'], 'error': s['error'],
+                'can_check': free and (pub is not None or here), 'can_send': free and s['result'] is not None}
+
     def setup_resolution(self, value):
         """The Resolution choice (Boost performance card): 720 (Kravickas's res720 block), 1080 (the game's own) or
         1440 (Kravickas's res1440 block, with Additional DMem 3500 MB). A patched game takes it now, or at its next Play
@@ -1712,7 +1824,7 @@ class SetupController(Part):
                 'running': running,
                 'online': {'server': self.server['host'], 'server_default': SERVER['host'],
                            'is_default': self.server == SERVER, 'error': self.server_error, 'port': GAME_PORT,
-                           'firewall': self._firewall(emulator, f.get('firewall'))},
+                           'firewall': self._firewall(emulator, f.get('firewall')), 'cpu': self._cpu_card()},
                 'downloads': downloads,
                 'boost': self._boost_card(emulator),
                 'kits': self._kits(downloads),

@@ -28,8 +28,8 @@ import webbrowser
 from overtime_core import history as H, overlay, rules as RU, xmlpatch
 
 from .. import VERSION, hud
-from . import (gamesetup, history_view as HV, hostroster, jobs, keypress, launch, lobby_client as LC, matchsetup,
-               onlineemu, patch_ctl, paths, shadnet)
+from . import (crashreport as CR, gamesetup, history_view as HV, hostroster, jobs, keypress, launch,
+               lobby_client as LC, matchsetup, onlineemu, onlinetag, patch_ctl, paths, shadnet)
 from .registry import Part
 
 POLL = 3.0              # seconds between `state` asks while in a lobby
@@ -42,6 +42,7 @@ HOOK_SECONDS = 1800     # the hook the launch bakes works this long (the jump ha
 BOOT_WAIT = 60          # seconds from start to the first title press (docs/notes/zero-press.md)
 TITLE_GAP = 20          # seconds between the two title presses
 WATCH_POLL = 2.0
+WANT_ASKS, WANT_GAP = 4, 15  # after a game: how often the server is asked for an early end, seconds apart
 READY_SETTLE = 3        # seconds from the app seeing stage 'setup' to the READY press (the screen draws first; a READY
                         # the second title press already gave shows up as 'searching' by then: CHAT_POLL < READY_SETTLE)
 READY_GAP = 15          # seconds before READY is pressed again while no search started
@@ -64,7 +65,14 @@ SIGNIN_MISSING = ('shadPS4 has no ShadNet sign-in for NHL 19. Sign in to ShadNet
                   'and its launcher closed), then Ready again.')
 EXPECTED = (LC.LobbyError, gamesetup.SetupError, launch.LaunchError, overlay.PatchError, matchsetup.MatchSetupError,
             onlineemu.OnlineEmuError)
-CAPS = ('match_setup',)     # 0.80: this app makes a match-only setup at Ready (docs/notes/lobby.md "Match recipe")
+CAPS = ('match_setup',      # 0.80: this app makes a match-only setup at Ready (docs/notes/lobby.md "Match recipe")
+        'amd_math')         # 0.80.1: on an Intel PC that setup turns on shadPS4's AMD math (matchsetup.AMD_MATH_KEY)
+
+
+def caps():
+    """CAPS plus this PC's CPU maker (cpu_intel | cpu_amd | cpu_unknown): the server logs it at Ready, so each pair's
+    makers show (docs/notes/cross-vendor-desync.md)."""
+    return CAPS + ('cpu_' + {'intel': 'intel', 'amd': 'amd'}.get(gamesetup.cpu_vendor(), 'unknown'),)
 RESTART_FAILED = 'NHL 19 did not close. Close it, then press Start again.'
 RESTART_UNSUPPORTED = 'NHL 19 is running: close it, then press Start again.'
 
@@ -90,7 +98,8 @@ class MultiplayerCtl(Part):
              'mp_result_open': 'result_open', 'mp_result_close': 'result_close', 'mp_result': 'send_result',
              'mp_review_open': 'review_open', 'mp_review_close': 'review_close', 'mp_set_hidden': 'set_hidden',
              'mp_set_hud': 'set_hud', 'mp_say': 'say', 'mp_shadnet_signin': 'shadnet_signin',
-             'mp_shadnet_register': 'shadnet_register', 'mp_shadnet_create': 'shadnet_create'}
+             'mp_shadnet_register': 'shadnet_register', 'mp_shadnet_create': 'shadnet_create',
+             'mp_set_reports': 'set_reports', 'mp_send_report': 'send_report'}
     TAB = 'multiplayer'
 
     def __init__(self, ctl):
@@ -107,6 +116,9 @@ class MultiplayerCtl(Part):
         self.sn_register = shadnet.register
         self.press_title = prefs.get('press', True) is not False
         self.show_hud = prefs.get('hud', True) is not False     # the card and the chat over the game
+        self.reports = prefs.get('reports') is True             # opted in: crash and early-end reports are sent
+        self.reports_asked = prefs.get('reports_asked') is True  # the one-time question has been answered
+        self.report = {'busy': False, 'note': '', 'error': ''}  # the last report (manual, or automatic when it went)
         self.hud = None
         self.chat_mark = {}         # (code, token) -> the newest chat number already shown
         self.url_override = str(prefs.get('url') or '')
@@ -164,7 +176,8 @@ class MultiplayerCtl(Part):
 
     def _remember(self):
         self.ctl.remember(multiplayer={'name': self.name, 'ext': self.typed_ext, 'press': self.press_title,
-                                       'url': self.url_override, 'hud': self.show_hud, 'shadnet': self.checked})
+                                       'url': self.url_override, 'hud': self.show_hud, 'shadnet': self.checked,
+                                       'reports': self.reports, 'reports_asked': self.reports_asked})
 
     def set_name(self, name):
         name = ' '.join(str(name or '').split())[:NAME_MAX]
@@ -473,7 +486,7 @@ class MultiplayerCtl(Part):
         try:
             if self.me == 0 and hasattr(client, 'match'):
                 self._apply(client.match(code, token, matchsetup.recipe(self.ctl.setup._xml())))
-            self._apply(client.ready(code, token, False, caps=CAPS))
+            self._apply(client.ready(code, token, False, caps=caps()))
         except (LC.LobbyError, matchsetup.MatchSetupError, xmlpatch.PatchError, AttributeError, TypeError) as err:
             self.ctl.host.log(f'Multiplayer: the match setup was not announced ({err}).')
 
@@ -500,6 +513,16 @@ class MultiplayerCtl(Part):
 
     def _match_fingerprint(self, plan):
         return xmlpatch.netplay_fingerprint(matchsetup.match_xml(plan['recipe'], self._own_text()))
+
+    def _tag_inputs(self, plan, emu):
+        """onlinetag inputs of the next start (launch.start writes the tag of the same inputs). A lobby match: the match
+        patch, the online copy (_ready_job got it before Ready), the key the match config gets."""
+        game_dir = self.ctl.game_dir
+        if plan is None:
+            return onlinetag.start_inputs(emu, game_dir)
+        run = self.online_exe or (onlineemu.ready(plan['emu_sha']) if plan.get('emu_sha') else None) or emu
+        text = matchsetup.match_xml(plan['recipe'], self._own_text())
+        return onlinetag.match_inputs(emu, game_dir, text, run)
 
     def _online_copy(self, plan, note=None):
         """The online shadPS4 for this lobby (downloaded once), checked to reach the player's own data."""
@@ -611,6 +634,7 @@ class MultiplayerCtl(Part):
 
     def _send_ready(self, code, token, value):
         patch = game = None
+        tag_why = ''
         if value:
             emu = self.ctl.setup.known_emulator()
             plan = self._match_plan()
@@ -624,9 +648,17 @@ class MultiplayerCtl(Part):
             try:
                 plays = self.online_exe if plan is not None and self.online_exe else emu
                 game = dict(gamesetup.game_identity(self.ctl.game_dir) if self.ctl.game_dir else {},
-                            **gamesetup.emulator_identity(plays), app=VERSION)
+                            **gamesetup.emulator_identity(plays), app=VERSION, cpu=gamesetup.cpu_tag())
             except Exception as err:   # the identity is for the log: Ready goes on without it
                 self.ctl.host.log(f'Multiplayer: the game could not be read ({err!r}).')
+                game = {}               # the tag still goes: the lobby compares it
+            if self.ctl.game_dir:
+                try:    # the value the start will send (the lobby refuses another before launch)
+                    inp = self._tag_inputs(plan, emu)
+                    game['online'], tag_why = onlinetag.sent(inp), onlinetag.why(inp)
+                except Exception as err:   # noqa: BLE001 (the game's own value stays)
+                    self.ctl.host.log(f'Multiplayer: the matchmaking tag could not be made ({err!r}).')
+            game = game or None
         if value and self._hosts_own_roster():
             try:
                 self._upload_roster(code, token)
@@ -635,10 +667,11 @@ class MultiplayerCtl(Part):
             except LC.LobbyError as err:
                 return self._lobby_error(err)
         try:
-            lobby = self.client().ready(code, token, bool(value), patch, game, caps=CAPS)
+            lobby = self.client().ready(code, token, bool(value), patch, game, caps=caps())
         except LC.LobbyRefused as err:
-            if value and self.prep_why:             # say what went wrong here, not only the lobby's general advice
-                return self._fail(f'{err.text} (here: {self.prep_why})')
+            here = '; '.join(x.rstrip('.') for x in (self.prep_why, tag_why) if x) if value else ''
+            if here:                                # say what went wrong here, not only the lobby's general advice
+                return self._fail(f'{err.text} (here: {here})')
             return self._lobby_error(err)
         except LC.LobbyError as err:
             return self._lobby_error(err)
@@ -1206,7 +1239,8 @@ class MultiplayerCtl(Part):
             self._restore()
 
     def _launch_rules(self):
-        """The rules to bake: the lab override, else the lobby's when they differ from the game's defaults, else None."""
+        """The rules to bake: the lab override, else the lobby's when they differ from the game's own file (rules.stock:
+        a lobby at its 3-minute default still bakes), else None."""
         with self.mlock:
             lobby = (self.lobby or {}).get('rules')
         if self.rules:
@@ -1218,7 +1252,7 @@ class MultiplayerCtl(Part):
             picked = RU.validate(lobby, mode=mode)
         except RU.RulesError:
             return None             # a server speaking other rules than this app knows: the game's own
-        return picked if picked != RU.defaults(mode) else None
+        return picked if picked != RU.stock(mode) else None
 
     @staticmethod
     def _signin_ready(user):
@@ -1310,6 +1344,7 @@ class MultiplayerCtl(Part):
             self.sleep(WATCH_POLL)
         self._phase('ended', 'NHL 19 closed.')
         self._spawn(self._history_job, 'mp-history')    # a result may have arrived while the game ran
+        self._after_game(emu)
 
     def _unhook(self, game_dir):
         """The hook comes off once the game is closed (set_menus refuses while it runs)."""
@@ -1356,6 +1391,131 @@ class MultiplayerCtl(Part):
         except Exception as err:    # noqa: BLE001
             jobs.log_block(err, 'Multiplayer')
 
+    # --- crash and early-end reports (crashreport.py, docs/notes/reports.md) ------------------------------------
+    def set_reports(self, on):
+        """Automatic reports on (True) or off (False). Either answer ends the one-time question."""
+        if not isinstance(on, bool):
+            return {'error': 'Pick yes or no.'}
+        with self.mlock:
+            self.reports, self.reports_asked = on, True
+            self._remember()
+        self._changed()
+        return {'ok': True}
+
+    def send_report(self):
+        """The manual button: a report now, of this PC and the last game's log. Sent also with the automatic reports
+        off (the player asked for it; the page asks first every time)."""
+        with self.mlock:
+            if self.report['busy']:
+                return {'error': 'A report is being sent already.'}
+            self.report = {'busy': True, 'note': '', 'error': ''}
+        self._changed()
+        self._run_report(self._manual_job)
+        return {'ok': True}
+
+    def _after_game(self, emu):
+        """Only when the player opted in: after a game closed, a crash report, or an early-end report. The log is read
+        here, before the next start overwrites it; the rest runs in the background."""
+        if not self.reports or not emu:
+            return
+        text, game_dir, ext = self._game_log(emu), self.ctl.game_dir, self.ext()[0]
+        self._run_report(lambda: self._auto_job(emu, game_dir, text, ext))
+
+    def _auto_job(self, emu, game_dir, text, ext):
+        reason = None
+        try:
+            if CR.crashed(text):
+                reason, match = 'crash', self._known_match()
+            else:
+                reason = 'early_end'
+                ok, match = self._early_end(ext)
+                if not ok:
+                    return
+            rid = self._send_report(reason, text, emu, game_dir, ext, match)
+            self.ctl.host.log(f'Multiplayer: {reason} report sent ({rid}).')
+            self._report_done(note=f'Report sent (id {rid}).')
+        except CR.ReportError as err:
+            self.ctl.host.log(f'Multiplayer: the {reason or "automatic"} report was not sent ({err})')
+        except Exception as err:    # noqa: BLE001 (a report must never break the end of a game)
+            jobs.log_block(err, 'Crash report')
+
+    def _manual_job(self):
+        emu, game_dir = self.ctl.setup.known_emulator(), self.ctl.game_dir
+        try:
+            rid = self._send_report('manual', self._game_log(emu), emu, game_dir, self.ext()[0], self._known_match())
+            self._report_done(note=f'Report sent (id {rid}).')
+        except CR.ReportError as err:
+            self._report_done(error=str(err))
+        except Exception as err:    # noqa: BLE001
+            self._report_done(error=jobs.log_unexpected(err, 'Send a report'))
+
+    def _send_report(self, reason, text, emu, game_dir, ext, match):
+        meta = CR.collect(emu, game_dir, text, ext=ext, match=match)
+        return CR.send(self.url(), CR.build(reason, text, meta, extra=CR.own_secrets(emu)))
+
+    def _early_end(self, ext):
+        """(True, match id) when the server says this ShadNet id's last match ended early and it is the match just
+        played (the player's newest confirmed match in the history). The server marks a leave a moment after the game
+        closes, so it is asked a few times. A wanted answer with no match id (no row for the pair) counts once: the
+        server has nothing else to tie it to."""
+        if not ext:
+            return False, None
+        try:
+            base = self.url()
+        except LC.LobbyRefused:
+            return False, None
+        for n in range(WANT_ASKS):
+            if n:
+                self.sleep(WANT_GAP)
+            wanted, match = CR.wanted(base, ext)
+            if wanted:
+                if match is None:
+                    return True, None
+                return match == self._newest_match(ext), match
+        return False, None
+
+    def _newest_match(self, ext):
+        """The player's newest confirmed match from the server now (0 when it cannot be had)."""
+        try:
+            raw = self.client().history(ext)
+            return HV.latest_mine(raw) if isinstance(raw, dict) else 0
+        except (LC.LobbyError, KeyError, TypeError):
+            return 0
+
+    def _known_match(self):
+        """The newest confirmed match of the player that the history last showed (None when there is none)."""
+        with self.mlock:
+            raw = self.hist['raw']
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return HV.latest_mine(raw) or None
+        except (KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def _game_log(emu):
+        """The text of shadPS4's log for the game that ran last ('' when there is none)."""
+        if not emu:
+            return ''
+        try:
+            with open(launch.log_path(emu), encoding='utf-8', errors='replace') as f:
+                return f.read()
+        except OSError:
+            return ''
+
+    def _report_done(self, note='', error=''):
+        with self.mlock:
+            self.report = {'busy': False, 'note': note, 'error': error}
+        self._changed()
+
+    def _run_report(self, work):
+        """work() in a thread of its own (inline when the controller has no threads: tests)."""
+        if not self.threads:
+            work()
+            return
+        threading.Thread(target=work, daemon=True, name='mp-report').start()
+
     def _changed(self):
         self.ctl.changed('multiplayer')
 
@@ -1385,6 +1545,8 @@ class MultiplayerCtl(Part):
                              'age': _age(r.get('age'))} for r in self.lobbies],
                 'game': self._game_view(lobby),
                 'history': self._history_view(),
+                'reports': {'on': self.reports, 'asked': self.reports_asked, 'busy': self.report['busy'],
+                            'note': self.report['note'], 'error': self.report['error']},
                 'error': self.error,
                 'busy': self.busy,
                 'prep': self.prep,

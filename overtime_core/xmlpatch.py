@@ -28,6 +28,9 @@ loaded eboot only. `build` makes the file from the FEATURES table below; `build(
   ledger_cap  a capacity check on the Franchise per-team list append in 0x423ad80 (a daily per-team ledger, cleared at
               the season reset: 369 days against 366 slots), whose overflow crashes the expansion career offseason at
               0x423ce8c; the cap drops at most 3 days' entries (docs/notes/nhl19-32teams-re.md, R1: runs c1, e1)
+  crossvendor exact rcp/rsqrt at the 262 estimate sites shadPS4's own pass cannot reach (overtime_core/crossvendor.py,
+              generated): Intel and AMD then agree in lockstep. Netplay (in the fingerprint) but carried by each player,
+              not in the lobby recipe (SHARED_LOCAL_TITLES); left out for an eboot the block does not name (for_eboot)
 
 A string slot holds as many characters as the stock string it replaces (its NUL follows), so the address must fit:
 `https://ot.puckpeak.com/` (24) fits only the accounts slot, `https://91.98.195.150/` (22) fits all three
@@ -37,6 +40,8 @@ import hashlib
 import re
 import xml.etree.ElementTree as ET
 from string import Template
+
+from . import crossvendor
 
 APP_VER = '01.60'
 
@@ -56,6 +61,7 @@ BAP32_TITLE = 'BAP32: Seattle in Be a Pro'
 RES1440_TITLE = 'Resolution 2560x1440 (Kravickas)'
 RES720_TITLE = 'Resolution 1280x720 (Kravickas)'
 THREES_REWARDS_TITLE = 'T1: not-found check on the Threes unlock lookup'
+CROSSVENDOR_TITLE = crossvendor.TITLE
 
 
 class Feature:
@@ -170,16 +176,30 @@ FEATURES = {
          ('0x1409B0D', 'E88E166E049090'),
          ('0x5AEB1A0', '31F680BD00F8FFFF00742F488B05DEF585004885C0742380782900741DBE2000000041C7842494020000200000'
                        '0041C78424EC0300002000000031D24C89E7C3')]),
+    'crossvendor': Feature(
+        CROSSVENDOR_TITLE,
+        f"""  <!-- Intel and AMD CPUs return other low bits for vrcpps / vrsqrtps, so two games in lockstep drift apart
+       (docs/notes/cross-vendor-desync.md). shadPS4 swaps most estimates for AMD's results; the {crossvendor.SITES} sites
+       its pass cannot reach jump ({crossvendor.HOOKS} hooks) to caves in text padding (0x56ea4b0..0x56ec000, around
+       the R1/BAP32/T1 caves) that compute exact vdivps / vsqrtps, the same bits on every x86 CPU, then run the
+       instructions the hook overwrote and jump back. Generated (re/scripts/build_crossvendor_patch.py) for the v1.60
+       eboot only. -->""",
+        list(crossvendor.LINES)),
 }
 # bap32 and expansion32 stay last: DEFAULT[:-2] is the patch without the 32-team switch (xmlpatch.expansion32_off)
 DEFAULT = ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'res720', 'threes_rewards',
-           'ledger_cap', 'bap32', 'expansion32')
+           'crossvendor', 'ledger_cap', 'bap32', 'expansion32')
+# DEFAULT for an eboot the cross-vendor block does not name (for_eboot): the same file without it
+NO_CROSSVENDOR = tuple(f for f in DEFAULT if f != 'crossvendor')
 # what earlier versions wrote: repoint takes such a file as its own and writes today's DEFAULT (a player's next Play
-# brings new blocks in without Patch)
+# brings new blocks in without Patch). The third is 0.80.0's DEFAULT (also 0.81.0's NO_CROSSVENDOR), the last 0.81.0's
+# DEFAULT (a candidate testers ran; neither has res720).
 EARLIER = (('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'ledger_cap', 'bap32', 'expansion32'),
            ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'ledger_cap', 'bap32', 'expansion32'),
            ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'threes_rewards', 'ledger_cap',
-            'bap32', 'expansion32'))        # 0.80.0: no res720
+            'bap32', 'expansion32'),
+           ('eagain', 'redirector', 'qos_ncrt', 'nucleus', 'replays60', 'res1440', 'threes_rewards', 'crossvendor',
+            'ledger_cap', 'bap32', 'expansion32'))
 # the Resolution choice: 1080 is the game's own (no block on), the others one block each
 RESOLUTION_BLOCKS = {720: RES720_TITLE, 1440: RES1440_TITLE}
 RESOLUTIONS = (720, 1080, 1440)
@@ -344,11 +364,11 @@ def _switched(text, e32, bap):
     return text if bap else bap32_off(text)
 
 
-def repoint(text, host, nucleus_url=None):
-    """The patch file `text` for another server: the same features and switches, the redirector and Nucleus slots
-    naming `host` / `nucleus_url`. A server change then needs no Patch (owner, 2026-11-03). Refused (PatchError) when
-    `text` is not what this version writes for its own server (another Overtime's file, a hand edit): Patch makes it
-    new then."""
+def repoint(text, host, nucleus_url=None, features=DEFAULT):
+    """The patch file `text` for another server: today's `features` (for_eboot) with the file's switches, the
+    redirector and Nucleus slots naming `host` / `nucleus_url`. A server change then needs no Patch (owner, 2026-11-03).
+    Refused (PatchError) when `text` is not what this version (or an earlier one) writes for its own server (another
+    Overtime's file, a hand edit): Patch makes it new then."""
     old = targets(text)
     if not old['redirector']:
         raise PatchError('the patch file names no server')
@@ -358,16 +378,30 @@ def repoint(text, host, nucleus_url=None):
     e32, bap, res = expansion32(text), bap32(text), resolution(text)
     plain = with_resolution(text, 1080)
     same = False
-    for features in (DEFAULT,) + EARLIER:
+    for known in (DEFAULT, NO_CROSSVENDOR) + EARLIER:
         try:
-            same = _switched(build(old['redirector'], nucleus, features, newline), e32, bap) == plain
+            same = _switched(build(old['redirector'], nucleus, known, newline), e32, bap) == plain
         except PatchError:
             same = False
         if same:
             break
     if not same:
         raise PatchError('the patch file is not the one this Overtime writes; Patch the game again')
-    return with_resolution(_switched(build(host, nucleus_url, newline=newline), e32, bap), res)
+    return with_resolution(_switched(build(host, nucleus_url, features, newline=newline), e32, bap), res)
+
+
+def for_eboot(sha256):
+    """The features for a game whose eboot.bin has this sha256: DEFAULT, or NO_CROSSVENDOR for an eboot the cross-vendor
+    block was not made for (its caves re-run that v1.60 eboot's own instructions; on another eboot they would break
+    the game). Such a player then plays only players without the block (the fingerprint differs)."""
+    return DEFAULT if (sha256 or '').lower() in crossvendor.EBOOT_SHA256 else NO_CROSSVENDOR
+
+
+def has_crossvendor(text):
+    """Whether a patch file carries the cross-vendor block enabled and whole (every line as generated)."""
+    want = sorted((a.upper(), v) for a, v in crossvendor.LINES)
+    return any(b['enabled'] and b['name'] == CROSSVENDOR_TITLE and sorted((a.upper(), v) for a, v in b['lines']) == want
+               for b in parse(text))
 
 
 # Blocks and lines that never reach the other game: the picture size (Setup's Resolution), Be a Pro (offline only, off
@@ -375,6 +409,10 @@ def repoint(text, host, nucleus_url=None):
 # lobby is one server, whatever name or address the app was given).
 LOCAL_ONLY_TITLES = (RES1440_TITLE, RES720_TITLE, BAP32_TITLE, THREES_REWARDS_TITLE)
 LOCAL_ONLY_LINES = (REDIRECTOR,) + NUCLEUS
+# Blocks both games must have (they count in netplay_fingerprint) that each game carries itself: the lobby recipe leaves
+# them out (the cross-vendor block alone is ~30 KB, near the server's 32 KiB per patch text) and the match patch takes
+# them from the player's own file (matchsetup.shared_blocks). A player without the block then has another fingerprint.
+SHARED_LOCAL_TITLES = (CROSSVENDOR_TITLE,)
 
 
 def netplay_fingerprint(text):

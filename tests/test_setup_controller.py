@@ -121,6 +121,26 @@ def test_one_click_then_unpatch(sc):
     assert sc.ctl.said[-1][1] == 'good'
 
 
+def test_start_says_why_the_game_meets_only_its_own_kind_and_unpatch_takes_the_tag(sc, monkeypatch):
+    from overtime_roster.app import onlinetag, patch_ctl
+    from test_gamesetup import _versioninfo
+    _versioninfo(sc.world['game'], 'na')
+    sc.setup_refresh()
+    sc.setup_patch()
+    emu, gd = str(sc.world['emu']), str(sc.world['game'])
+    monkeypatch.setattr(launch, 'start', lambda emu_exe, game_dir: types.SimpleNamespace(pid=7, poll=lambda: 0))
+    monkeypatch.setattr(sc, '_watch_play', lambda emu_exe, proc: None)
+    assert patch_ctl.start(sc) == {'ok': True}
+    text, tone = sc.ctl.said[-1]
+    # the test exe is no online build and the fake eboot gets no Cross-CPU block
+    assert tone == 'caution' and text.startswith('NHL 19 is starting in shadPS4... Online you meet only players')
+    assert 'Boost performance' in text and 'v1.60 eboot.bin' in text
+    t, _inp = onlinetag.apply(emu, gd)
+    assert t and gamesetup.online_version(gd) == ('na', t)
+    sc.setup_unpatch()
+    assert gamesetup.online_version(gd) == ('na', 'NHL19_1.60') and not os.path.exists(gd + '-mods')
+
+
 def test_patch_refused_for_wrong_game_and_running(sc, monkeypatch):
     sc.setup_refresh()
     monkeypatch.setattr(overlay, 'emulator_running', lambda: True)
@@ -133,10 +153,23 @@ def test_patch_refused_for_wrong_game_and_running(sc, monkeypatch):
 def test_server_override_and_reset(sc):
     assert 'error' in sc.setup_set_server('ot.puckpeak.com', 'https://ot.puckpeak.com/')  # 24 > 23 / 22
     assert sc.setup_set_server('192.168.1.15') == {'ok': True}
-    assert sc._xml() == SC.xmlpatch.build('192.168.1.15')
+    # the test game's eboot.bin is not the v1.60 one: no cross-vendor block (xmlpatch.for_eboot)
+    assert sc._xml() == SC.xmlpatch.build('192.168.1.15', features=SC.xmlpatch.NO_CROSSVENDOR)
     assert sc.ctl.prefs['setup']['server'] == {'host': '192.168.1.15', 'nucleus_url': None}
     sc.setup_set_server('')
     assert sc.server == SC.SERVER and sc.ctl.prefs['setup']['server'] == {}
+
+
+def test_the_cross_vendor_block_follows_the_eboot(sc, monkeypatch):
+    from overtime_core import crossvendor
+    seen = []
+    monkeypatch.setattr(gamesetup, 'eboot_sha', lambda game_dir: seen.append(game_dir) or crossvendor.EBOOT_SHA256[0])
+    assert sc.features() == SC.xmlpatch.DEFAULT and SC.xmlpatch.has_crossvendor(sc._xml())
+    assert seen[0] == sc.ctl.game_dir
+    monkeypatch.setattr(gamesetup, 'eboot_sha', lambda game_dir: 'ab' * 32)          # another eboot
+    assert sc.features() == SC.xmlpatch.NO_CROSSVENDOR and not SC.xmlpatch.has_crossvendor(sc._xml())
+    monkeypatch.setattr(gamesetup, 'eboot_sha', lambda game_dir: None)               # no game found
+    assert sc.features() == SC.xmlpatch.NO_CROSSVENDOR
 
 
 def test_emulator_pick(sc, tmp_path):
@@ -1084,6 +1117,77 @@ def test_the_game_patch_card_says_a_match_setup_is_in_place():
     f = {'busy': '', 'checked': True, 'running': False, 'match_setup': True, 'error': '', 'patched': False,
          'problems': []}
     assert patch_ctl.state_line(f) == {'text': patch_ctl.MATCH_LOCKED, 'tone': 'caution'}
+
+
+def _cpu_result(cpucheck):
+    return {'verdict': cpucheck.INTEL, 'cpu': 'Intel Test', 'vendor': 'GenuineIntel', 'identifier': 'Family 6',
+            'seconds': 30.0, 'core_types_agree': True,
+            'runs': [{'label': 'cpu', 'efficiency_class': None, 'like': 'intel', 'differs': {'amd': 1516, 'intel': 0},
+                      'prints': {'vrcpps': 'af5ba6bccbe0ffc2'}}]}
+
+
+def test_check_my_cpu_runs_the_tool_judges_and_sends_after_a_yes(sc, monkeypatch, tmp_path):
+    import base64
+    import gzip
+    from overtime_roster.app import cpucheck, crashreport
+    zip_path = tmp_path / 'cpu-estimates-Intel-Test.zip'
+    zip_path.write_bytes(b'PK the result')
+    steps = []
+
+    def ensure(cache, progress=None):
+        progress(cpucheck.PACK, 50, 100)
+        steps.append(sc._cpu_card()['text'])
+        return 'tool.exe'
+
+    def run(exe, progress=None):
+        progress(0.5)
+        steps.append(sc._cpu_card()['text'])
+        return str(zip_path), 'CPU: Intel Test\nDone.'
+    monkeypatch.setattr(cpucheck, 'ensure', ensure)
+    monkeypatch.setattr(cpucheck, 'run', run)
+    monkeypatch.setattr(cpucheck, 'judge', lambda path: _cpu_result(cpucheck))
+    sc.found, sc.boost_table = {}, {cpucheck.PACK: object()}
+    card = sc._cpu_card()
+    assert card['can_check'] and not card['can_send'] and card['text'].startswith('Not checked')
+    assert sc.cpu_check() == {'ok': True}
+    assert steps == ['Downloading the CPU check... 50 %',
+                     'Checking... 50 % (about a minute; a CPU with two core types takes two)']
+    card = sc._cpu_card()
+    assert card['tone'] == 'good' and 'proven' in card['text'] and card['can_send'] and card['can_check']
+    assert sc.ctl.said[-1][1] == 'good' and sc.ctl.said[-1][0].startswith('CPU check: Matches the tested Intel')
+    sent = {}
+
+    def send(base, body):
+        sent.update(base=base, doc=json.loads(gzip.decompress(body)))
+        return 'abc123defg'
+    monkeypatch.setattr(crashreport, 'send', send)
+    assert sc.cpu_send() == {'ok': True}
+    doc = sent['doc']
+    assert sent['base'] == 'https://' + sc.server['host'] and doc['reason'] == 'cpu'
+    assert base64.b64decode(doc['attach']['b64']) == b'PK the result'
+    assert doc['meta']['cpu_verdict'] == cpucheck.INTEL and doc['meta']['app_version'] and 'Done.' in doc['log']
+    assert doc['meta']['ext'] is None and doc['meta']['match'] is None      # the page says: no account goes
+    assert sc._cpu_card()['note'] == 'Result sent (id abc123defg). Thank you.'
+
+
+def test_check_my_cpu_waits_for_shadps4_and_for_the_pack(sc, monkeypatch):
+    from overtime_roster.app import cpucheck
+    sc.found, sc.boost_table = {}, {}
+    card = sc._cpu_card()
+    assert not card['can_check'] and card['text'] == 'The CPU check is not available for download yet.'
+    assert sc.cpu_send() == {'error': 'Check the CPU first.'}
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: True)
+    assert sc.cpu_check()['error'].startswith('Close NHL 19 first')
+    assert sc._cpu_card()['error'].startswith('Close NHL 19 first')
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+
+    def offline(cache, progress=None):
+        raise cpucheck.CheckError('The Overtime server does not answer.')
+    monkeypatch.setattr(cpucheck, 'ensure', offline)
+    sc.boost_table = {cpucheck.PACK: object()}
+    assert sc.cpu_check() == {'ok': True}
+    card = sc._cpu_card()
+    assert card['error'] == 'The Overtime server does not answer.' and not card['busy'] and card['can_check']
 
 
 def test_resolution_choice_takes_720_1080_1440_and_is_kept(sc):

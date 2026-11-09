@@ -3,15 +3,16 @@
 A lobby match plays on a setup made for that match alone, and the player's own setup comes back when the game closes
 (or at the next app start after a crash):
 
-  patch   the host's netplay blocks (what must match) plus this player's local-only blocks (picture size, Be a Pro,
-          the Threes guard, the server's name), written to the app's own match file and passed with `-p`. shadPS4 then
-          loads that file instead of the patches folder (memory_patcher.cpp OnGameLoaded), so the player's own
-          overtime.xml is never touched (docs/notes/match-setup.md 0a).
+  patch   the host's netplay blocks (what must match), this player's own copy of the shared-local ones (the
+          cross-vendor block: it must match too, but is too big for the recipe) and this player's local-only blocks
+          (picture size, Be a Pro, the Threes guard, the server's name), written to the app's own match file and passed
+          with `-p`. shadPS4 then loads that file instead of the patches folder (memory_patcher.cpp OnGameLoaded), so
+          the player's own overtime.xml is never touched (docs/notes/match-setup.md 0a).
   data    a view of the player's `<game>-mods`: every file hardlinked (a copy where links fail), swapped in by rename
           for the match. Overlay writes go through a temp file and os.replace, so a write on the view replaces the
           view's link and the player's file stays as it is; the menus layer (the autoplay hook) is added on the view.
-  config  the game's custom config gets the match values (network on, the match timing, DMem for 1440p); its exact
-          bytes are kept in the journal and written back after.
+  config  the game's custom config gets the match values (network on, the match timing, DMem for 1440p, AMD math on
+          Intel, a log a desync report can read); its exact bytes are kept in the journal and written back after.
 
 The journal (`match-setup.json` in the app folder) is saved before each change, so `restore` can undo any prefix of
 `apply`. Nothing here runs while shadPS4 runs. `apply` and `restore` hold one lock (the app-start thread, the
@@ -38,6 +39,15 @@ MATCH_XML = 'overtime-match.xml'
 # the timing every match plays with (not the host's: a stray vblank 9999 Hz, live 2026-11-08, must not travel)
 MATCH_TIMING = {'vblank_frequency': 60, 'neo_mode': False}
 ALWAYS_LAYERS = ('menus',)              # the autoplay hook lives in the menus layer's boot.big
+# AMD math on Intel (gamesetup.amd_math_needed): set here too, for a match on a config install() has not seen
+AMD_MATH_KEY = gamesetup.AMD_MATH_KEY
+# The match's shadPS4 log holds what a desync report needs: the CPU, the config, and the Core.Linker line with the AMD
+# math patch counts (written at Debug). Render stays at errors so the file stays small. The player's own Log settings
+# come back with the config, and each match game's log is kept in the app folder, so a crash's log survives the next
+# Start (live 2026-11-08: three tests where the Intel side's log could not answer).
+MATCH_LOG = {'enable': True, 'separate': False, 'append': False,
+             'filter': '*:Info Core.Linker:Debug Render:Error Render.Vulkan:Error Lib.Net:Debug Lib.Http:Debug'}
+KEEP_LOGS = 8
 
 _ADDR = re.compile(r'0x[0-9A-Fa-f]{1,16}\Z')
 _HEX = re.compile(r'(?:[0-9A-Fa-f]{2}){1,1024}\Z')
@@ -51,17 +61,25 @@ class MatchSetupError(RuntimeError):
 
 # ---- the recipe: what the host's game plays with ------------------------------------------------------------------
 def netplay_blocks(text):
-    """The blocks two games must share (as netplay_fingerprint counts them): every enabled block outside the local-only
-    ones, without the server lines. [{'name', 'lines': [[address, hex]]}]."""
+    """The blocks the host's recipe carries: every enabled block outside the local-only ones, without the server lines,
+    and without the shared-local ones (each game adds its own: shared_blocks). [{'name', 'lines': [[address, hex]]}]."""
     skip = {a.upper() for a in xmlpatch.LOCAL_ONLY_LINES}
     out = []
     for b in xmlpatch.parse(text):
-        if not b['enabled'] or b['name'] in xmlpatch.LOCAL_ONLY_TITLES:
+        if (not b['enabled'] or b['name'] in xmlpatch.LOCAL_ONLY_TITLES
+                or b['name'] in xmlpatch.SHARED_LOCAL_TITLES):
             continue
         lines = [[a, v.upper()] for a, v in b['lines'] if a.upper() not in skip]
         if lines:
             out.append({'name': b['name'], 'lines': lines})
     return out
+
+
+def shared_blocks(text):
+    """The enabled shared-local blocks of this player's patch, whole (the cross-vendor block): both games must have them
+    (they count in the fingerprint), but each brings its own, so the recipe stays small."""
+    return [{'name': b['name'], 'lines': [[a, v.upper()] for a, v in b['lines']]} for b in xmlpatch.parse(text)
+            if b['enabled'] and b['name'] in xmlpatch.SHARED_LOCAL_TITLES and b['lines']]
 
 
 def local_blocks(text):
@@ -155,8 +173,10 @@ def render(blocks, newline='\r\n'):
 
 
 def match_xml(r, own_text):
-    """The patch this game plays the match with: the recipe's blocks, then this player's local-only ones."""
-    return render(blocks_of(check(r)) + local_blocks(own_text))
+    """The patch this game plays the match with: the recipe's blocks, this player's shared-local ones (always this app's
+    own: a recipe's block of that name is dropped), then this player's local-only ones."""
+    blocks = [b for b in blocks_of(check(r)) if b['name'] not in xmlpatch.SHARED_LOCAL_TITLES]
+    return render(blocks + shared_blocks(own_text) + local_blocks(own_text))
 
 
 # ---- the journal ----------------------------------------------------------------------------------------------------
@@ -259,6 +279,9 @@ def _config_values(cfg, user, xml_text, timing):
         cfg['GPU'] = gpu
     if 'neo_mode' in timing:
         general['neo_mode'] = timing['neo_mode']
+    if gamesetup.amd_math_needed():
+        general[AMD_MATH_KEY] = True
+    cfg['Log'] = dict(cfg['Log'] if isinstance(cfg.get('Log'), dict) else {}, **MATCH_LOG)
     if xmlpatch.res1440(xml_text):
         dmem = general.get(gamesetup.DMEM_KEY)
         if not (isinstance(dmem, int) and dmem >= gamesetup.DMEM_1440):
@@ -365,6 +388,9 @@ def _restore(running, log, only):
         return 'none'
     if (running or overlay.emulator_running)():
         return 'later'
+    kept = keep_log(j)
+    if kept:
+        log(f'Match setup: the game\'s log is kept as {kept}')
     steps = set(j.get('steps') or ())
     mods, view, own = j.get('mods'), j.get('view'), j.get('own')
     if not (mods and view and own and view == mods + VIEW_SUFFIX and own == mods + OWN_SUFFIX):
@@ -395,6 +421,27 @@ def _restore(running, log, only):
     _drop_journal()
     log('Match setup: your own setup is back')
     return 'done'
+
+
+def keep_log(j):
+    """Copy the shadPS4 log of a game that ran on this match setup (written after the setup started) into
+    app_dir('match', 'logs'), named by its last write, keeping the newest KEEP_LOGS. Returns the copy's path or None.
+    Never raises: a log must never stop the player's setup from coming back."""
+    try:
+        user = j.get('user_dir')
+        src = os.path.join(user, gamesetup.LOG_FILE) if user else None
+        if not src or not os.path.isfile(src) or os.path.getmtime(src) < (j.get('started') or 0):
+            return None
+        folder = paths.app_dir('match', 'logs')
+        stamp = time.strftime('%Y%m%d-%H%M%S', time.localtime(os.path.getmtime(src)))
+        dst = os.path.join(folder, f'shad_log-{stamp}.txt')
+        shutil.copy2(src, dst)
+        old = sorted(n for n in os.listdir(folder) if n.startswith('shad_log-') and n.endswith('.txt'))
+        for n in old[:-KEEP_LOGS]:
+            os.remove(os.path.join(folder, n))
+        return dst
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 def restore_when_closed(running=None, log=lambda m: None, sleep=time.sleep, every=10.0):

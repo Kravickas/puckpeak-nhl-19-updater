@@ -37,6 +37,9 @@ from .patch import ART_ENV, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK
 # name -> what a player reads, and whether the patch needs it for the art (core; until v0.10.0 the one click fetched those)
 EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
 EMULATOR_EXE = 'shadPS4.exe'
+CPUTEST_PACK = 'cpu_estimates.zip'      # not art: tools/cpu_estimates.py as an exe, Check my CPU (cpucheck.py)
+CPUTEST_EXE = 'cpu-estimates.exe'
+TOOL_PACKS = (EMULATOR_PACK, CPUTEST_PACK)     # the program packs: each one exe, not in PACKS (no art, no card)
 PACKS = {
     'looks32.zip': {'title': 'Team art for all 32 teams', 'core': True},
     'looks.zip': {'title': 'Utah and Seattle looks', 'core': True},
@@ -47,6 +50,7 @@ PACKS = {
     KITS_PACK: {'title': '3D jerseys for 30 teams', 'core': False},
     **{name: {'title': title, 'core': False} for name, title in EXTRA_PACKS.items()},
 }
+KNOWN = (*PACKS, *TOOL_PACKS)      # every name published() reads and download() takes
 CORE = tuple(name for name, pack in PACKS.items() if pack['core'])
 STATES = ('here', 'missing', 'newer', 'offline', 'wrong_roster', 'not_served')
 DEFAULT_FILE = 'packs/' + KITS_PACK
@@ -113,17 +117,16 @@ def _read(url, fetch_text):
         return None
     listed = data.get('packs') if isinstance(data.get('packs'), dict) else {}
     sums = None
-    if any(isinstance(listed.get(name), dict) for name in (*PACKS, EMULATOR_PACK)):
+    if any(isinstance(listed.get(name), dict) for name in KNOWN):
         try:
             sums = fetch_text(urllib.parse.urljoin(url, data.get('sums') or selfupdate.SUMS_ASSET))
         except Exception:
             sums = None
-    return {name: _release(name, listed[name], url, sums) for name in (*PACKS, EMULATOR_PACK)
-            if isinstance(listed.get(name), dict)}
+    return {name: _release(name, listed[name], url, sums) for name in KNOWN if isinstance(listed.get(name), dict)}
 
 
 def published(url=None, fetch_text=None, max_age=REMEMBER):
-    """{pack name: selfupdate.Release} of the packs latest.json names (PACKS' and EMULATOR_PACK only), or None when the release
+    """{pack name: selfupdate.Release} of the packs latest.json names (KNOWN only), or None when the release
     cannot be read (offline). The release host is read again after `max_age` seconds (after a failed read: FORGET);
     with `fetch_text` (tests: a local fixture) it is always read."""
     url = url or selfupdate.release_url()
@@ -521,7 +524,7 @@ def download(names, cache_dir, progress=None, release=None, game_dir=None, cance
     table = _table(release, None, max_age=0)
     out = []
     for name in names:
-        if name not in PACKS and name != EMULATOR_PACK:
+        if name not in KNOWN:
             out.append((name, False, 'Overtime Roster does not know this pack.'))
             continue
         if table is None:
@@ -605,23 +608,37 @@ def check_zip(path):
         raise art.ArtError('not an art pack')
 
 
+def exe_entry(z, exe_name):
+    """The one `exe_name` in the ZipFile z (any folder, any case). ArtError otherwise."""
+    exes = [n for n in z.namelist() if n.rsplit('/', 1)[-1].lower() == exe_name.lower()]
+    if len(exes) != 1:
+        raise art.ArtError(f'not one {exe_name} in it')
+    return exes[0]
+
+
 def emulator_entry(z):
     """The one shadPS4.exe in the ZipFile z. ArtError otherwise."""
-    exes = [n for n in z.namelist() if n.rsplit('/', 1)[-1].lower() == EMULATOR_EXE.lower()]
-    if len(exes) != 1:
-        raise art.ArtError(f'not one {EMULATOR_EXE} in it')
-    return exes[0]
+    return exe_entry(z, EMULATOR_EXE)
+
+
+def _check_exe(path, exe_name):
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z, z.open(exe_entry(z, exe_name)) as exe:
+            if exe.read(2) != b'MZ':
+                raise art.ArtError(f'{exe_name} is not a Windows program')
+    except (zipfile.BadZipFile, OSError) as err:
+        raise art.ArtError(str(err)) from err
 
 
 def check_emulator(path):
     """The emulator pack holds one shadPS4.exe and that reads as a Windows program. ArtError otherwise."""
-    import zipfile
-    try:
-        with zipfile.ZipFile(path) as z, z.open(emulator_entry(z)) as exe:
-            if exe.read(2) != b'MZ':
-                raise art.ArtError(f'{EMULATOR_EXE} is not a Windows program')
-    except (zipfile.BadZipFile, OSError) as err:
-        raise art.ArtError(str(err)) from err
+    _check_exe(path, EMULATOR_EXE)
+
+
+def check_cputest(path):
+    """The CPU check pack holds one cpu-estimates.exe and that reads as a Windows program. ArtError otherwise."""
+    _check_exe(path, CPUTEST_EXE)
 
 
 def check_clubart(path):
@@ -642,7 +659,7 @@ def check_kitlayers(path):
         raise art.ArtError(f'{len(missing)} pictures missing, {missing[0]} first')
 
 
-CHECKS = {EMULATOR_PACK: check_emulator, CLUBART_PACK: check_clubart,     # the packs that are not art packs
+CHECKS = {EMULATOR_PACK: check_emulator, CPUTEST_PACK: check_cputest, CLUBART_PACK: check_clubart,   # not art packs
           **{name: check_kitlayers for name in KITLAYER_PACKS}}
 
 
