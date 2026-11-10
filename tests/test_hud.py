@@ -73,6 +73,7 @@ def test_the_windows_drawing_runs_a_chat_and_a_rank_up_card_without_errors():
         h = hud.Hud(lambda: (0, 0, 1920, 1080), clock=lambda: clock[0])
         h.start()
         h.chat('Partner', 'gg, good game! ' + 'long ' * 40)
+        h.link({'age': 0.4, 'ping': 145, 'loss_in': 0.0, 'loss_out': 3.2, 'pktl': 0})
         h.result(dict(CARD, rating_from=1089, rating_to=1112, tier='Pro', next_name='Top 6', next_at=1200, band_low=1100,
                       rank_up='Pro'))
         deadline = time.time() + 5
@@ -83,3 +84,29 @@ def test_the_windows_drawing_runs_a_chat_and_a_rank_up_card_without_errors():
     finally:
         native.QUIET = False
     assert h.error is None and h.frames >= 5
+
+
+def test_the_corner_readout_tones_ping_and_loss_and_goes_quiet_then_away():
+    link = anim.Link()
+    assert link.readout(0) is None
+    link.update({'age': 0.2, 'ping': 45, 'loss_in': 0.0, 'loss_out': 0.0}, 10.0)
+    assert link.readout(10.0) == ('good', '45 ms', '0% loss', 'good', 'good')
+    link.update({'age': 0.2, 'ping': 45, 'loss_in': None, 'loss_out': None}, 10.0)
+    assert link.readout(10.0) == ('good', '45 ms', '-- loss', 'good', 'good')
+    link.update({'age': 0.2, 'ping': 130, 'loss_in': 0.0}, 10.0)
+    assert link.readout(10.0)[::3] == ('caution', 'caution') and link.readout(10.0)[4] == 'good'
+    link.update({'age': 0.2, 'ping': 40, 'loss_out': 3.5}, 10.0)
+    assert link.readout(10.0) == ('caution', '40 ms', '3.5% loss', 'good', 'caution')
+    link.update({'age': 0.2, 'ping': 40, 'loss_out': 2.5}, 10.0)
+    assert link.readout(10.0)[0] == 'good'                    # under the ~1 % measuring floor plus margin
+    link.update({'age': 0.2, 'ping': 40, 'loss_in': 9}, 10.0)
+    assert link.readout(10.0)[0] == 'bad'
+    link.update({'age': 0.2, 'ping': 250, 'loss_in': 0}, 10.0)
+    assert link.readout(10.0)[0] == 'bad'
+    link.update({'age': 1.0, 'ping': 40}, 10.0)
+    assert link.readout(13.5) == ('bad', 'NO DATA', '4 s', 'bad', 'bad')      # no fresh figures: never a frozen good number
+    assert link.readout(40.0) is None                         # long gone: no match runs
+    link.update({'age': 0.1, 'quiet': 3.5, 'ping': 40}, 60.0)
+    assert link.readout(60.0) == ('bad', 'NO PACKETS', '3 s', 'bad', 'bad')   # the partner's packets stopped
+    link.update(None, 50.0)
+    assert link.readout(50.0) is None

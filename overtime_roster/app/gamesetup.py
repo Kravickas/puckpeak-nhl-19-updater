@@ -40,6 +40,16 @@ DMEM_KEY, DMEM_1440 = 'extra_dmem_in_mbytes', 3500   # "General": what the 1440p
 # with this per-game key on (off by default; docs/notes/cross-vendor-desync.md). install() turns it on where
 # amd_math_needed(), and an AMD PC keeps its own value.
 AMD_MATH_KEY = 'redzone_patches'
+# "GPU": shadPS4's readbacks (0 Disabled, the default; 1 Relaxed; 2 Precise) and "Readback linear images" (off by
+# default). Precise and on for every player (owner 2026-11-10, against graphical glitches); install() writes them over
+# the player's values and keeps those for remove()
+GPU_SETTINGS = {'readbacks_mode': 2, 'readback_linear_images_enabled': True}
+# "GPU": shadPS4's display mode. full_screen off = a window; on with "Fullscreen" = exclusive; on with anything else =
+# borderless (fork sdl_window.cpp). The app holds the player's choice (Game settings), default borderless: the HUD draws
+# over a borderless window (owner 2026-11-10: "make sure default is fullscreen borderless"). install() writes it like
+# GPU_SETTINGS; a match plays exclusive as borderless so chat, results and the pill show.
+DISPLAY_MODES = ('Windowed', 'Fullscreen', 'Fullscreen (Borderless)')
+DISPLAY_DEFAULT = 'Fullscreen (Borderless)'
 WINDOWS = os.name == 'nt'
 # the ShadNet servers the game's "Network" section needs filled (live 2026-11-07: a tester's game-specific Network tab
 # was empty and the game stopped at SIGN IN REQUIRED until he typed them); the shared config.json's are used if set
@@ -104,6 +114,31 @@ def set_custom_data(path):
 
 def custom_data():
     return _CUSTOM['data']
+
+
+_DISPLAY = {'mode': DISPLAY_DEFAULT}    # the player's display mode (Setup prefs)
+
+
+def set_display(mode):
+    """The display mode the game plays in (Game settings); an unknown one is the default."""
+    _DISPLAY['mode'] = mode if mode in DISPLAY_MODES else DISPLAY_DEFAULT
+
+
+def display_mode():
+    return _DISPLAY['mode']
+
+
+def display_keys(match=False):
+    """The two "GPU" keys for the player's display mode; a match plays exclusive fullscreen as borderless."""
+    mode = _DISPLAY['mode']
+    if match and mode == 'Fullscreen':
+        mode = DISPLAY_DEFAULT
+    return {'full_screen': mode != 'Windowed', 'full_screen_mode': mode}
+
+
+def gpu_wanted(match=False):
+    """Every "GPU" key Overtime writes: GPU_SETTINGS and the display mode."""
+    return dict(GPU_SETTINGS, **display_keys(match))
 
 
 def is_data_dir(path):
@@ -481,6 +516,17 @@ ONLINE_ID = re.compile(r'[A-Za-z0-9_-]{3,16}')
 USERS_FILE = 'users.json'
 
 
+def default_users():
+    """users.json as shadPS4 writes it when there is none (src/core/user_settings.cpp CreateDefaultUsers): users
+    1000-1003, player 1 = 1000, ShadNet off. For a PC that never started shadPS4 (the app set it up): shadPS4 reads
+    the file, keeps these users and saves it again with its own commit_hash. A file it cannot parse crashes it, so
+    every key and type is shadPS4's own."""
+    return {'Users': {'commit_hash': '', 'user': [
+        {'player_index': n, 'shadnet_email': '', 'shadnet_enabled': False, 'shadnet_npid': '', 'shadnet_password': '',
+         'shadnet_token': '', 'user_color': n, 'user_id': 999 + n, 'user_name': 'shadPS4' if n == 1 else f'shadPS4-{n}'}
+        for n in range(1, 5)]}}
+
+
 def _player_one(users):
     """The user NHL 19 plays as: player_index 1 (user 1000), else the first one."""
     rows = [u for u in users if isinstance(u, dict)]
@@ -529,6 +575,9 @@ def shadnet_signin(user_dir, npid, password, running=None):
     npid, password = shadnet_check(npid, password)
     _refuse_while_running(running)
     path = os.path.join(user_dir, USERS_FILE)
+    if not os.path.exists(path):
+        # shadPS4 never ran on this PC (the app set it up): its own defaults first, as its first start writes them
+        _write(path, json.dumps(default_users(), indent=4).encode('utf-8'))
     try:
         with open(path, 'rb') as f:
             data = f.read()
@@ -964,6 +1013,17 @@ def amd_math_on(user_dir):
         return False
 
 
+def readbacks_on(user_dir):
+    """True when the game's own config has GPU_SETTINGS (Precise readbacks, readback linear images on) and the
+    player's display mode."""
+    try:
+        with open(custom_config_path(user_dir), encoding='utf-8-sig') as f:
+            gpu = json.load(f).get('GPU') or {}
+        return all(gpu.get(k) == v for k, v in gpu_wanted().items())
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def emulator_identity(emu_exe):
     """The shadPS4 side of the install identity: {'emu': short revision, 'timing': 'vblank<Hz>,neo<0|1>'} from the exe's
     version block and the game's custom config (gr4vity ran vblank 9999 Hz on 2026-11-08; the game paces frames by it)."""
@@ -1040,6 +1100,8 @@ def _game_config(cfg_path, user):
             cfg = {}
     if not isinstance(cfg, dict) or not isinstance(cfg.get('General', {}), dict):
         raise SetupError(f'{cfg_path}: "General" is not a section; fix or delete the file first')
+    if not isinstance(cfg.get('GPU', {}), dict):
+        raise SetupError(f'{cfg_path}: "GPU" is not a section; fix or delete the file first')
     return cfg
 
 
@@ -1070,7 +1132,7 @@ def install(emu_exe, xml_text, running=None):
         m['files'] = list(entries.values())
         _save_manifest(m)
 
-    def put(path, data, previous_keys=None, previous_network=None, added=()):
+    def put(path, data, previous_keys=None, previous_network=None, added=(), previous_gpu=None):
         before = _read(path) if os.path.exists(path) else None
         e = entries.get(path)
         if e is None:
@@ -1092,6 +1154,8 @@ def install(emu_exe, xml_text, running=None):
             e['action'] = 'replaced'
         if added:
             e['network_added'] = sorted(set(e.get('network_added') or ()) | set(added))
+        if previous_gpu is not None:            # the player's own values, once per key (a later install sees ours)
+            e['previous_gpu'] = dict(previous_gpu, **(e.get('previous_gpu') or {}))
         record()  # before the write: a failure in between still leaves the file on record
         if before != data:
             _write(path, data)
@@ -1113,7 +1177,11 @@ def install(emu_exe, xml_text, running=None):
     amd_now = general.get(AMD_MATH_KEY)
     amd = amd_math_needed()             # Intel on Windows: on; else the player's own value (back, if we set it)
     amd_want = True if amd else kept[AMD_MATH_KEY] if AMD_MATH_KEY in kept else amd_now
-    if not _both_on(cfg) or cfg_path in entries or dmem_want != dmem_now or amd_want != amd_now:
+    gpu = cfg.setdefault('GPU', {})
+    gpu_want = gpu_wanted()
+    gpu_now = {k: gpu.get(k) for k in gpu_want}
+    if (not _both_on(cfg) or cfg_path in entries or dmem_want != dmem_now or amd_want != amd_now
+            or gpu_now != gpu_want):
         previous = kept or {k: general.get(k) for k in NETWORK}
         if dmem_want != dmem_now and DMEM_KEY not in previous:
             previous[DMEM_KEY] = dmem_now
@@ -1134,13 +1202,15 @@ def install(emu_exe, xml_text, running=None):
         previous_network = (entries.get(cfg_path) or {}).get('previous_network') or {
             k: section[k] for k in NETWORK if k in section}
         general.update(NETWORK)
+        gpu.update(gpu_want)
         # both homes (live 2026-11-07: the launcher's game-specific Network tab showed blank with "General" only, and
         # a build that reads "Network" over a shared config.json with them off would start the game offline)
         filled = {k: v for k, v in _servers(user).items()
                   if not (isinstance(section.get(k), str) and section[k].strip())}
         cfg['Network'] = dict(section, **filled, **NETWORK)
         put(cfg_path, json.dumps(cfg, indent=4).encode('utf-8'), previous_keys=previous,
-            previous_network=previous_network, added=[k for k in filled if k not in section])
+            previous_network=previous_network, added=[k for k in filled if k not in section],
+            previous_gpu=gpu_now)
         if entries[cfg_path].get('previous') is not None:
             entries[cfg_path]['previous'] = previous     # an earlier install's record learns the DMem key too
     record()
@@ -1187,6 +1257,17 @@ def remove(running=None):
                     cfg['Network'].pop(k, None)
                 if not cfg['Network']:
                     del cfg['Network']
+            if 'previous_gpu' in e:
+                gpu = cfg.get('GPU') if isinstance(cfg.get('GPU'), dict) else {}
+                for k, v in e['previous_gpu'].items():
+                    if v is None:
+                        gpu.pop(k, None)
+                    else:
+                        gpu[k] = v
+                if gpu:
+                    cfg['GPU'] = gpu
+                else:
+                    cfg.pop('GPU', None)
             _write(path, json.dumps(cfg, indent=4).encode('utf-8'))
             said.append(f'put back the network settings in {path}')
         elif e['action'] == 'created':

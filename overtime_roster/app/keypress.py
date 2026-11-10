@@ -1,7 +1,7 @@
 """A key press in shadPS4's window, as window messages (Windows): the player's mouse, keyboard and focus are never touched.
 
 Used by the Multiplayer tab for the two title-screen presses (docs/notes/zero-press.md). The key is the one the player's
-own keyboard map gives Cross (`input_config/default.ini`, first single-character `cross =` line: shadPS4's default
+own keyboard map gives Cross (the input file shadPS4 reads, first single-character `cross =` key: shadPS4's default
 profile lists the keypad key first and `n` as the alternative for users without a keypad); 'n' without a readable map.
 """
 import ctypes
@@ -10,28 +10,21 @@ import subprocess
 import sys
 import time
 
-from . import gamesetup
+from . import emuinput, gamesetup
 
 DEFAULT_CROSS = 'n'
 WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
 
 
 def cross_key(emu_exe):
-    """The keyboard key (one character) the player's map gives Cross, else 'n'."""
-    path = os.path.join(gamesetup.emu_user_dir(emu_exe), 'input_config', 'default.ini') if emu_exe else ''
-    try:
-        with open(path, encoding='utf-8', errors='replace') as f:
-            lines = f.read().splitlines()
-    except OSError:
+    """The keyboard key (one character) the player's map gives Cross, else 'n'. The map is the input file shadPS4 reads
+    (emuinput.input_file); a line counts by its key, not by the comment heading it."""
+    if not emu_exe:
         return DEFAULT_CROSS
-    for line in lines:
-        if line.strip().lower().startswith('# controller'):     # the pad section follows the keyboard's
-            break
-        name, _, value = line.partition('=')
-        value = value.strip()
-        if name.strip().lower() == 'cross' and len(value) == 1 and value.isalnum():
-            return value.lower()
-    return DEFAULT_CROSS
+    try:
+        return emuinput.cross_key(gamesetup.emu_user_dir(emu_exe)) or DEFAULT_CROSS
+    except (OSError, ValueError):
+        return DEFAULT_CROSS
 
 
 def emulator_pids():

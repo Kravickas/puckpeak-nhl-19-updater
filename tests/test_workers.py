@@ -186,3 +186,14 @@ def test_a_damaged_art_file_read_on_another_core_fails_the_archive(cores, tmp_pa
         eb.new_archive(str(tmp_path / 'x.big'), {'nhl/a.gnf': b'GNF 123456', 'nhl/b.gnf': bad},
                        context=art.reading)
     assert not (tmp_path / 'x.big').exists() and not (tmp_path / 'x.big.tmp').exists()
+
+
+def _square(x):
+    return x * x
+
+
+def test_ordered_processes_in_order(monkeypatch):
+    """Processes (spawned) give the same results in the same order as threads."""
+    monkeypatch.setenv('OVERTIME_NO_PROCESSES', '0')
+    got = list(workers.ordered(((i, (i,)) for i in range(20)), _square, workers=2, processes=True))
+    assert [(k, r) for k, r, _e in got] == [(i, i * i) for i in range(20)]

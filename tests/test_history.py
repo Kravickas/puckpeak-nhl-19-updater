@@ -56,6 +56,39 @@ def test_claims_that_differ_are_disputed_and_nobody_wins():
     assert H.resolve(match(1, ANN, BO, ca=claim('PIT', 3, 2), cb=claim('BOS', 2, 4)))['status'] == H.DISPUTED
 
 
+def test_two_game_reports_off_by_one_goal_still_confirm_with_each_sides_own_score():
+    """Match 75 (2026-11-10): the game said 8-5 to one side and 4-8 to the other; the winner and own scores agree."""
+    def game(team, sf, sa):
+        return {**claim(team, sf, sa), 'source': 'game'}
+    m = match(75, ANN, BO, ca=game('TB', 8, 5), cb=game('PIT', 4, 8))
+    r = H.resolve(m)
+    assert (r['status'], r['winner']) == (H.CONFIRMED, 'a1') and r['scores'] == {'a1': 8, 'b2': 4} and H.full(m)
+    # two goals apart, a different winner, or a typed entry among them: still a dispute
+    assert H.resolve(match(1, ANN, BO, ca=game('TB', 8, 6), cb=game('PIT', 4, 8)))['status'] == H.DISPUTED
+    assert H.resolve(match(1, ANN, BO, ca=game('TB', 5, 4), cb=game('PIT', 5, 4)))['status'] == H.DISPUTED
+    assert H.resolve(match(1, ANN, BO, ca=game('TB', 8, 5), cb=claim('PIT', 4, 8)))['status'] == H.DISPUTED
+    assert not H.full(match(1, ANN, BO, ca=game('TB', 8, 6), cb=game('PIT', 4, 8)))
+
+
+def test_threes_game_reports_are_decided_by_each_sides_own_score():
+    """Match 79 (2026-11-10, lost 14-2): the winner's game said 14-1, the loser's 2-10. Each own score is right."""
+    def game(team, sf, sa):
+        return {**claim(team, sf, sa), 'source': 'game'}
+
+    def threes(ca, cb):
+        return {**match(79, ANN, BO, ca=ca, cb=cb), 'mode': 'threes'}
+    m = threes(game('MTL', 14, 1), game('PIT', 2, 10))
+    r = H.resolve(m)
+    assert (r['status'], r['winner']) == (H.CONFIRMED, 'a1') and r['scores'] == {'a1': 14, 'b2': 2} and H.full(m)
+    assert H.resolve(threes(game('MTL', 8, 3), game('PIT', 2, 6)))['scores'] == {'a1': 8, 'b2': 2}     # match 78
+    # both claim the win, both the loss, equal own scores, or a typed entry: still a dispute
+    for ca, cb in ((game('MTL', 5, 1), game('PIT', 6, 2)), (game('MTL', 1, 5), game('PIT', 2, 6)),
+                   (game('MTL', 3, 1), game('PIT', 3, 2)), (game('MTL', 14, 1), claim('PIT', 2, 10))):
+        assert H.resolve(threes(ca, cb))['status'] == H.DISPUTED
+    # outside Threes the one-goal rule stands
+    assert H.resolve(match(79, ANN, BO, ca=game('MTL', 14, 1), cb=game('PIT', 2, 10)))['status'] == H.DISPUTED
+
+
 def test_a_missing_team_is_taken_from_the_other_claim():
     r = H.resolve(match(1, ANN, BO, ca=claim(None, 3, 2, 'BOS'), cb=claim('BOS', 2, 3)))
     assert r['teams'] == {'a1': None, 'b2': 'BOS'}

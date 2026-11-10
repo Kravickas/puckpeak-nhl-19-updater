@@ -21,6 +21,7 @@ def pytest_configure(config):
     # shadPS4's data folder too: with no portable `user\` beside a fake emulator a test would find the real %APPDATA%
     # one and patch it (2026-10-29: a patch file the app's record did not know)
     os.environ['APPDATA'] = os.path.join(RUN_DIR, 'appdata')
+    os.environ.setdefault('OVERTIME_NO_PROCESSES', '1')     # workers.ordered on threads: tiny jobs, no pool starts
 
 
 NHL_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
@@ -74,10 +75,11 @@ def game_db(game_dir):
 
 @pytest.fixture(autouse=True)
 def no_running_emulator(monkeypatch):
-    """A game the maintainer has open must not stop a save in a test (saves refuse while shadPS4 runs); a test that
-    wants the refusal patches it back."""
+    """A game or QtLauncher the maintainer has open must not stop a save in a test (saves refuse while shadPS4 or its
+    launcher runs); a test that wants the refusal patches it back."""
     from overtime_core import overlay
     monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    monkeypatch.setattr(overlay, 'launcher_running', lambda: False)
 
 
 @pytest.fixture(autouse=True)
@@ -88,8 +90,11 @@ def no_real_art_packs(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_custom_data_folder():
-    """The shadPS4 data folder set in Setup's Folders list is process-wide (gamesetup): none leaks between tests."""
+    """The shadPS4 data folder set in Setup's Folders list and the display mode are process-wide (gamesetup): none leaks
+    between tests."""
     from overtime_roster.app import gamesetup
     gamesetup.set_custom_data('')
+    gamesetup.set_display(None)
     yield
     gamesetup.set_custom_data('')
+    gamesetup.set_display(None)

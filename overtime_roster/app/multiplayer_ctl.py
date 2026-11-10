@@ -97,7 +97,7 @@ class MultiplayerCtl(Part):
              'mp_history_player': 'history_player', 'mp_history_close': 'history_close',
              'mp_result_open': 'result_open', 'mp_result_close': 'result_close', 'mp_result': 'send_result',
              'mp_review_open': 'review_open', 'mp_review_close': 'review_close', 'mp_set_hidden': 'set_hidden',
-             'mp_set_hud': 'set_hud', 'mp_say': 'say', 'mp_shadnet_signin': 'shadnet_signin',
+             'mp_set_hud': 'set_hud', 'mp_set_link': 'set_link', 'mp_say': 'say', 'mp_shadnet_signin': 'shadnet_signin',
              'mp_shadnet_register': 'shadnet_register', 'mp_shadnet_create': 'shadnet_create',
              'mp_set_reports': 'set_reports', 'mp_send_report': 'send_report'}
     TAB = 'multiplayer'
@@ -116,10 +116,12 @@ class MultiplayerCtl(Part):
         self.sn_register = shadnet.register
         self.press_title = prefs.get('press', True) is not False
         self.show_hud = prefs.get('hud', True) is not False     # the card and the chat over the game
+        self.show_link = prefs.get('link', True) is not False   # the connection readout in the game's corner
         self.reports = prefs.get('reports') is True             # opted in: crash and early-end reports are sent
         self.reports_asked = prefs.get('reports_asked') is True  # the one-time question has been answered
         self.report = {'busy': False, 'note': '', 'error': ''}  # the last report (manual, or automatic when it went)
         self.hud = None
+        self.link_shown = False     # the corner readout got figures (it gets None once the game stops running)
         self.chat_mark = {}         # (code, token) -> the newest chat number already shown
         self.url_override = str(prefs.get('url') or '')
         self.logged = {'npid': '', 'account': None, 'why': ''}   # what shadPS4's log said at the last look
@@ -176,7 +178,8 @@ class MultiplayerCtl(Part):
 
     def _remember(self):
         self.ctl.remember(multiplayer={'name': self.name, 'ext': self.typed_ext, 'press': self.press_title,
-                                       'url': self.url_override, 'hud': self.show_hud, 'shadnet': self.checked,
+                                       'url': self.url_override, 'hud': self.show_hud,
+                                       'link': self.show_link, 'shadnet': self.checked,
                                        'reports': self.reports, 'reports_asked': self.reports_asked})
 
     def set_name(self, name):
@@ -223,7 +226,7 @@ class MultiplayerCtl(Part):
     def _can_save(self, npid, password):
         """(npid, password) cleaned when they can be written now, else SetupError."""
         if not self.logged.get('user_dir'):
-            raise gamesetup.SetupError('Set up shadPS4 first (Setup tab).')
+            raise gamesetup.SetupError('Find NHL 19 in Setup first.')
         npid, password = gamesetup.shadnet_check(npid, password)
         if overlay.emulator_running():
             raise gamesetup.SetupError('shadPS4 is running. Close the game first, then try again.')
@@ -829,10 +832,24 @@ class MultiplayerCtl(Part):
         self._changed()
         return {'ok': True}
 
-    def _hud_call(self, what, *args):
-        """Hand something to the HUD (started on first use); a machine that cannot draw it, or an off switch, drops it."""
+    def set_link(self, on):
+        """The connection readout (ping, loss) in the game's corner on or off."""
         with self.mlock:
-            if not (self.show_hud and self.hud_ok()):
+            self.show_link = bool(on)
+            self._remember()
+        if not on:
+            self._hud_call('link', None, force=True)
+        self._changed()
+        return {'ok': True}
+
+    def _hud_call(self, what, *args, force=False):
+        """Hand something to the HUD (started on first use); a machine that cannot draw it, or an off switch, drops it.
+        The corner readout ('link') has its own switch; `force` hands it over anyway to a HUD that already runs."""
+        with self.mlock:
+            on = self.show_link if what == 'link' else self.show_hud
+            if force and what == 'link':
+                on = self.hud is not None
+            if not (on and self.hud_ok()):
                 return False
             if self.hud is None:
                 self.hud = self.make_hud()
@@ -1005,7 +1022,7 @@ class MultiplayerCtl(Part):
             with self.mlock:
                 in_lobby, shown, history_on = bool(self.code), self.shown_now, self.hist['supported']
                 phase = (self.game or {}).get('phase')
-                playing = in_lobby and self.show_hud and phase in ('running', 'rematch')
+                playing = in_lobby and (self.show_hud or self.show_link) and phase in ('running', 'rematch')
                 quick = playing or phase == 'ready'     # _ready waits on my stage
             if not in_lobby and not shown:
                 return
@@ -1060,6 +1077,10 @@ class MultiplayerCtl(Part):
             self.me = int(lobby.get('you', self.me))
             key = (self.code, self.token)
             news = self._chat_news(key, lobby)
+            # the server's live link figures (0.83.0 servers, while launching or matched); an older one sends none
+            playing = (self.game or {}).get('phase') in ('running', 'rematch')
+            link = lobby['link'] if 'link' in lobby and playing else None if self.link_shown and not playing else False
+            self.link_shown = link not in (None, False)
             if lobby.get('state') in LAUNCHING:
                 if self.launched_for != key and not (self.job and self.job.is_alive()):
                     self.launched_for = key
@@ -1071,6 +1092,8 @@ class MultiplayerCtl(Part):
         self._changed()
         for line in news:
             self._hud_call('chat', line['name'], line['text'])
+        if link is not False:
+            self._hud_call('link', link)
         if start:
             self._start_job()
 
@@ -1105,7 +1128,7 @@ class MultiplayerCtl(Part):
 
     def _hotkey(self, index):
         """A quick-phrase hotkey pressed in the game (on the HUD thread: the send goes to its own)."""
-        if 0 <= index < len(PHRASES):
+        if 0 <= index < len(PHRASES) and self.show_hud:    # the HUD may run for the corner readout alone
             self._spawn(lambda: self.say(PHRASES[index]), 'mp-say')
 
     def launch_now(self):
@@ -1200,7 +1223,7 @@ class MultiplayerCtl(Part):
         c = self.ctl
         emu, game_dir = c.setup.known_emulator(), c.game_dir
         if not emu or not game_dir:
-            raise gamesetup.SetupError('Pick shadPS4 and NHL 19 in Setup first.')
+            raise gamesetup.SetupError('Find NHL 19 in Setup first.')
         user = gamesetup.emu_user_dir(emu)
         self._signin_ready(user)
         rules = self._launch_rules()
@@ -1538,7 +1561,8 @@ class MultiplayerCtl(Part):
                         'ext': ext, 'ext_from': source, 'ext_why': self.logged.get('why', ''), 'press': self.press_title,
                         'shadnet': {'npid': self.logged.get('npid') or '', 'state': self.logged.get('state'),
                                     'ready': bool(self.logged.get('user_dir'))},
-                        'hud': {'on': self.show_hud, 'available': self.hud_ok(), 'phrases': list(PHRASES)}},
+                        'hud': {'on': self.show_hud, 'link': self.show_link, 'available': self.hud_ok(),
+                                'phrases': list(PHRASES)}},
                 'checks': self._checks_view(),
                 'lobby': lobby,
                 'lobbies': [{'code': str(r['code']), 'host': str(r.get('host') or ''), 'players': r.get('players'),

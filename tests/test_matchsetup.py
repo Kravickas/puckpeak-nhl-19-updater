@@ -104,6 +104,7 @@ def test_apply_then_restore_gives_the_players_files_back_byte_for_byte(world):
         assert f.read() == b'players boot'                          # the hardlink was replaced, not written through
     cfg = json.load(open(w['cfg'], encoding='utf-8'))
     assert cfg['GPU']['vblank_frequency'] == 60 and cfg['Network']['shad_net_enabled'] is True
+    assert {k: cfg['GPU'][k] for k in gamesetup.GPU_SETTINGS} == gamesetup.GPU_SETTINGS     # every match (2026-11-10)
     assert os.path.isfile(got['patch'])
     assert MS.restore(running=w['off']) == 'done'
     assert not MS.active()

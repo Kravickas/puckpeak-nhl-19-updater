@@ -780,8 +780,13 @@ def test_the_cross_key_comes_from_the_players_own_map(tmp_path, monkeypatch):
     assert keypress.cross_key('emu.exe') == 'n'
     ini.write_text('cross = kp2\ncross = x\n# Controller bindings\ncross = z\n', encoding='utf-8')
     assert keypress.cross_key('emu.exe') == 'x'
+    ini.write_text('cross = kp2\n# Controller bindings\ncross = cross\n', encoding='utf-8')
+    assert keypress.cross_key('emu.exe') == 'n'                              # a controller line is not a keyboard key
     ini.write_text('cross = kp2\n# Controller bindings\ncross = z\n', encoding='utf-8')
-    assert keypress.cross_key('emu.exe') == 'n'                              # the pad section is not a keyboard key
+    assert keypress.cross_key('emu.exe') == 'z'     # headings are comments to shadPS4: z is a keyboard key on Cross
+    (user / 'config.json').write_text('{"Input": {"use_unified_input_config": false}}', encoding='utf-8')
+    (user / 'input_config' / 'CUSA11126.ini').write_text('cross = q\n', encoding='utf-8')
+    assert keypress.cross_key('emu.exe') == 'q'                              # per-game input files: the game's own
 
 
 def test_a_press_needs_one_key():
@@ -1341,3 +1346,59 @@ def test_a_reports_answer_must_be_yes_or_no(mp):
 def test_the_view_carries_the_reports_state(mp):
     view = mp.view()
     assert view['reports'] == {'on': False, 'asked': False, 'busy': False, 'note': '', 'error': ''}
+
+
+# --- the connection readout over the game (0.83.0) -----------------------------------------------------------------
+class RecordingHud:
+    def __init__(self):
+        self.calls = []
+
+    def start(self):
+        pass
+
+    def __getattr__(self, name):
+        return lambda *a: self.calls.append((name,) + a)
+
+
+def test_the_servers_link_figures_go_to_the_corner_only_while_a_match_runs(mp):
+    rec = RecordingHud()
+    mp.hud_ok, mp.make_hud = (lambda: True), (lambda: rec)
+    mp.code, mp.token = 'ABCDE', 'tok'
+    mp.launched_for = ('ABCDE', 'tok')
+    link = {'age': 0.3, 'ping': 52, 'loss_in': 0.0, 'loss_out': None, 'pktl': 0}
+    mp.game = {'phase': 'hook'}
+    mp._apply({'state': 'matched', 'you': 0, 'players': [], 'link': link})
+    assert rec.calls == []                                   # not in the match yet
+    mp.game = {'phase': 'running'}
+    mp._apply({'state': 'matched', 'you': 0, 'players': []})
+    assert rec.calls == []                                   # an older server sends no figures: nothing is drawn
+    mp._apply({'state': 'matched', 'you': 0, 'players': [], 'link': link})
+    assert rec.calls == [('link', link)]
+    mp.show_hud = False                                      # the chat and card switch does not hide the readout
+    mp._apply({'state': 'matched', 'you': 0, 'players': [], 'link': None})
+    assert rec.calls[-1] == ('link', None)
+    assert mp.set_link(False) == {'ok': True}
+    assert rec.calls[-1] == ('link', None) and len(rec.calls) == 3
+    mp._apply({'state': 'matched', 'you': 0, 'players': [], 'link': link})
+    assert len(rec.calls) == 3                               # switched off: nothing more goes
+    assert mp.view()['you']['hud']['link'] is False and mp.ctl.prefs['multiplayer']['link'] is False
+    mp.set_link(True)
+    mp._apply({'state': 'matched', 'you': 0, 'players': [], 'link': link})
+    assert rec.calls[-1] == ('link', link)
+    mp.game = {'phase': 'ended'}                              # the game stopped: the readout is taken away once
+    mp._apply({'state': 'matched', 'you': 0, 'players': [], 'link': link})
+    mp._apply({'state': 'matched', 'you': 0, 'players': [], 'link': link})
+    assert rec.calls[-1] == ('link', None) and rec.calls[-2] == ('link', link)
+    assert mp.ctl.prefs['multiplayer']['link'] is True and MC.MultiplayerCtl(mp.ctl).show_link is True
+
+
+
+def test_quick_phrase_hotkeys_send_nothing_while_chat_is_off(mp):
+    sent = []
+    mp._spawn = lambda fn, name: sent.append(name)
+    mp.show_hud = False                                      # the HUD runs for the corner readout alone
+    mp._hotkey(0)
+    assert sent == []
+    mp.show_hud = True
+    mp._hotkey(0)
+    assert sent == ['mp-say']

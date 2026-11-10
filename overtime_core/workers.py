@@ -82,12 +82,41 @@ class _ThreadsWith:
             t.join()
 
 
-def ordered(jobs, make, errors=(Exception,), workers=None, context=None):
+def _ping():
+    return True
+
+
+def processes_on():
+    """Processes may be used (OVERTIME_NO_PROCESSES=1 turns them off: the tests, where each pool's start costs more
+    than its tiny jobs)."""
+    return os.environ.get('OVERTIME_NO_PROCESSES') != '1'
+
+
+def _process_pool(workers):
+    """A pool of `workers` processes (marked: in_worker), started and answered once, or None when processes cannot
+    start here (the caller then uses threads). Processes run the pure-Python parts (the BCn encoder) on every core,
+    which threads cannot (the GIL: a jersey patch used under 3 of 16 cores, 2026-11-10)."""
+    import multiprocessing
+    try:
+        ex = concurrent.futures.ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context('spawn'),
+                                                    initializer=_mark)
+    except (OSError, ValueError, RuntimeError, ImportError):
+        return None
+    try:
+        ex.submit(_ping).result(timeout=120)
+    except Exception:     # noqa: BLE001 (any failure to start means threads instead)
+        ex.shutdown(wait=False, cancel_futures=True)
+        return None
+    return ex
+
+
+def ordered(jobs, make, errors=(Exception,), workers=None, context=None, processes=False):
     """(key, result, error) of make(*args) for each (key, args) of `jobs`, in the jobs' order. `args` may be an
     exception instead (the job could not be read): it comes back as that job's error. An exception of `errors` raised
     by make is returned as the error; any other is raised. One thread (no pool) when workers is 1 or on a pool's thread
     already. `context`: a context manager factory each pool thread runs in (_ThreadsWith); the calling thread is
-    assumed to be in one already when it does the jobs itself."""
+    assumed to be in one already when it does the jobs itself. `processes`: make runs in processes when they start
+    (make, its args and results must pickle; make must be a module-level function), else threads."""
     workers = workers or count()
     if workers == 1 or in_worker():
         for key, args in jobs:
@@ -99,7 +128,12 @@ def ordered(jobs, make, errors=(Exception,), workers=None, context=None):
             except errors as err:
                 yield key, None, err
         return
-    with (pool(workers) if context is None else _ThreadsWith(workers, context)) as ex:
+    ex = None
+    if processes and context is None and processes_on():
+        ex = _process_pool(workers)
+    if ex is None:
+        ex = pool(workers) if context is None else _ThreadsWith(workers, context)
+    with ex:
         pending = collections.deque()
 
         def done():

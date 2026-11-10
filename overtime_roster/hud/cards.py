@@ -130,3 +130,24 @@ def draw_result(gfx, res, now, s):
         gfx.text('RANK UP  •  ' + str(d['rank_up']).upper(), -w / 2, -bh2 / 2 + 8 * s, gfx.font(HEAD, 32 * s, True),
                  hexcolor('#1a1204'), w=w, align=1)
         gfx.pop()
+
+
+LINK_W, LINK_H = 236, 34
+TONE = {'good': GREEN, 'caution': hexcolor('#f2b233'), 'bad': RED}
+
+
+def link_size(s):
+    return int(LINK_W * s), int(LINK_H * s)
+
+
+def draw_link(gfx, readout, s):
+    """The connection pill: a dot in the link's tone, the ping and the loss (or NO DATA and for how long)."""
+    gfx.clear()
+    tone, first, second, first_tone, second_tone = readout
+    w, h = LINK_W * s, LINK_H * s
+    gfx.fill_round(0, 0, w, h, h / 2, PANEL)
+    d = 12 * s
+    gfx.fill_ellipse(14 * s, (h - d) / 2, d, d, TONE.get(tone, DIM))
+    f = gfx.font(HEAD, 17 * s, True)
+    gfx.text(first, 36 * s, 6 * s, f, WHITE if first_tone == 'good' else TONE[first_tone])
+    gfx.text(second, 36 * s, 6 * s, f, DIM if second_tone == 'good' else TONE[second_tone], w=w - 52 * s, align=2)

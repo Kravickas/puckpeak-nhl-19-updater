@@ -136,3 +136,44 @@ class Result:
         if not self.d.get('rank_up'):
             return 0.0
         return out_back(span(self.t(now), self.FLASH_AT, self.FLASH_AT + .5))
+
+
+# ---- the connection readout in the corner (live link figures from the server, linkstats.py) -------------------------
+PING_GREEN, PING_YELLOW = 100, 200      # ms: the game's own NETWORK_STATISTIC_GREEN/YELLOW_PING_TIMES (util.py)
+LOSS_YELLOW, LOSS_RED = 3.0, 8.0        # percent lost on the link (the worse direction; linkstats: ~1 % floor)
+LINK_QUIET = 3.0                        # seconds without a fresh report: the link (or our view of it) went quiet
+TONES = ('good', 'caution', 'bad')
+LINK_GONE = 30.0                        # ... and this long: no match runs, the readout goes away
+
+
+class Link:
+    """The newest link figures and when they came. `readout(now)` -> None (nothing to show) or
+    (tone, ping text, loss text, ping tone, loss tone), tones 'good' / 'caution' / 'bad' (tone: the worse); it changes only when the text does, so the
+    HUD redraws a few times a second at most."""
+
+    def __init__(self):
+        self.data, self.at = None, 0.0
+
+    def update(self, data, now):
+        self.data, self.at = (dict(data) if isinstance(data, dict) else None), now
+
+    def readout(self, now):
+        d = self.data
+        if not d:
+            return None
+        age = float(d.get('age') or 0) + (now - self.at)
+        if age > LINK_GONE:
+            return None
+        if age > LINK_QUIET:
+            return 'bad', 'NO DATA', f'{int(age)} s', 'bad', 'bad'
+        quiet = float(d.get('quiet') or 0) + (now - self.at)
+        if quiet > LINK_QUIET:                       # my game reports, but the partner's packets stopped coming
+            return 'bad', 'NO PACKETS', f'{int(quiet)} s', 'bad', 'bad'
+        ping = int(d.get('ping') or 0)
+        losses = [x for x in (d.get('loss_in'), d.get('loss_out')) if isinstance(x, (int, float))]
+        loss = max(losses) if losses else None
+        ping_tone = 'bad' if ping >= PING_YELLOW else 'caution' if ping >= PING_GREEN else 'good'
+        loss_tone = ('good' if loss is None or loss < LOSS_YELLOW else 'caution' if loss < LOSS_RED else 'bad')
+        tone = max(ping_tone, loss_tone, key=TONES.index)
+        loss_text = '-- loss' if loss is None else f'{loss:.0f}% loss' if loss >= 10 or loss == 0 else f'{loss:.1f}% loss'
+        return tone, f'{ping} ms', loss_text, ping_tone, loss_tone

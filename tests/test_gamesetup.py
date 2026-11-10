@@ -165,7 +165,10 @@ def test_install_and_remove_leave_nothing_behind(world):
     assert json.loads((folder / 'files.json').read_text()) == {'overtime.xml': ['CUSA11126']}
     cfg = json.loads((world['user'] / 'custom_configs' / 'CUSA11126.json').read_text())
     assert cfg['General']['connected_to_network'] is True and cfg['General']['shad_net_enabled'] is True
-    assert cfg['GPU'] == {'full_screen': True}  # a new per-game config starts from the global one
+    # a new per-game config starts from the global one; readbacks Precise and readback linear images on for everyone,
+    # fullscreen borderless by default (owner 2026-11-10)
+    assert cfg['GPU'] == {'full_screen': True, 'full_screen_mode': 'Fullscreen (Borderless)', 'readbacks_mode': 2,
+                          'readback_linear_images_enabled': True}
     assert gamesetup.network_settings(str(world['user'])) == gamesetup.NETWORK
     assert m['targets']['redirector'] == 'ot.puckpeak.com'
     st = gamesetup.status(str(world['emu']))
@@ -351,7 +354,8 @@ def test_created_config_changed_by_user_gets_our_keys_back(world):
 def test_config_already_right_is_not_touched(world):
     path = world['user'] / 'custom_configs' / 'CUSA11126.json'
     raw = json.dumps({'General': dict(gamesetup.NETWORK),
-                      'Network': dict(gamesetup.NETWORK, **gamesetup.SERVERS)}).encode()
+                      'Network': dict(gamesetup.NETWORK, **gamesetup.SERVERS),
+                      'GPU': gamesetup.gpu_wanted()}).encode()
     path.write_bytes(raw)
     m = gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     assert path.as_posix() not in [p.replace('\\', '/') for p in (e['path'] for e in m['files'])]
@@ -825,3 +829,98 @@ def test_the_cpu_tag_fits_the_lobbys_short_text(name, tag):
     got = gamesetup.cpu_tag(name)
     assert got == tag and game_text.fullmatch(got) and len(got) <= 48
     assert re.fullmatch(r'[^\s]*', gamesetup.cpu_tag())       # this PC's, whatever it is: never raises, no spaces
+
+
+# --- readbacks Precise, readback linear images on, for everyone (owner 2026-11-10, docs/notes/standalone.md) -----------
+def _cfg(world):
+    return json.loads((world['user'] / 'custom_configs' / 'CUSA11126.json').read_text(encoding='utf-8'))
+
+
+def test_readbacks_precise_over_the_players_value_and_put_back(world):
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    path.write_text(json.dumps({'General': {}, 'GPU': {'readbacks_mode': 1, 'fsr_enabled': True}}), encoding='utf-8')
+    assert not gamesetup.readbacks_on(str(world['user']))
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    assert _cfg(world)['GPU'] == {'readbacks_mode': 2, 'fsr_enabled': True, 'readback_linear_images_enabled': True,
+                                  'full_screen': True, 'full_screen_mode': 'Fullscreen (Borderless)'}
+    assert gamesetup.readbacks_on(str(world['user']))
+    # the player switches to Relaxed after the patch: Play's refresh (install again) puts Precise back, and the value
+    # kept for Unpatch stays the one from before Overtime
+    cfg = _cfg(world)
+    cfg['GPU']['readbacks_mode'] = 0
+    cfg['GPU']['readback_linear_images_enabled'] = False
+    cfg['General']['own_edit'] = 1
+    path.write_text(json.dumps(cfg), encoding='utf-8')
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    assert {k: _cfg(world)['GPU'][k] for k in gamesetup.GPU_SETTINGS} == gamesetup.GPU_SETTINGS
+    entry = next(e for e in gamesetup.load_manifest()['files'] if e['path'].endswith('CUSA11126.json'))
+    assert entry['previous_gpu'] == {'readbacks_mode': 1, 'readback_linear_images_enabled': None, 'full_screen': None,
+                                     'full_screen_mode': None}
+    gamesetup.remove(running=lambda: False)
+    after = _cfg(world)
+    assert after['GPU'] == {'readbacks_mode': 1, 'fsr_enabled': True} and after['General']['own_edit'] == 1
+
+
+def test_readbacks_key_overtime_added_goes_again(world):
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    path.write_text(json.dumps({'General': {}}), encoding='utf-8')
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    cfg = _cfg(world)
+    cfg['General']['own_edit'] = 1          # changed since: Unpatch puts back only our keys
+    path.write_text(json.dumps(cfg), encoding='utf-8')
+    gamesetup.remove(running=lambda: False)
+    assert 'GPU' not in _cfg(world)
+
+
+def test_gpu_key_added_later_learns_the_players_value(world):
+    """A record from before readback linear images joined GPU_SETTINGS keeps readbacks_mode's first value and learns
+    the new key's own value at the next install, so Unpatch puts both back."""
+    path = world['user'] / 'custom_configs' / 'CUSA11126.json'
+    path.write_text(json.dumps({'General': {}, 'GPU': {'readbacks_mode': 1}}), encoding='utf-8')
+    m = gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    entry = next(e for e in m['files'] if e['path'].endswith('CUSA11126.json'))
+    entry['previous_gpu'] = {'readbacks_mode': 1}       # what a 0.83.0 dev build recorded
+    gamesetup._save_manifest(m)
+    cfg = _cfg(world)
+    cfg['GPU']['readback_linear_images_enabled'] = False
+    path.write_text(json.dumps(cfg), encoding='utf-8')
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    entry = next(e for e in gamesetup.load_manifest()['files'] if e['path'].endswith('CUSA11126.json'))
+    learned = {k: entry['previous_gpu'][k] for k in gamesetup.GPU_SETTINGS}
+    assert learned == {'readbacks_mode': 1, 'readback_linear_images_enabled': False}
+    assert gamesetup.readbacks_on(str(world['user']))
+
+
+def test_readbacks_switched_back_is_not_a_patch_problem(world):
+    """Readbacks are no status() problem: patch_fingerprint forgives only switched-off network keys, and a problem
+    would make the lobby see no patch. Play's refresh_network puts Precise back."""
+    gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
+    cfg = _cfg(world)
+    cfg['GPU']['readbacks_mode'] = 0
+    (world['user'] / 'custom_configs' / 'CUSA11126.json').write_text(json.dumps(cfg), encoding='utf-8')
+    st = gamesetup.status(str(world['emu']))
+    assert st['intact'] and not st['problems'] and not gamesetup.readbacks_on(str(world['user']))
+
+
+# --- a PC that never started shadPS4 (the app set it up) ------------------------------------------------------------
+def test_signin_without_users_json_writes_shadps4s_defaults(world):
+    (world['user'] / 'users.json').unlink()
+    assert gamesetup.shadnet_signin(str(world['user']), 'Skater_2', 's3cret', running=lambda: False) == 'Skater_2'
+    doc = json.loads((world['user'] / 'users.json').read_text(encoding='utf-8'))
+    users = doc['Users']['user']
+    assert doc['Users']['commit_hash'] == '' and [u['user_id'] for u in users] == [1000, 1001, 1002, 1003]
+    keys = {'player_index', 'shadnet_email', 'shadnet_enabled', 'shadnet_npid', 'shadnet_password', 'shadnet_token',
+            'user_color', 'user_id', 'user_name'}
+    assert all(set(u) == keys for u in users)
+    one = users[0]
+    assert (one['player_index'], one['user_name'], one['shadnet_npid'], one['shadnet_enabled']) == \
+        (1, 'shadPS4', 'Skater_2', True)
+    assert [u['user_name'] for u in users[1:]] == ['shadPS4-2', 'shadPS4-3', 'shadPS4-4']
+    assert not any(u['shadnet_enabled'] for u in users[1:])
+    assert gamesetup.shadnet_identity(str(world['user']))['npid'] == 'Skater_2'
+
+
+def test_signin_into_a_data_folder_not_made_yet(tmp_path):
+    user = tmp_path / 'never' / 'shadPS4'
+    gamesetup.shadnet_signin(str(user), 'Skater_2', 's3cret', running=lambda: False)
+    assert (user / 'users.json').is_file()

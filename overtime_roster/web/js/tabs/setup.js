@@ -6,8 +6,9 @@ import { html, cls, useState, useEffect, useRef } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
 import { Card, Button, PathText, Checkbox, Info, Modal, Segmented, Tag } from '../ui.js';
+import { GameSettings, Controllers, Keyboard, GEAR_ICON, PAD_ICON, KEYS_ICON } from './emusettings.js';
 
-export const tip = 'Pick shadPS4 and the roster you work on. Everything else follows them.';
+export const tip = 'Find NHL 19 and pick the roster you work on. Everything else follows them.';
 
 // a check's mark: good ✓, bad ✕, caution !, not checked yet …
 const MARKS = {
@@ -38,9 +39,14 @@ function LinkRow() {
 
 // --- 1 Where is NHL 19? ---------------------------------------------------------------------------------------------------
 const WHERE_INFO = [
-  { head: 'What to pick', items: ['Press Find game and pick shadPS4QtLauncher.exe, shadPS4.exe, or NHL 19\'s eboot.bin. Any shadPS4 will do.',
-    'With QtLauncher, the version selected in it is used.',
+  { head: 'What to pick', items: ['Press Find game and pick NHL 19\'s eboot.bin, or its PKG files to install the game.',
+    'No shadPS4 on this PC? None needed: Overtime gets the Kravickas build of shadPS4 by itself.',
+    'Have shadPS4 already? Pick shadPS4QtLauncher.exe or shadPS4.exe and it is used (with QtLauncher, the version selected in it).',
     'The program finds the rest from there: NHL 19, the emulator and your roster saves.'] },
+  { head: 'Installing from PKG', items: ['Pick the game PKG first, then the update 1.60 PKG. One at a time.',
+    'The game goes into a new folder next to its PKG, the update into a new folder beside the game. Nothing is overwritten.',
+    'It needs free space on that drive about the size of the PKG.',
+    'The PKG tool is shadPS4Plus\'s pkg_extractor (GPL-2.0), downloaded from its GitHub page the first time: github.com/AzaharPlus/shadPS4Plus.'] },
   { head: 'Folders', items: ['Shows where shadPS4, NHL 19, shadPS4\'s data and your saves are.',
     'Change... picks one yourself (a portable shadPS4, another drive). The program never changes a folder you set.',
     'Auto lets the program find it again.',
@@ -56,7 +62,7 @@ const WHERE_INFO = [
 async function findGame(path) {
   const reply = await call('setup_pick_emulator', false);
   if (!reply || !reply.type) return;
-  const typed = window.prompt('The full path of shadPS4QtLauncher.exe, shadPS4.exe or NHL 19\'s eboot.bin:', path || '');
+  const typed = window.prompt('The full path of NHL 19\'s eboot.bin or PKG, shadPS4QtLauncher.exe or shadPS4.exe:', path || '');
   if (typed && typed.trim()) call('setup_set_emulator', typed.trim());
 }
 
@@ -79,9 +85,9 @@ async function changeFolder(f) {
 function Folders({ folders, busy }) {
   if (!folders || !folders.length) return null;
   const mine = folders.filter((f) => f.custom).length;
-  const wrong = folders.some((f) => !f.ok);
-  return html`<details class="su-folders" open=${wrong || mine > 0}>
-    <summary>Folders <span class="su-fsum">${mine ? `${mine} set by you` : 'all found'}</span></summary>
+  const missing = folders.filter((f) => !f.ok).length;
+  return html`<details class="su-folders" open=${missing > 0 || mine > 0}>
+    <summary>Folders <span class="su-fsum">${[mine && `${mine} set by you`, missing && `${missing} not found`].filter(Boolean).join(', ') || 'all found'}</span></summary>
     <div class="su-fgrid">${folders.map((f) => html`<div key=${f.key}
       class=${cls('su-folder', !f.ok && 'bad')}>
       <span class="su-fl">${f.label}</span>
@@ -107,7 +113,7 @@ function WhereCard({ s }) {
       <div class="row">
         <${PathText} path=${s.emulator.path} unset="Not picked yet"/>
         <${Button} kind=${s.emulator.path ? 'ghost' : 'primary'} disabled=${busy} onClick=${() => findGame(s.emulator.path)}
-          title="Pick shadPS4QtLauncher.exe, shadPS4.exe or NHL 19's eboot.bin">Find game...<//>
+          title="Pick NHL 19's eboot.bin or its PKG, or your shadPS4 (shadPS4QtLauncher.exe or shadPS4.exe)">Find game...<//>
       </div>
       <div class=${cls('su-checks', s.checking && 'checking')}>
         ${s.checks.map((c) => html`<div key=${c.key} class=${cls('su-check', c.tone || 'idle')} title=${c.text}>
@@ -118,7 +124,6 @@ function WhereCard({ s }) {
       <${Folders} folders=${s.folders} busy=${busy}/>
       <div class=${cls('su-state', st.tone)}>
         <span class="su-st">${st.text}</span>
-        ${st.get && html`<${Button} small onClick=${() => call('setup_emulator_page')}>Get shadPS4<//>`}
         ${s.emulator.path && html`<${Button} small disabled=${busy} onClick=${() => call('setup_refresh')}>Check again<//>`}
       </div>
     </div>
@@ -127,8 +132,9 @@ function WhereCard({ s }) {
 
 // --- Boost performance: Kravickas's NHL 19 build of shadPS4, on or off ---------------------------------------------------
 const BOOST_INFO = [
-  { head: 'What it does', items: ["Plays NHL 19 on Kravickas's NHL 19 build of shadPS4, for better performance and graphics.", 'Saves, patch and ShadNet login stay the same.'] },
-  { head: 'Your own shadPS4', items: ['It stays where it is, untouched.', 'Disable puts it back, in this app and in QtLauncher.'] },
+  { head: 'What it does', items: ["Enables 60 FPS: NHL 19 plays on Kravickas's NHL 19 build of shadPS4.", 'Saves, patch and ShadNet login stay the same.'] },
+  { head: 'Your own shadPS4', items: ['It stays where it is, untouched.', 'Disable puts it back, in this app and in QtLauncher.',
+    'No shadPS4 of your own: Overtime set up the Kravickas build for you, so there is nothing to disable.'] },
   { head: 'Resolution', items: ["1080p is the game's own. 1440p renders at 2560x1440 (Kravickas's patch): sharper, needs a stronger GPU.", "720p renders at 1280x720 (Kravickas's patch): softer, for a weaker GPU.", '1440p also sets Additional DMem to 3500 MB; 720p and 1080p put your own value back.', 'Works with any shadPS4, with or without Boost. Takes effect at the next start of NHL 19.'] },
   { head: 'Replays at 60 fps', items: ["Kravickas's patch, on for everyone: replays, celebrations and cutscenes run at 60 instead of 30."] },
 ];
@@ -140,21 +146,38 @@ const RESOLUTIONS = [
 
 function BoostCard({ s }) {
   const b = s.boost;
+  const [view, setView] = useState(null);     // 'game' | 'pad' | 'keys': the open settings view
+  const noEmu = !(s.emulator && s.emulator.path);
+  const why = noEmu ? 'Find NHL 19 first' : undefined;
+  const shut = () => setView(null);
   return html`<${Card} title="Boost performance" className="su-boost"
       aside=${html`<${Info} title="Boost performance" sections=${BOOST_INFO}/>`}>
     <div class="card-body">
       <div class=${cls('su-state', b.tone)}>
         <span class="su-st">${b.text}</span>
         ${b.newer && html`<${Button} small disabled=${!b.can} title="Kravickas build" onClick=${() => call('setup_boost', true)}>Update<//>`}
-        <${Button} small kind=${b.on ? 'ghost' : 'primary'} disabled=${!b.can} title="Kravickas build"
-          onClick=${() => call('setup_boost', !b.on)}>${b.on ? 'Disable' : 'Enable'} Boost performance<//>
+        ${!b.standalone && html`<${Button} small kind=${b.on ? 'ghost' : 'primary'} disabled=${!b.can} title="Kravickas build"
+          onClick=${() => call('setup_boost', !b.on)}>${b.on ? 'Disable' : 'Enable'} Boost performance<//>`}
         <${Button} small kind="ghost" onClick=${() => call('setup_boost_source')}>Source code<//>
       </div>
+      ${b.news && html`<div class="su-news" title=${b.upstream || ''}>${b.news}</div>`}
       <div class="su-state su-res">
         <span class="su-st">Resolution</span>
         <${Segmented} options=${RESOLUTIONS} value=${b.resolution || 1080} onChange=${(v) => call('setup_resolution', v)}/>
       </div>
+      <div class="su-state su-emu">
+        <span class="su-st">Settings</span>
+        <${Button} small disabled=${noEmu} title=${why || "shadPS4's settings for NHL 19"} onClick=${() => setView('game')}>
+          ${GEAR_ICON}Game settings<//>
+        <${Button} small disabled=${noEmu} title=${why || 'Controller bindings'} onClick=${() => setView('pad')}>
+          ${PAD_ICON}Controllers<//>
+        <${Button} small disabled=${noEmu} title=${why || 'Keyboard and mouse bindings'} onClick=${() => setView('keys')}>
+          ${KEYS_ICON}Keyboard<//>
+      </div>
     </div>
+    ${view === 'game' && html`<${GameSettings} onClose=${shut}/>`}
+    ${view === 'pad' && html`<${Controllers} onClose=${shut}/>`}
+    ${view === 'keys' && html`<${Keyboard} onClose=${shut}/>`}
   <//>`;
 }
 
@@ -176,8 +199,9 @@ function ServerField({ value, disabled, bad }) {
     }}/>`;
 }
 
-// the Online lines (server address, firewall): Multiplayer shows them in its Advanced row
-export function OnlineLines({ s, className }) {
+// the Online lines (server address, CPU check, firewall): Multiplayer shows them in its Advanced row. One grid of
+// label | content | button, so every button sits in the same column at the same width; `children` adds rows to it.
+export function OnlineLines({ s, className, children }) {
   const o = s.online;
   const fw = o.firewall;
   return html`
@@ -187,11 +211,13 @@ export function OnlineLines({ s, className }) {
       <${Button} small disabled=${s.busy || o.is_default} title=${`Back to ${o.server_default}`}
         onClick=${() => call('setup_set_server', '')}>Default<//>
       <span class=${cls('su-hint', o.error && 'bad')}>${o.error || 'Leave it as it is unless your league runs its own server.'}</span>
+      ${o.cpu && html`<${CpuLine} c=${o.cpu}/>`}
+      ${children}
       <span class="field-label">Firewall</span>
       <span class=${cls('su-fw', fw.tone, !fw.can_fix && 'wide')}><${Mark} tone=${fw.tone}/><span class="su-fwt">${fw.text}</span></span>
-      ${fw.can_fix && html`<${Button} small kind="primary" disabled=${s.busy} title="Windows asks you to allow it"
-        onClick=${() => call('setup_firewall')}>Let it through...<//>`}
-      ${o.cpu && html`<${CpuLine} c=${o.cpu}/>`}
+      ${fw.can_fix && html`<${Button} small disabled=${s.busy} title="Windows asks you to allow it (optional)"
+        onClick=${() => call('setup_firewall')}>Allow...<//>`}
+      ${fw.hint && html`<span class="su-hint">${fw.hint}</span>`}
     </div>`;
 }
 
@@ -204,10 +230,10 @@ function CpuLine({ c }) {
     <span class="su-fw su-cpu-name" title=${c.full_name || ''}><span class="su-fwt">${c.name || 'This PC'}</span></span>
     <${Button} small disabled=${!c.can_check} title="Runs Overtime's CPU check program (downloaded the first time)"
       onClick=${() => call('setup_cpu_check')}>${c.busy ? 'Checking...' : 'Check my CPU'}<//>
-    <span class=${cls('su-fw', 'su-cpu-st', c.tone)} title=${c.title || ''}><${Mark} tone=${c.tone}/>
-      <span class="su-fwt">${c.text}</span>
-      ${(c.can_send || c.sending) && html`<${Button} small disabled=${!c.can_send}
-        onClick=${() => setAsk(true)}>${c.sending ? 'Sending...' : 'Send the result...'}<//>`}</span>
+    <span class=${cls('su-fw', 'su-cpu-st', c.tone, !(c.can_send || c.sending) && 'wide')} title=${c.title || ''}>
+      <${Mark} tone=${c.tone}/><span class="su-fwt">${c.text}</span></span>
+    ${(c.can_send || c.sending) && html`<${Button} small disabled=${!c.can_send}
+      onClick=${() => setAsk(true)}>${c.sending ? 'Sending...' : 'Send result...'}<//>`}
     ${hint && html`<span class=${cls('su-hint', c.error && 'bad')} role=${c.error ? 'alert' : null}>${hint}</span>`}
     ${ask && html`<${Modal} title="Send the CPU check result?" onClose=${() => setAsk(false)}
       buttons=${html`<${Button} kind="ghost" onClick=${() => setAsk(false)}>Cancel<//>
@@ -277,8 +303,7 @@ function RosterCard({ s }) {
   return html`<${Card} n="2" title="Which roster do you work on?" grow className="su-rosters"
       aside=${html`<${Info} title="Which roster do you work on?" sections=${ROSTER_INFO}/>`}>
     <div class="card-body fill">
-      ${s.running ? html`<div class="small-note su-warn">shadPS4 is running. Close it before you save or delete a roster.</div>`
-        : html`<div class="small-note">The Update tab, the team tabs and their Save all use this roster.</div>`}
+      ${s.running && html`<div class="small-note su-warn">shadPS4 is running. Close it before you save or delete a roster.</div>`}
       ${r.can_open && html`<div class=${cls('su-room', r.room_tone)}>
         <span class="su-count">${r.used} of ${r.max}</span><span class="su-room-text">${r.room_text}</span>
       </div>`}

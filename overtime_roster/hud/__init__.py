@@ -4,6 +4,7 @@
     ov.start()
     ov.chat('Partner', 'gg')
     ov.result({...})             # see anim.Result
+    ov.link({...})               # live link figures for the corner readout (see anim.Link), None takes it away
     ov.stop()
 
 A separate click-through, never-activated, top-most layered window per widget (see native.py), so the controller and the
@@ -111,6 +112,9 @@ class Hud:
     def result(self, data, hold=9.0):
         self.q.put(('result', data, hold))
 
+    def link(self, data):
+        self.q.put(('link', data))
+
     # ---- HUD thread
     def _keys(self, native, want):
         """The quick-phrase hotkeys exist only while the game window does (so they never get in the way on the desktop)."""
@@ -135,6 +139,8 @@ class Hud:
         s = max(0.5, (rect[3] - rect[1]) / 1080.0)       # fixed for the run: the surfaces are sized once
         chat = anim.Chat()
         res = None
+        link, link_key = anim.Link(), None
+        link_surf = native.Surface(*cards.link_size(s))
         chat_surf = native.Surface(*cards.chat_size(s))
         card_surf = native.Surface(*cards.card_size(s))
         last_rect = 0
@@ -155,19 +161,34 @@ class Hud:
                             chat.add(cmd[1], cmd[2], now, cmd[3])
                         elif cmd[0] == 'result':
                             res = anim.Result(cmd[1], now, cmd[2])
+                        elif cmd[0] == 'link':
+                            link.update(cmd[1], now)
                 except queue.Empty:
                     pass
                 if now - last_rect > 1.0:              # follow the game window; none (the game closed) hides everything
                     last_rect = now
-                    rect = self.find_rect()
+                    moved = self.find_rect()
+                    if moved != rect:
+                        link_key = None                    # present the corner readout again at the new place
+                    rect = moved
                 self._keys(native, rect is not None)
                 if rect is None:
                     chat_surf.hide()
                     card_surf.hide()
+                    link_surf.hide()
+                    link_key = None
                     time.sleep(0.25)
                     rect = self.find_rect()
                     continue
                 left, top, right, bottom = rect
+                shown = link.readout(now)              # drawn only when its text changes, never on the vsync path
+                if shown != link_key:
+                    link_key = shown
+                    if shown:
+                        cards.draw_link(link_surf.gfx, shown, s)
+                        link_surf.present(right - link_surf.w - 24 * s, top + 20 * s)
+                    else:
+                        link_surf.hide()
                 lines = chat.tick(now)
                 if lines:
                     cards.draw_chat(chat_surf.gfx, lines, now, s)
@@ -193,3 +214,4 @@ class Hud:
             self._keys(native, False)
             chat_surf.close()
             card_surf.close()
+            link_surf.close()

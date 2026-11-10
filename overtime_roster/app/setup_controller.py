@@ -26,8 +26,8 @@ import webbrowser
 from overtime_core import gamefiles, overlay, rosterupdate, tdb, xmlpatch
 
 from .. import SITE, VERSION
-from . import (boost, cachemove, cpucheck, crashreport, gamesetup, jobs, launch, packdownload, patch, patch_ctl,
-               paths, selfupdate)
+from . import (boost, cachemove, cpucheck, crashreport, emuinput, emusettings, gamesetup, jobs, launch, packdownload,
+               patch, patch_ctl, paths, pkginstall, selfupdate)
 from .registry import Part
 from .shell import friendly_date
 
@@ -69,8 +69,8 @@ def patch_cache():
     return paths.app_dir('cache')
 
 
-# Find game's picker: the launcher, the emulator or the game itself
-FIND_KINDS = 'shadPS4 or NHL 19 (*.exe;eboot.bin)'
+# Find game's picker: the launcher, the emulator, the game itself or its PKG (pkginstall)
+FIND_KINDS = 'shadPS4 or NHL 19 (*.exe;eboot.bin;*.pkg)'
 # Setup's Folders list, in its order: key -> label
 FOLDERS = {'emulator': 'shadPS4', 'game': 'NHL 19', 'data': 'shadPS4 data', 'saves': 'Saves',
            'cache': 'Downloads and cache'}
@@ -155,6 +155,9 @@ class SetupController(Part):
              'setup_patch': 'setup_patch', 'setup_unpatch': 'setup_unpatch', 'setup_verify': 'setup_verify',
              'setup_play': 'setup_play', 'setup_boost': 'setup_boost',
              'setup_boost_source': 'setup_boost_source', 'setup_resolution': 'setup_resolution',
+             'setup_pkg_source': 'setup_pkg_source',
+             'setup_emu_settings': 'emu_settings', 'setup_emu_settings_save': 'emu_settings_save',
+             'setup_emu_input': 'emu_input', 'setup_emu_input_save': 'emu_input_save',
              'setup_cpu_check': 'cpu_check', 'setup_cpu_send': 'cpu_send',
              'setup_folder_pick': 'folder_pick', 'setup_folder_set': 'folder_set', 'setup_folder_auto': 'folder_auto'}
     TAB = 'setup'
@@ -183,6 +186,7 @@ class SetupController(Part):
         self.boost_part = None  # how far its download is (0..1)
         self.cpu = dict(CPU_IDLE)   # Check my CPU (cpucheck.py): the run and its last result, this session only
         self.resolution = prefs.get('resolution') if prefs.get('resolution') in xmlpatch.RESOLUTIONS else 1080
+        gamesetup.set_display(prefs.get('display'))     # Game settings' display mode (default borderless)
         # Folders list: what the player set by hand ({'emulator': bool, 'game': bool, 'saves': bool, 'data': path,
         # 'cache': path (paths.cache_dir reads it from the settings itself)}); a
         # folder set here is never replaced by what a look finds (a tester's portable shadPS4, 2026-11-07)
@@ -192,7 +196,8 @@ class SetupController(Part):
     # --- helpers -------------------------------------------------------------------------------------------
     def _remember(self):
         self.ctl.remember(setup={'emulator': self.emulator, 'skipped': self.skipped, 'boost': self.boost,
-                                 'resolution': self.resolution, 'custom': dict(self.custom),
+                                 'resolution': self.resolution, 'display': gamesetup.display_mode(),
+                                 'custom': dict(self.custom),
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
 
     def features(self):
@@ -389,13 +394,13 @@ class SetupController(Part):
     def _outcome(self):
         """The Help bar's line after a look: the first thing still wrong in its tone, else what to do next."""
         f = self.found or {}
-        checks = self._checks(f, not self.known_emulator())
+        if not self.known_emulator():
+            return 'Press Find game and pick NHL 19 (its eboot.bin or PKG). No shadPS4 needed.', 'info'
+        checks = self._checks(f, False)
         for tone in ('bad', 'caution'):
             bad = next((c for c in checks if c['tone'] == tone), None)
             if bad:
                 return bad['text'], tone
-        if f.get('firewall') is False:
-            return 'Ready to play offline. To play online, let NHL 19 through the firewall (Multiplayer tab, Online card).', 'caution'
         rosters = self.ctl.parts.get('rosters') if hasattr(self.ctl, 'parts') else None
         if rosters is not None and rosters.open_roster() is not None:
             return 'Everything is ready.', 'good'
@@ -408,6 +413,8 @@ class SetupController(Part):
 
     def setup_set_emulator(self, path):
         picked = (path or '').strip().strip('"')
+        if picked.lower().endswith('.pkg') and os.path.isfile(picked):
+            return self.setup_install_pkg(picked)
         game = _game_of(picked)
         by_hand = bool(picked) and not game      # shadPS4 itself picked (not found from the game)
         if game:
@@ -415,18 +422,18 @@ class SetupController(Part):
             # selected version, else the newest found where the emulator keeps its games)
             self.ctl.set_game_dir(game)
             found = gamesetup.find_emulators(near=gamesetup.around(game, 2))
+            if not found and self.known_emulator():
+                self._scan(announce=True, picked=True)     # the shadPS4 in use stays (the app's own, or one picked)
+                return {'ok': True}
             if not found:
-                text = ('Found NHL 19. Now point Find game at shadPS4QtLauncher.exe or shadPS4.exe, so the program '
-                        'knows which emulator starts it.')
-                self.ctl.say(text, 'caution')
-                self._scan()
-                return {'error': text}
+                # no shadPS4 on this PC: the app's own (owner 2026-11-10: players need not install one)
+                return self._standalone('Found NHL 19. No shadPS4 on this PC, so Overtime gets its own...')
             picked = found[0]
         path = gamesetup.resolve_emulator(picked) if picked else ''
         if picked and not path:
             name = os.path.basename(picked.rstrip('\\/')) or picked
-            text = (f'No shadPS4 found in {name}. Point Find game at shadPS4QtLauncher.exe, shadPS4.exe or NHL 19\'s '
-                    'eboot.bin. With QtLauncher, download a version in it first.')
+            text = (f'No shadPS4 found in {name}. Point Find game at NHL 19\'s eboot.bin or its PKG (Overtime gets '
+                    'shadPS4 by itself), or at shadPS4QtLauncher.exe or shadPS4.exe.')
             self.ctl.say(text, 'bad')
             return {'error': text}
         with self.ctl.lock:
@@ -442,6 +449,71 @@ class SetupController(Part):
     def setup_set_game(self, path):
         self.ctl.set_game_dir(path)
         self._scan()
+        return {'ok': True}
+
+    # --- no shadPS4 on this PC: the app's own (owner 2026-11-10, docs/notes/standalone.md) ---------------------------
+    def standalone(self):
+        """True when NHL 19 plays on the Kravickas build the app set up with no shadPS4 of the player's to go back to
+        (Boost on, nothing kept): Boost then has no Disable."""
+        own = self.boost.get('emulator') or ''
+        return self._boosted() and not os.path.isfile(own)
+
+    def _standalone(self, intro):
+        """The published Kravickas build as this PC's shadPS4 (boost.enable, the Boost download), a job."""
+        if self._wait():
+            return None
+        self.ctl.say(intro, 'info')
+
+        def said(out):
+            self._boost_applied({}, out)
+            return ('NHL 19 plays on the Kravickas build of shadPS4, which Overtime set up for you. Sign in to ShadNet '
+                    'on the Multiplayer tab to play online.', 'good')
+        self._job('Getting shadPS4 (the Kravickas build) for NHL 19...',
+                  lambda: boost.enable(patch_cache(), self._boost_progress), said, expected=(boost.BoostError,),
+                  after=self._boost_done)
+        return {'ok': True}
+
+    def setup_install_pkg(self, path):
+        """Find game picked a .pkg: install it (pkginstall.install, a job; the base beside the PKG, the update beside
+        the game), the game folder follows, and with no shadPS4 on this PC the Kravickas build is set up in the same
+        job."""
+        if self._wait():
+            return None
+        c = self.ctl
+        game_dir, emu = c.game_dir, self.known_emulator()
+
+        def progress(stage, done, total):
+            part = min(1.0, done / total) if total else 0.0
+            c.say('Downloading the PKG tool...' if stage == 'tool' else
+                  f'Extracting the PKG... {round(part * 100)} % of {_gigabytes(total)}', 'info', part)
+
+        def work():
+            use, kind, game = pkginstall.install(path, game_dir, progress)
+            c.set_game_dir(use)
+            got = None if emu else boost.enable(patch_cache(), self._boost_progress)
+            return use, kind, game, got
+
+        def said(out):
+            use, kind, game, got = out
+            c.host.log(f"PKG installed: {path} -> {use} ({'update' if kind == pkginstall.UPDATE else 'game'}, "
+                       f"version {game.get('app_ver')})")
+            if got is not None:
+                self._boost_applied({}, got)
+            also = ' shadPS4 (the Kravickas build) is set up too.' if got is not None else ''
+            version = (game.get('app_ver') or '').lstrip('0') or '?'
+            needed = gamesetup.APP_VER.lstrip('0')
+            if game.get('ok'):
+                return f'NHL 19 {version} is ready in {use}.{also}', 'good'
+            if kind == pkginstall.BASE:
+                return f'NHL 19 is in {use}.{also} Now press Find game again and pick the update {needed} PKG.', 'caution'
+            return (f'Update {version} is installed, but Overtime needs {needed}: pick that update PKG with Find '
+                    f'game.{also}', 'caution')
+        self._job(f'Installing {os.path.basename(path)}...', work, said,
+                  expected=(pkginstall.PkgError, boost.BoostError), after=self._boost_done)
+        return {'ok': True}
+
+    def setup_pkg_source(self):
+        webbrowser.open(pkginstall.SOURCE)
         return {'ok': True}
 
     def setup_set_server(self, host, nucleus_url=None):
@@ -564,8 +636,8 @@ class SetupController(Part):
         is there, up to FIREWALL_WAIT seconds."""
         emu = self.known_emulator()
         if not emu or sys.platform != 'win32':
-            self.ctl.say('Pick shadPS4 first.', 'caution')
-            return {'error': 'Pick shadPS4 first.'}
+            self.ctl.say('Find NHL 19 first.', 'caution')
+            return {'error': 'Find NHL 19 first.'}
         if (self.found or {}).get('firewall') is True:
             self.ctl.say('Windows already lets NHL 19 through.', 'good')
             return {'ok': True}
@@ -593,6 +665,7 @@ class SetupController(Part):
         return {'ok': True}
 
     def setup_emulator_page(self):
+        """Kept for old pages: shadPS4 is no longer needed (the app sets up its own)."""
         webbrowser.open(gamesetup.EMULATOR_URL)
         self.ctl.say('Opened the shadPS4 QtLauncher page. Install it, download a version in it, then pick its folder.',
                      'info')
@@ -836,7 +909,7 @@ class SetupController(Part):
         then(): when the job is over."""
         c = self.ctl
         if not self.known_emulator():
-            text = 'Pick shadPS4 first: the packs go in when you patch the game.'
+            text = 'Find NHL 19 first: the packs go in when you patch the game.'
             c.say(text, 'caution')
             return {'error': text}
         if self._wait():
@@ -954,33 +1027,34 @@ class SetupController(Part):
         if self._wait():
             return None
         no = boost.refused(current, on)
+        if not no and not on and self.standalone():
+            no = ('Overtime set up this shadPS4 for you, so there is no other one to go back to. To play on your own '
+                  'shadPS4, pick it with Find game.')
         if no:
             c.say(no, 'caution')
             return {'error': no}
         return self._boost_on(current) if on else self._boost_off()
 
-    def _boost_on(self, current):
+    def _boost_progress(self, _name, done, total):
         c = self.ctl
+        part = min(1.0, done / total) if total else 0.0
+        with c.lock:
+            self.boost_part = part
+        c.say(f'Downloading the Kravickas build... {round(part * 100)} %', 'info', part)
+        c.changed('setup')
+
+    def _boost_done(self):
+        with self.ctl.lock:
+            self.boost_part = None
+
+    def _boost_on(self, current):
         keep = self._boost_keep(current)
-
-        def progress(_name, done, total):
-            part = min(1.0, done / total) if total else 0.0
-            with c.lock:
-                self.boost_part = part
-            c.say(f'Downloading the Kravickas build... {round(part * 100)} %', 'info', part)
-            c.changed('setup')
-
-        def work():
-            return boost.enable(patch_cache(), progress)
 
         def said(out):
             self._boost_applied(keep, out)
             return 'Boost performance is on: NHL 19 now plays on the Kravickas build.', 'good'
-
-        def after():
-            with c.lock:
-                self.boost_part = None
-        return self._job('Turning on Boost performance...', work, said, expected=(boost.BoostError,), after=after)
+        return self._job('Turning on Boost performance...', lambda: boost.enable(patch_cache(), self._boost_progress),
+                         said, expected=(boost.BoostError,), after=self._boost_done)
 
     def _boost_keep(self, current):
         keep = dict(self.boost)     # what QtLauncher had before stays, also when a shadPS4 was picked by hand since
@@ -1066,19 +1140,41 @@ class SetupController(Part):
         if part is not None:
             text, tone = f'Downloading... {round(part * 100)} %{f" of {size}" if size else ""}', 'info'
         elif newer:
-            text, tone = 'On. A newer Kravickas build is out.', 'info'
+            text, tone = 'On: 60 FPS. A newer Kravickas build is out.', 'info'
+        elif on and self.standalone():
+            text, tone = 'On: 60 FPS. Overtime set up the Kravickas build for you.', 'good'
         elif on:
-            text, tone = 'On: NHL 19 plays on the Kravickas build.', 'good'
+            text, tone = 'On: 60 FPS on the Kravickas build.', 'good'
         elif pub is not None:
-            text, tone = f'Off: NHL 19 plays on your own shadPS4. {size} download.' if size else 'Off.', ''
+            text, tone = f'Off. Enable it for 60 FPS ({size} download).' if size else 'Off. Enable it for 60 FPS.', ''
         elif self.found is None:
             text, tone = 'Looking...', ''
         elif self.boost_table is None:
             text, tone = 'The Overtime server does not answer: check your internet connection.', 'caution'
         else:
             text, tone = 'Not available for download yet.', 'caution'
+        news, upstream = self._emulator_news() if on else ('', '')
         return {'on': on, 'newer': newer, 'text': text, 'tone': tone, 'progress': part,
-                'can': (on or pub is not None) and not c.busy, 'resolution': self.resolution}
+                'standalone': on and self.standalone(), 'can': (on or pub is not None) and not c.busy,
+                'resolution': self.resolution, 'news': '' if newer or part is not None else news, 'upstream': upstream}
+
+    @staticmethod
+    def _emulator_news():
+        """(line, tooltip) from the server's watch of Kravickas's builds (latest.json "emulator"): a newer build on
+        GitHub the server has not moved to yet, and how the build stands to upstream shadPS4."""
+        news = packdownload.emulator_news() or {}
+        newer, up = news.get('newer'), news.get('upstream')
+        line = ''
+        if isinstance(newer, dict):
+            when = f' ({newer["date"]})' if isinstance(newer.get('date'), str) else ''
+            line = f'A newer Kravickas build is on GitHub{when}. Overtime moves to it after a test.'
+        tip = ''
+        if isinstance(up, dict) and isinstance(up.get('ahead'), int) and isinstance(up.get('behind'), int):
+            tip = (f"Kravickas's build is upstream shadPS4 plus NHL 19 fixes: {up['ahead']} commits ahead of upstream, "
+                   f"{up['behind']} behind.")
+            if isinstance(up.get('release'), str):
+                tip += f" Upstream's latest release: {up['release']}."
+        return line, tip
 
     # --- Check my CPU (cpucheck.py; the page shows it in Multiplayer > Advanced) ----------------------------------------
     def _cpu_set(self, **changes):
@@ -1211,6 +1307,64 @@ class SetupController(Part):
         self.ctl.changed('setup')
         return {'ok': True}
 
+    # --- Game settings, Controllers, Keyboard (Boost card; emusettings.py, emuinput.py) ----------------------------
+    def _emu_user(self):
+        emu = self.known_emulator()
+        return gamesetup.emu_user_dir(emu) if emu else ''
+
+    def emu_settings(self):
+        """The Game settings view: shadPS4's per-game settings for NHL 19 with their values and locks."""
+        user = self._emu_user()
+        if not user:
+            return {'error': 'Find NHL 19 in Setup first.'}
+        return emusettings.view(user, self.resolution)
+
+    def emu_settings_save(self, changes):
+        """Save and Apply: the changed fields into the game's config file. Returns the view again, or {'error'}."""
+        user = self._emu_user()
+        if not user:
+            return {'error': 'Find NHL 19 in Setup first.'}
+        try:
+            done = emusettings.save(user, changes, self.resolution)
+        except emusettings.SettingsError as err:
+            return {'error': str(err)}
+        except OSError as err:
+            return {'error': f'The settings were not saved: {err}'}
+        if emusettings.DISPLAY_ID in done:
+            with self.ctl.lock:
+                self._remember()
+        self.ctl.host.log(f"Game settings saved: {', '.join(done)}")
+        self.ctl.say('Game settings saved. NHL 19 uses them from its next start.', 'good')
+        return {'ok': True, **emusettings.view(user, self.resolution)}
+
+    def emu_input(self, kind):
+        """The Controllers ('pad') or Keyboard ('keys') view: the bindings of the input file shadPS4 uses."""
+        user = self._emu_user()
+        if not user:
+            return {'error': 'Find NHL 19 in Setup first.'}
+        try:
+            return emuinput.view(user, kind)
+        except emuinput.InputError as err:
+            return {'error': str(err)}
+
+    def emu_input_save(self, kind, model):
+        """Save the Controllers or Keyboard view into the input file; the rest of the file stays as it is."""
+        user = self._emu_user()
+        if not user:
+            return {'error': 'Find NHL 19 in Setup first.'}
+        try:
+            path = emuinput.save(user, kind, model)
+        except emuinput.InputError as err:
+            return {'error': str(err)}
+        except OSError as err:
+            return {'error': f'Not saved: {err}'}
+        what = 'Controller' if kind == 'pad' else 'Keyboard'
+        self.ctl.host.log(f'{what} bindings saved: {path}')
+        then = ('Press F8 in NHL 19 to use them now.' if overlay.emulator_running()
+                else 'NHL 19 uses them from its next start.')
+        self.ctl.say(f'{what} bindings saved. {then}', 'good')
+        return {'ok': True, **emuinput.view(user, kind)}
+
     # --- Updated assets: a switch per pack, as in Legacy (v0.70.0: the team art, photos and 3D jerseys too) -----------
     def _extra_off(self, name):
         """A pack did not come (or was deleted): every switch that needs it and has nothing else to use goes off."""
@@ -1238,7 +1392,7 @@ class SetupController(Part):
             taken = bool(c.busy) and not self._extras_running()
         no = patch_ctl.why(want, key, patch_ctl.packs_here(patch_cache()), missing_ok=True) if on else None
         if on and not no and not self.known_emulator():
-            no = 'Pick shadPS4 first: the packs go in when you patch the game.'
+            no = 'Find NHL 19 first: the packs go in when you patch the game.'
         if taken or no:
             c.say(no or waiting(c.busy), 'caution')
             c.changed('patch')  # the switch goes back
@@ -1417,7 +1571,7 @@ class SetupController(Part):
         else:
             card.update(text=f'Not downloaded ({size}). {patch_ctl.NO_PACK}')
         if not emulator and card['state'] not in ('here', 'downloading'):
-            card['text'] = 'Pick shadPS4 in Setup first: the pack goes in when you patch the game.'
+            card['text'] = 'Find NHL 19 in Setup first: the pack goes in when you patch the game.'
         return card
 
     def _packs_switch(self, on):
@@ -1639,7 +1793,7 @@ class SetupController(Part):
         def tile(key, value, tone, text):
             return {'key': key, 'label': LABELS[key], 'value': value, 'tone': tone, 'text': text}
         if first:
-            return [tile(k, 'Not checked', '', 'Pick shadPS4 first.') for k in LABELS]
+            return [tile(k, 'Not checked', '', 'Find NHL 19 first.') for k in LABELS]
         if self.checking or self.found is None:
             return [tile(k, 'Checking...', '', 'Checking...') for k in LABELS]
         return [self._emulator_tile(f, tile), self._game_tile(f, tile), self._shadnet_tile(f, tile),
@@ -1666,11 +1820,12 @@ class SetupController(Part):
                         f"NHL 19 ({game['title_id']}) with update {version}.")
         if game.get('title_id') in gamesetup.TITLE_IDS and game.get('app_ver') != gamesetup.APP_VER:
             return tile('game', f'Version {version}', 'bad',
-                        f'NHL 19 is version {version}. Install update {needed} in shadPS4, then check again.')
+                        f'NHL 19 is version {version}. Install update {needed}: pick its PKG with Find game.')
         if game.get('title_id') in gamesetup.TITLE_IDS:
             return tile('game', 'Not complete', 'bad',
-                        'NHL 19 is not complete. Install it again in shadPS4, then check again.')
-        return tile('game', 'Not found', 'bad', 'NHL 19 was not found. Install it in shadPS4, then check again.')
+                        'NHL 19 is not complete. Install it again from its PKG with Find game.')
+        return tile('game', 'Not found', 'bad', 'NHL 19 was not found. Press Find game and pick its eboot.bin '
+                                                 'or its PKG.')
 
     @staticmethod
     def _shadnet_tile(f, tile):
@@ -1679,20 +1834,20 @@ class SetupController(Part):
         on = [u for u in f.get('users') or [] if u.get('shadnet')]
         if not on:
             return tile('shadnet', 'Not signed in', 'caution',
-                        'Sign in to ShadNet in shadPS4 to play online, then check again.')
+                        'Sign in to ShadNet on the Multiplayer tab to play online.')
         user = on[0]
         who = user.get('npid') or user.get('name') or 'you'
         if not user.get('npid') or not user.get('password', True):
             return tile('shadnet', 'Not signed in', 'caution',
-                        'ShadNet is on, but the Online ID or password is missing. Fill them in under Manage Users '
-                        'in the shadPS4 launcher, then check again.')
+                        'ShadNet is on, but the Online ID or password is missing. Sign in again on the '
+                        'Multiplayer tab.')
         log = f.get('log') or {}
         fresh = log.get('when') is not None and (f.get('users_time') is None or log['when'] >= f['users_time'])
         when = friendly_date(log['when']) if log.get('when') else ''
         if fresh and log.get('state') == 'rejected':
             return tile('shadnet', 'Sign-in refused', 'bad',
-                        f'ShadNet refused the sign-in when shadPS4 last ran ({when}). Check the Online ID (capitals '
-                        'count) and the password under Manage Users in the shadPS4 launcher, then check again.')
+                        f'ShadNet refused the sign-in when shadPS4 last ran ({when}). Sign in again on the Multiplayer '
+                        'tab: the Online ID (capitals count) and the password.')
         if fresh and log.get('state') == 'signed_in':
             return tile('shadnet', who, 'good', f'Signed in to ShadNet as {who}. Checked: the shadPS4 settings, '
                                                 f'and its last run signed in ({when}).')
@@ -1711,11 +1866,12 @@ class SetupController(Part):
         return tile('network', 'No answer', 'bad', 'The Overtime server does not answer. Check your internet, then '
                                                    'check again.')
 
-    def _state(self, first, checks, firewall, roster_open):
+    def _state(self, first, checks, roster_open):
         """The line under the tiles: what is wrong, or what to do next."""
         if first:
-            return {'tone': 'info', 'get': True,
-                    'text': 'Pick your emulator folder or shadPS4.exe. NHL 19 and your rosters are found from there.'}
+            return {'tone': 'info', 'get': False,
+                    'text': 'Press Find game and pick NHL 19: its eboot.bin, or its PKG files to install it. No shadPS4? '
+                            'Overtime gets it by itself. Have one? Pick shadPS4.exe or QtLauncher instead.'}
         if self.checking or self.found is None:
             return {'tone': 'info', 'text': 'Checking shadPS4, NHL 19, ShadNet and the Overtime server...',
                     'get': False}
@@ -1723,23 +1879,23 @@ class SetupController(Part):
             bad = next((c for c in checks if c['tone'] == tone), None)
             if bad:
                 return {'tone': tone, 'text': bad['text'], 'get': False}
-        wall = ' To play online, let NHL 19 through the firewall (Multiplayer tab).' if firewall is False else ''
+        # the firewall no longer gates "ready" (0.83.0): matches go through the Overtime relay, which the game reaches
+        # first, so Windows lets the replies in without a rule. The rule stays optional, for a direct link.
         if not roster_open:
-            return {'tone': 'caution' if wall else 'good', 'text': f'Ready. Now pick the roster you work on.{wall}',
-                    'get': False}
-        if wall:
-            return {'tone': 'caution', 'text': f'Ready to play offline.{wall}', 'get': False}
+            return {'tone': 'good', 'text': 'Ready. Now pick the roster you work on.', 'get': False}
         return {'tone': 'good', 'text': 'Everything is ready. Go to Update or patch the game.', 'get': False}
 
     @staticmethod
     def _firewall(emulator, allows):
         if not emulator:
-            return {'tone': '', 'text': 'Pick shadPS4 first.', 'can_fix': False}
+            return {'tone': '', 'text': 'Find NHL 19 first.', 'can_fix': False}
+        # Optional since 0.83.0: matches run through the Overtime relay. A rule only matters for a direct link (the
+        # relay full or down) and stops Windows asking over the game the first time.
+        hint = ('Matches go through the Overtime server. The rule only helps a direct link, used when the server cannot '
+                'carry a match.')
         if allows is True:
-            return {'tone': 'good', 'text': f'Windows lets NHL 19 through ({GAME_PORT}).', 'can_fix': False}
-        if allows is False:
-            return {'tone': 'caution', 'text': f'Not let through yet ({GAME_PORT}).', 'can_fix': True}
-        return {'tone': '', 'text': f'Not known ({GAME_PORT}).', 'can_fix': True}
+            return {'tone': 'good', 'text': f'Allowed ({GAME_PORT})', 'hint': hint, 'can_fix': False}
+        return {'tone': '', 'text': 'Optional', 'hint': hint, 'can_fix': True}
 
     def _downloads(self, emulator):
         """Downloads: one row per pack, and Download all."""
@@ -1772,10 +1928,10 @@ class SetupController(Part):
         return {
             'rows': out,
             'all': {'can': bool(emulator and wanted) and not c.busy, 'count': len(wanted),
-                    'title': ('Pick shadPS4 first: the packs go in when you patch the game.' if not emulator else
+                    'title': ('Find NHL 19 first: the packs go in when you patch the game.' if not emulator else
                               f"Download the {len(wanted)} pack{'s' if len(wanted) != 1 else ''} not on this PC"
                               if wanted else 'Every pack is downloaded.')},
-            'note': None if emulator else 'Pick shadPS4 first: the packs go in when you patch the game.',
+            'note': None if emulator else 'Find NHL 19 first: the packs go in when you patch the game.',
         }
 
     def _kits(self, downloads):
@@ -1819,7 +1975,7 @@ class SetupController(Part):
                                                          'shadPS4' if emulator else '')},
                 'checks': checks,
                 'folders': self._folders(),
-                'state': self._state(first, checks, f.get('firewall'), rosters.open_roster() is not None),
+                'state': self._state(first, checks, rosters.open_roster() is not None),
                 'checking': bool(self.checking),
                 'running': running,
                 'online': {'server': self.server['host'], 'server_default': SERVER['host'],

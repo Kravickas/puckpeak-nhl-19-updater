@@ -1,6 +1,9 @@
 """Entry point of OvertimeNHL19.exe (windowed: no console): the window, or --selftest / --update."""
+import multiprocessing
 import os
 import sys
+
+multiprocessing.freeze_support()                    # a texture worker process (workers.ordered) runs its job, not the app
 
 from overtime_roster.window import startup
 

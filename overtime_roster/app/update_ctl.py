@@ -19,7 +19,7 @@ import time
 from overtime_core import art, gamefiles, kitcompose, nhlcom, photos, rosterupdate as U, sfo, teams as T
 
 from .. import VERSION
-from . import install, jobs, myedits, office, patch, paths, roster_card as RC, savegame, selfupdate, update
+from . import install, jobs, myedits, office, patch, paths, roster_card as RC, savegame, update
 from .registry import Part
 from .shell import friendly_date
 
@@ -85,18 +85,16 @@ PATCH_FIRST = {
     'none': 'NHL 19 is not patched. Run Update first, then Game patch: without the patch the game has no Seattle or '
             'Utah and cannot go online.',
     'problem': 'The game patch has a problem. Open Game patch and press Patch again.',
-    'older': "NHL 19 was patched by an older Overtime. Run Update, then press Patch again so the game gets this "
-             "version's default roster and calendars.",
     'money': "The 2026-27 salary cap switch in Game patch changed after this roster was updated, so its contracts "
              'no longer fit the cap the game plays. Press Go to update it again, or set the switch back.',
 }
 
 
 def patch_notice(c):
-    """The line over the Update tab when the game patch is missing, broken or made by an older Overtime (the patch
-    remembers its version, patch_ctl), or when the active roster's deals were written for the other salary cap
-    (_remember_saved's 'cap', office.league_served: Legacy marks such a roster too): {'kind', 'text', 'tone'} or None.
-    None until the Game patch tab has looked."""
+    """The line over the Update tab when the game patch is missing or broken, or when the active roster's deals were
+    written for the other salary cap (_remember_saved's 'cap', office.league_served: Legacy marks such a roster too):
+    {'kind', 'text', 'tone'} or None. None until the Game patch tab has looked. A patch made by an older Overtime gets
+    no line (owner 2026-11-10: not needed)."""
     f = c.parts['patch'].facts()
     if not f['checked']:
         return None
@@ -104,14 +102,10 @@ def patch_notice(c):
         kind = 'none'
     elif f['problems']:
         kind = 'problem'
+    elif money_misfit(c):
+        kind = 'money'
     else:
-        by = selfupdate.parse_version(c.prefs.get('patched_by'))
-        if by is None or by < selfupdate.parse_version(VERSION):
-            kind = 'older'
-        elif money_misfit(c):
-            kind = 'money'
-        else:
-            return None
+        return None
     return {'kind': kind, 'text': PATCH_FIRST[kind], 'tone': 'bad' if kind == 'problem' else 'caution'}
 
 

@@ -503,7 +503,7 @@ def one_click(setup, then=None):
     with ctl.lock:
         emu, game_dir, want = setup.emulator, ctl.game_dir, dict(ctl.patch_want)
     if not emu:
-        text = 'Pick shadPS4 in Setup first: the patch goes in with it.'
+        text = 'Find NHL 19 in Setup first: the patch goes in with it.'
         ctl.say(text, 'caution')
         return {'error': text}
     cache = cache_dir()
@@ -573,7 +573,7 @@ def one_click(setup, then=None):
         layers = ', '.join(out['layers']) or 'none'
         ctl.host.log(f"Game patched: server {out['targets']['redirector']}, layers {layers}, "
                      f"{'32 teams' if out['teams32'] else '31 teams (the roster served has no active Seattle)'}")
-        # Update warns when an older Overtime patched the game (update_ctl); a text layer left out is no change waiting
+        # which version patched (the adopt check reads it); a text layer left out is no change waiting
         ctl.remember(patched_by=VERSION, left_out=out['left_out'])
         text = patched_text(out['teams32'], on['roster'])
         if out['left_out']:
@@ -664,10 +664,10 @@ def verify_text(v, files=None):
         return {'text': text, 'tone': 'good', 'date': date}
     first = str(diff[0][0] if isinstance(diff[0], (list, tuple)) else diff[0])
     if len(diff) == 1:
-        text = f'{first} is not as it came. Install NHL 19 again in shadPS4.'
+        text = f'{first} is not as it came. Install NHL 19 again (its PKG with Find game).'
     else:
         text = (f'{len(diff)} game files are not as they came, {first} first. Install NHL 19 '
-                'again in shadPS4.')
+                'again (its PKG with Find game).')
     return {'text': text, 'tone': 'bad', 'date': date}
 
 
@@ -704,7 +704,7 @@ def play(setup):
         ctl.say(f'Wait a moment: {_doing(doing)} is still running.', 'caution')
         return None
     if not setup.known_emulator():
-        text = 'Pick shadPS4 in Setup first.'
+        text = 'Find NHL 19 in Setup first.'
         ctl.say(text, 'caution')
         return {'error': text}
     shell = getattr(ctl, 'shell', None)
@@ -721,9 +721,9 @@ def play(setup):
 
 def refresh_network(setup):
     """Point the patched game at the server of Setup's field and switch shadPS4's two network keys back on, without
-    Patch (owner, 2026-11-03: "the app doesnt need a patch each time we edit network settings"). Only the eboot patch
-    file and the keys are written (gamesetup.install keeps the first backups and the player's first settings), never
-    game data. Returns 'written', 'same' (nothing to do), 'later' (shadPS4 runs: the next start does it) or None (not
+    Patch (owner, 2026-11-03: "the app doesnt need a patch each time we edit network settings"), and readbacks back to
+    Precise with readback linear images on (owner 2026-11-10: for everyone). Only the eboot patch file and the keys are
+    written (gamesetup.install keeps the first backups and the player's first settings), never game data. Returns 'written', 'same' (nothing to do), 'later' (shadPS4 runs: the next start does it) or None (not
     patched by this Overtime, or its patch file is another version's: Patch makes it new)."""
     emu = setup.known_emulator()
     text = gamesetup.installed_patch() if emu else None
@@ -737,7 +737,7 @@ def refresh_network(setup):
         return None
     user = gamesetup.emu_user_dir(emu)
     if (new == text and gamesetup.network_on(user) and gamesetup.network_written(user)
-            and gamesetup.amd_math_on(user)):
+            and gamesetup.amd_math_on(user) and gamesetup.readbacks_on(user)):
         return 'same'
     if overlay.emulator_running() or matchsetup.active():
         return 'later'
@@ -758,7 +758,7 @@ def online_minimum(setup):
     crash (ws8 run7a): Patch sets it by the roster then."""
     emu, game_dir = setup.known_emulator(), setup.ctl.game_dir
     if not emu:
-        raise gamesetup.SetupError('Pick shadPS4 in Setup first.')
+        raise gamesetup.SetupError('Find NHL 19 in Setup first.')
     if matchsetup.active():
         raise gamesetup.SetupError(MATCH_LOCKED)
     layers = (overlay.status(game_dir) or {}).get('layers') or {} if game_dir else {}
@@ -968,7 +968,7 @@ class PatchCtl(Part):
             if c.busy:
                 return None
             if not c.game.ok:
-                return {'error': 'NHL 19 was not found. Pick shadPS4 in Setup first.'}
+                return {'error': 'NHL 19 was not found. Find it in Setup first.'}
             c.busy = busy
         c.say(busy, 'info', -1)
         c.changed('patch', 'source', 'editor', 'update')
@@ -1052,7 +1052,7 @@ class PatchCtl(Part):
             c.changed('patch')
             return None
         if value and key == 'assets' and not setup.known_emulator():
-            c.say('Pick shadPS4 first: the assets go in when you patch the game.', 'caution')
+            c.say('Find NHL 19 first: the assets go in when you patch the game.', 'caution')
             c.changed('patch')
             return None
         found = packs_here(cache_dir())

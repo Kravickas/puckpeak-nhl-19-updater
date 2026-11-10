@@ -83,6 +83,7 @@ _lock = threading.RLock()       # the record (status, a download and missing_cor
 _releases = {}                  # latest.json URL -> (when read, {name: Release} or None)
 _hashes = {}                    # (path, size, mtime) -> {sha256, ...} of a pack outside the cache (exe, repository)
 _artids = {}                    # (roster sha256, game folder) -> {artid}
+_news = {}                      # latest.json URL -> its "emulator" (the server's watch of Kravickas's builds) or None
 
 
 def megabytes(n):
@@ -115,6 +116,8 @@ def _read(url, fetch_text):
         return None
     if not isinstance(data, dict):
         return None
+    with _lock:
+        _news[url] = data.get('emulator') if isinstance(data.get('emulator'), dict) else None
     listed = data.get('packs') if isinstance(data.get('packs'), dict) else {}
     sums = None
     if any(isinstance(listed.get(name), dict) for name in KNOWN):
@@ -140,6 +143,15 @@ def published(url=None, fetch_text=None, max_age=REMEMBER):
         with _lock:
             _releases[url] = (time.time(), table)
     return table
+
+
+def emulator_news(url=None):
+    """What the last read of latest.json said about Kravickas's builds (overtime_server/emuwatch.py notice()): None,
+    or {"newer": {"commit", "date", "staged"} or None, "pinned": {...}, "upstream": {"ahead", "behind", "release"}}.
+    No read of its own: published() reads it."""
+    with _lock:
+        news = _news.get(url or selfupdate.release_url())
+    return dict(news) if news else None
 
 
 def forget():

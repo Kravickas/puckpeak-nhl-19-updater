@@ -50,6 +50,7 @@
 .tab-setup .su-state.bad { color: #ff4f7b; }
 .tab-setup .su-state.caution { color: var(--caution); }
 .tab-setup .su-state.info { color: var(--text-soft); }
+.tab-setup .su-news { margin-top: 4px; font-size: 12px; line-height: 1.35; color: var(--text-3); }
 .tab-setup .su-first .su-where { box-shadow: inset 0 calc(-1 * var(--focus-bar)) 0 var(--metal-flat), 0 10px 30px rgba(0, 0, 0, .35); }
 
 /* --- Online: label | control | button lines ------------------------------------------------------------------------- */
@@ -62,10 +63,13 @@
 :is(.tab-setup, .tab-multiplayer) .su-fw { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 26px; font-size: 13.5px; color: var(--text-soft); }
 :is(.tab-setup, .tab-multiplayer) .su-fwt { min-width: 0; }
 :is(.tab-setup, .tab-multiplayer) .su-fw.wide { grid-column: 2 / -1; }
-:is(.tab-setup, .tab-multiplayer) .su-cpu-st { grid-column: 2 / -1; align-items: flex-start; margin-top: -2px; font-size: 12.5px; line-height: 1.35; }
-:is(.tab-setup, .tab-multiplayer) .su-cpu-st { flex-wrap: wrap; row-gap: 6px; }
-:is(.tab-setup, .tab-multiplayer) .su-cpu-st .su-fwt { flex: 1 1 0; min-width: 60%; }
-:is(.tab-setup, .tab-multiplayer) .su-cpu-st .btn { margin-left: auto; }
+:is(.tab-setup, .tab-multiplayer) .su-cpu-st { grid-column: 2; align-items: flex-start; margin-top: -2px; font-size: 12.5px; line-height: 1.35; }
+:is(.tab-setup, .tab-multiplayer) .su-cpu-st.wide { grid-column: 2 / -1; }
+:is(.tab-setup, .tab-multiplayer) .su-cpu-st .su-fwt { flex: 1 1 0; }
+/* every button of the grid in its last column, one width (the widest), so the panel reads as one column of actions */
+:is(.tab-setup, .tab-multiplayer) .su-lines > .btn { grid-column: 3; justify-self: stretch; }
+:is(.tab-setup, .tab-multiplayer) .su-lines > .mp-opt { grid-column: 2 / -1; min-width: 0; margin-top: -2px; }
+:is(.tab-setup, .tab-multiplayer) .su-lines > .su-row-note { grid-column: 2 / -1; margin-top: -2px; }
 :is(.tab-setup, .tab-multiplayer) .su-fw.caution .su-fwt { color: var(--caution); }
 :is(.tab-setup, .tab-multiplayer) .su-fw.bad .su-fwt { color: #ff4f7b; }
 :is(.tab-setup, .tab-multiplayer) .su-fw.idle .su-fwt, :is(.tab-setup, .tab-multiplayer) .su-fw:not(.good):not(.caution):not(.bad) .su-fwt { color: var(--text-3); }
@@ -189,3 +193,74 @@
   overflow: hidden; text-overflow: ellipsis; }
 .tab-setup .su-folder .field.path { min-width: 0; height: 28px; font-size: 13px; }
 .tab-setup .su-folder > .chip { justify-self: end; }     /* found / not found / yours: the paths line up */
+
+/* --- Boost: Game settings, Controllers, Keyboard (the views portal to #app, so they are not under .tab-setup) ---------- */
+.tab-setup .su-emu { flex-wrap: wrap; }
+.tab-setup .su-emu .su-st { flex: 0 0 auto; min-width: 66px; }
+.emu-ico { width: 17px; height: 14px; flex: none; }
+.modal.emu-modal { width: min(960px, calc(100% - 32px)); }
+.modal.emu-game { height: min(760px, calc(100% - 48px)); }
+.emu-game .m-body { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.emu-modal .m-buttons { align-items: center; }
+.emu-left { margin-right: auto; }
+.emu-msg { flex: 1; min-width: 0; text-align: right; font-size: 12.5px; line-height: 1.3; color: var(--text-2); }
+.emu-msg.good { color: var(--good); }
+.emu-msg.bad { color: #ff4f7b; }
+.emu-wait { color: var(--text-3); }
+.emu-tabs { flex: none; display: flex; flex-wrap: wrap; gap: 2px; box-shadow: inset 0 -1px 0 var(--line); }
+.emu-tab { padding: 7px 12px 8px; border: 0; background: none; color: var(--text-3); font: inherit; font-size: 13px;
+  font-weight: 700; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; }
+.emu-tab:hover { color: var(--text-soft); }
+.emu-tab.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.emu-banner { flex: none; padding: 8px 12px; font-size: 13px; line-height: 1.4; color: var(--text-soft);
+  background: rgba(255, 93, 84, .1); box-shadow: inset 3px 0 0 var(--accent); }
+.emu-banner.soft { background: var(--panel-deep); box-shadow: inset 3px 0 0 var(--text-3); color: var(--text-2); }
+.emu-banner.warn { background: rgba(255, 196, 0, .08); box-shadow: inset 3px 0 0 var(--caution); }
+.emu-groups { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 10px; align-content: start; padding-right: 2px; }
+.emu-group { padding: 10px 12px 8px; background: var(--panel-deep); }
+.emu-group h4 { margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+.emu-row { display: grid; grid-template-columns: minmax(120px, 40%) minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  min-height: 34px; margin: 0 -6px; padding: 2px 6px; }
+.emu-row.check { grid-template-columns: minmax(0, 1fr) auto; }
+.emu-row.tip { background: rgba(255, 255, 255, .035); }
+.emu-row .check { font-size: 13.5px; }
+.emu-label { font-size: 13.5px; line-height: 1.3; color: var(--text-2); }
+.emu-tags { display: inline-flex; align-items: center; gap: 6px; }
+.emu-select, .emu-num, .emu-text { height: 30px; font-size: 13px; }
+.emu-num { max-width: 160px; }
+.emu-slider { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.emu-slider input, .emu-zone input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.emu-slider b, .emu-zone b { min-width: 30px; text-align: right; font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.emu-help { flex: none; min-height: 58px; padding: 9px 12px; font-size: 13px; line-height: 1.45; color: var(--text-2); background: var(--panel-deep); }
+.emu-help b { margin-right: 4px; color: var(--text); }
+.emu-help i { font-style: normal; color: var(--text-3); }
+.emu-help i.warn { color: var(--caution); }
+.emu-file { font-size: 13px; color: var(--text-2); }
+.emu-file code { font-size: 12px; color: var(--text-3); word-break: break-all; }
+.emu-cols { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.emu-cols > div { display: flex; flex-direction: column; gap: 12px; }
+.emu-map { display: grid; grid-template-columns: minmax(110px, 42%) minmax(0, 1fr); gap: 5px 10px; align-items: center; }
+.emu-small { margin: 6px 0 0 !important; font-size: 12.5px; line-height: 1.4; color: var(--text-3); }
+.emu-zones { display: grid; grid-template-columns: 80px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: center; margin-top: 6px; }
+.emu-zone { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--text-2); }
+.emu-color { width: 44px; height: 26px; padding: 0; border: 0; background: none; cursor: pointer; }
+.emu-color:disabled { opacity: .4; cursor: default; }
+.emu-keys { display: flex; flex-direction: column; gap: 4px; }
+.emu-krow { display: grid; grid-template-columns: minmax(110px, 34%) minmax(0, 1fr); gap: 10px; align-items: center; }
+.emu-kslots { display: flex; flex-wrap: wrap; gap: 5px; }
+.emu-slot { flex: 1 1 0; min-width: 76px; height: 28px; padding: 0 8px; border: 0; background: var(--input); color: var(--text-3);
+  font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--line); }
+.emu-slot.set { color: var(--text); }
+.emu-slot:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-hi); }
+.emu-slot:disabled { opacity: .45; cursor: default; }
+.emu-slot.emu-grab { color: var(--accent); background: rgba(255, 93, 84, .14); box-shadow: inset 0 0 0 1px var(--accent); animation: emu-blink 1s ease-in-out infinite; }
+@keyframes emu-blink { 50% { box-shadow: inset 0 0 0 1px transparent; } }
+.emu-hotkeys { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; font-size: 13px; color: var(--text-2); }
+.emu-hotkeys kbd { padding: 1px 7px; font: inherit; font-size: 12px; font-weight: 600; color: var(--text); background: var(--input);
+  box-shadow: inset 0 0 0 1px var(--line); }
+@media (max-width: 760px) {
+  .emu-cols { grid-template-columns: minmax(0, 1fr); }
+  .emu-groups { grid-template-columns: minmax(0, 1fr); }
+}

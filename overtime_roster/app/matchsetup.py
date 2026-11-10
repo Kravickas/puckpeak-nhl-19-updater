@@ -273,10 +273,12 @@ def _config_values(cfg, user, xml_text, timing):
     filled = {k: v for k, v in gamesetup._servers(user).items()
               if not (isinstance(section.get(k), str) and section[k].strip())}
     cfg['Network'] = dict(section, **filled, **gamesetup.NETWORK)
+    gpu = cfg['GPU'] = dict(cfg['GPU']) if isinstance(cfg.get('GPU'), dict) else {}
+    # Precise readbacks + readback linear images in every match (owner 2026-11-10), the player's display mode with
+    # exclusive fullscreen as borderless (the HUD needs it)
+    gpu.update(gamesetup.gpu_wanted(match=True))
     if 'vblank_frequency' in timing:
-        gpu = cfg.get('GPU') if isinstance(cfg.get('GPU'), dict) else {}
         gpu['vblank_frequency'] = timing['vblank_frequency']
-        cfg['GPU'] = gpu
     if 'neo_mode' in timing:
         general['neo_mode'] = timing['neo_mode']
     if gamesetup.amd_math_needed():

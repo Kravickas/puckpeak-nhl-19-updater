@@ -144,14 +144,40 @@ def score(value):
     return n if 0 <= n <= MAX_SCORE else None
 
 
+GAME_DRIFT = 1   # goals the two game reports of one match may differ by, each side's own score kept (match 75, 2026-11-10)
+
+
+def _own_scores_agree(x, y):
+    """Threes: each game's report has its own goals right and the opponent's wrong (match 79 of 2026-11-10, lost 14-2:
+    the winner reported 14-1, the loser 2-10; match 78 8-3 and 2-6; match 75 8-5 and 4-8). The two own scores decide:
+    they must differ and each report must name the winner they name."""
+    return (x['for'] != y['for'] and (x['for'] > x['against']) == (x['for'] > y['for'])
+            and (y['for'] > y['against']) == (y['for'] > x['for']))
+
+
+def _agree(x, y, mode=None):
+    """Two claims of one match say the same thing: they mirror, or both are the game's own reports with the same winner
+    and scores within GAME_DRIFT of each other (the game itself gave 8-5 to one side and 4-8 to the other for one match, an
+    opponent score off by one while the winner and the own scores agreed), or, in Threes, two game reports whose own
+    scores agree on the winner (_own_scores_agree). Entries typed in the app must mirror exactly."""
+    if (x['for'], x['against']) == (y['against'], y['for']):
+        return True
+    if x.get('source') != 'game' or y.get('source') != 'game':
+        return False
+    if mode == 'threes' and _own_scores_agree(x, y):
+        return True
+    return ((x['for'] > x['against']) == (y['against'] > y['for'])
+            and abs(x['for'] - y['against']) <= GAME_DRIFT and abs(y['for'] - x['against']) <= GAME_DRIFT)
+
+
 def full(match):
-    """A fully played match: both sides reported and the two results mirror. Only these are shown and rated
+    """A fully played match: both sides reported and the two results agree (`_agree`). Only these are shown and rated
     (MatchBook._snapshot); a forfeit, a lone report, a dispute and a match with no result are left out (2026-11-10)."""
     claims = match.get('claims') or {}
     if len(claims) != 2:
         return False
     x, y = claims.values()
-    return (x['for'], x['against']) == (y['against'], y['for'])
+    return _agree(x, y, match.get('mode'))
 
 
 def pending_until(match):
@@ -185,9 +211,9 @@ def resolve(match):
     out = {'status': OPEN, 'teams': teams, 'scores': scores, 'winner': None, 'waiting_for': None, 'left': None,
            'forfeit': False}
     if ca and cb:
-        if (ca['for'], ca['against']) == (cb['against'], cb['for']):
+        if _agree(ca, cb, match.get('mode')):
             out['status'] = CONFIRMED
-            scores[a], scores[b] = ca['for'], cb['for']
+            scores[a], scores[b] = ca['for'], cb['for']     # each side's own score
             out['winner'] = a if ca['for'] > ca['against'] else b
         else:
             out['status'] = DISPUTED

@@ -71,7 +71,10 @@
 .tab-multiplayer .mp-adv-d { font-size: 12.5px; color: var(--text-2); }
 .tab-multiplayer .mp-adv .mp-chev { transform: rotate(90deg); }
 .tab-multiplayer .mp-adv.open .mp-chev { transform: rotate(-90deg); }
-.tab-multiplayer .mp-adv-body { padding: 4px 12px 12px; }
+.tab-multiplayer .mp-adv-body { padding: 4px 8px 12px; }
+/* the Advanced grid is narrow: room for the full server address next to the button column (0.83.0) */
+.tab-multiplayer .mp-adv-body .su-lines { column-gap: 8px; }
+.tab-multiplayer .mp-adv-body .su-server { padding: 0 8px; font-size: 13.5px; }
 /* the name row (only before a ShadNet account) */
 .tab-multiplayer .mp-fact { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 4px 10px 4px 14px; background: var(--tile);
   box-shadow: inset 3px 0 0 var(--text-off); }

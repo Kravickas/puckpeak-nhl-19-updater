@@ -680,16 +680,9 @@ def test_patch_bar_problem(app):
     assert view(host)['patch']['kind'] == 'problem' and view(host)['patch']['tone'] == 'bad'
 
 
-@pytest.mark.parametrize('by', [None, '0.1.0-beta3', 'garbage'])
-def test_patch_bar_older_overtime(app, by):
-    c, host, fakes = app
-    open_roster(c, fakes)
-    _patched(c, by=by)
-    assert view(host)['patch']['kind'] == 'older'
-
-
-@pytest.mark.parametrize('by', [UC.VERSION, '99.0.0'])
-def test_patch_bar_gone_when_this_version_patched(app, by):
+@pytest.mark.parametrize('by', [None, '0.1.0-beta3', 'garbage', UC.VERSION, '99.0.0'])
+def test_patch_bar_gone_when_patched_by_any_overtime(app, by):
+    """A patch from an older Overtime gets no line either (owner 2026-11-10)."""
     c, host, fakes = app
     open_roster(c, fakes)
     _patched(c, by=by)

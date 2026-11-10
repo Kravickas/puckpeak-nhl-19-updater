@@ -454,6 +454,7 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
     by_arc = collections.defaultdict(list)
     for p in targets:
         by_arc[where[p]].append(p)
+    old = _old_pack(out_path)       # the pack as it was: its textures whose inputs did not change are copied, not made
     cache = {}
 
     def picture(member):
@@ -466,9 +467,13 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
     tmp = out_path + '.tmp'
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     try:
-        _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where)
+        _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where, old)
     finally:
         source.close()
+        if old[0] is not None:
+            old[0].close()
+    if counts.get('reused'):
+        say(f'jerseys: {name}: {counts["reused"]} of {len(targets)} textures unchanged, copied from the last pack')
     if not shas:
         os.remove(tmp)
         if os.path.isfile(out_path):
@@ -482,24 +487,58 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
 _STEP_ERRORS = (art.ArtError, gnf.GnfError, OSError, ValueError, KeyError)
 
 
-def _needs(step, picture, read):
-    """The pictures and other game files `step` reads, read here (the reading thread), each picture its own copy."""
-    op, pics, files = step.get('op'), {}, {}
+def _members(step):
+    """The source pack's pictures `step` draws from."""
+    op = step.get('op')
     if op == 'make':
-        members = [step['picture']]
-    elif op == 'cover':
-        members = [step['mask']] + ([step['plain_mask']] if step.get('plain_mask') else [])
-    else:
-        members = []
-    for m in members:
-        pics[m] = picture(m).copy()     # no picture is shared between threads
-    if op == 'font' and step.get('shape'):
-        files[step['shape']] = read(step['shape'])
-    return pics, files
+        return [step['picture']]
+    if op == 'cover':
+        return [step['mask']] + ([step['plain_mask']] if step.get('plain_mask') else [])
+    return []
 
 
-def _jobs(source, by_arc, picture, where):
-    """(path, (step, raw, pictures, files) or the read error) of each texture, in the pack's order (workers.ordered)."""
+def _other_files(step, read):
+    """The other game files `step` reads (a font's shape), read here (the reading thread)."""
+    if step.get('op') == 'font' and step.get('shape'):
+        return {step['shape']: read(step['shape'])}
+    return {}
+
+
+def _fingerprint(source, step, raw, files):
+    """What one texture is made from: the step, the source pictures it reads (by their sha256 in the source pack), the
+    game's bytes and the drawing / encoder versions. The same fingerprint makes the same texture."""
+    from PIL import __version__ as pillow
+    members = getattr(source, 'members', None) or {}
+    h = hashlib.sha256(json.dumps([DRAWING, gnf.ENCODER, pillow, step, [members.get(m) for m in _members(step)]],
+                                  sort_keys=True, default=str).encode('utf-8'))
+    h.update(hashlib.sha256(raw).digest())
+    for k in sorted(files):
+        h.update(k.encode('utf-8'))
+        h.update(hashlib.sha256(files[k]).digest())
+    return h.hexdigest()
+
+
+def _old_pack(path):
+    """(open zip, {game path: fingerprint}) of the pack as it was, or (None, {}): a pack from before fingerprints, or
+    none, or one that does not read, gives nothing to copy."""
+    try:
+        z = zipfile.ZipFile(path)
+    except (zipfile.BadZipFile, OSError):
+        return None, {}
+    try:
+        inputs = json.loads(z.read(art.MANIFEST).decode('utf-8')).get('inputs') or {}
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile):
+        inputs = {}
+    if not isinstance(inputs, dict) or not inputs:
+        z.close()
+        return None, {}
+    return z, inputs
+
+
+def _jobs(source, by_arc, picture, where, old=(None, {})):
+    """(path, (path, step, raw, pictures, files, fingerprint) or the read error) of each texture, in the pack's order
+    (workers.ordered). A texture whose fingerprint is the old pack's comes with step None and its old bytes as `raw`."""
+    old_zip, old_inputs = old
     for big, ps in sorted(by_arc.items()):
         with eb.EbArchive(big) as arc:
             for p in ps:
@@ -510,31 +549,48 @@ def _jobs(source, by_arc, picture, where):
                     raw = arc.raw(p) if step.get('op') in WHOLE else arc.head(p, HEAD)
                     if step.get('op') not in WHOLE and gnf.Gnf(raw).data_off > len(raw):
                         raw = arc.raw(p)
-                    pics, files = _needs(step, picture, lambda q: _read_other(where, q, big, arc))
+                    files = _other_files(step, lambda q: _read_other(where, q, big, arc))
+                    fp = _fingerprint(source, step, raw, files)
+                    if old_zip is not None and old_inputs.get(p) == fp:
+                        try:
+                            yield p, (p, None, old_zip.read(p), None, None, fp)
+                            continue
+                        except (KeyError, OSError, zipfile.BadZipFile):
+                            pass            # not readable: made again below
+                    pics = {m: picture(m).copy() for m in _members(step)}     # no picture is shared between workers
                 except _STEP_ERRORS as err:
                     yield p, err
                     continue
-                yield p, (p, step, raw, pics, files)
+                yield p, (p, step, raw, pics, files, fp)
 
 
-def _make(p, step, raw, pics, files):
-    """One texture (on a worker): its GNF and sha256. `raw` may still be packed (chunkzip): unpacked here."""
-    data = run(step, eb.unchunk(raw), pics.__getitem__, files.__getitem__)
+def _make(p, step, raw, pics, files, fp=None):
+    """One texture (on a worker): (its GNF, sha256, fingerprint). `raw` may still be packed (chunkzip): unpacked here.
+    Step None: `raw` is the texture as the last pack had it."""
+    if step is None:
+        data = raw
+    else:
+        data = run(step, eb.unchunk(raw), pics.__getitem__, files.__getitem__)
     art.check_file(p, data)
-    return data, hashlib.sha256(data).hexdigest()
+    return data, hashlib.sha256(data).hexdigest(), fp
 
 
-def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where):
-    """The pack, its textures made on every core (workers.ordered: read and written here, in order, so the pack is the
-    one a single thread writes)."""
+def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where,
+           old=(None, {})):
+    """The pack, its textures made on every core (workers.ordered, in processes: read and written here, in order, so
+    the pack is the one a single thread writes)."""
     done = 0
+    inputs = {}
+    jobs = _jobs(source, by_arc, picture, where, old)
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
-        for p, made, err in workers.ordered(_jobs(source, by_arc, picture, where), _make, _STEP_ERRORS):
+        for p, made, err in workers.ordered(jobs, _make, _STEP_ERRORS, processes=True):
             if err is not None:
                 say(f'jerseys: {p} not made ({err})')
                 counts['failed'] += 1
                 continue
-            data, shas[p] = made
+            data, shas[p], inputs[p] = made
+            if old[1].get(p) == inputs[p] and old[0] is not None:
+                counts['reused'] = counts.get('reused', 0) + 1
             zi = zipfile.ZipInfo(p, STAMP)
             zi.compress_type = zipfile.ZIP_DEFLATED
             z.writestr(zi, data, compresslevel=1)
@@ -543,6 +599,7 @@ def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, 
                 progress(done / len(targets))
         info = {'format': art.FORMAT, 'name': name, 'built': (today or datetime.date.today()).isoformat(),
                 'source': SOURCE, 'files': dict(sorted(shas.items())), 'made': key,
+                'inputs': dict(sorted((k, v) for k, v in inputs.items() if v)),
                 'alternates': [a for a in source.info.get('alternates') or [] if _rows_made(a, source, shas)]}
         z.writestr(zipfile.ZipInfo(art.MANIFEST, STAMP), json.dumps(info, indent=1, sort_keys=True))
 

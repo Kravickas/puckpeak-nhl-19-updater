@@ -2,6 +2,48 @@
 
 What changed in each version, for players.
 
+## 0.83.0 (2026-11-10)
+
+### Added
+
+- **No shadPS4 install needed.** Find game takes NHL 19's `eboot.bin` or its PKG. When there is no shadPS4 on the PC,
+  the app downloads Kravickas's NHL19-Build (the build Boost and lobby matches already use) and plays on it. A shadPS4
+  you already have is used as before.
+- **Install from a PKG.** Pick the game PKG and the app installs it into a new folder next to the PKG; pick the 1.60
+  update PKG and it goes into a `-patch` folder beside the game, which shadPS4 loads. DLC PKGs are refused, free space
+  is checked first and nothing already there is overwritten. It uses shadPS4Plus's `pkg_extractor` (GPL-2.0, a
+  separate program), downloaded from its GitHub release the first time and checked by its sha256.
+- **Connection in the corner.** While a match runs, a small pill at the top right of the game shows the ping and the
+  packet loss: green, yellow or red, and "NO PACKETS" or "NO DATA" when the link stops. Its switch, "Connection in
+  the corner", is under "When the game starts" (on by default). Windows only.
+- **Game settings, Controllers and Keyboard.** Setup → Boost performance has a Settings row. Game settings shows
+  shadPS4's settings for NHL 19 in tabs, with a description of each one; settings Overtime needs are shown locked.
+  Controllers maps the pad's buttons, sticks, deadzones and lightbar; Keyboard binds up to three keys, a combination
+  or a mouse button per button, and the mouse as a stick. Press F8 in the game to use new bindings at once.
+- **Fullscreen (Borderless) by default.** NHL 19 now opens borderless for everyone, from the next Patch or Play. Pick
+  another display mode in Game settings and the app keeps it. Lobby matches play exclusive Fullscreen as borderless.
+- **Newer Kravickas builds are announced.** The Overtime server checks Kravickas's NHL19-Build on GitHub. When a
+  newer one is out, the Boost card says so; Overtime moves to it after a test.
+
+### Changed
+
+- **The same graphics settings for everyone.** Patch sets shadPS4's Readbacks mode to Precise and turns on Readback
+  Linear Images in NHL 19's own shadPS4 settings, against graphical glitches. Play puts them back if they were
+  changed, lobby matches always play with them, and Unpatch gives you your own values back.
+- **The firewall rule is optional.** Matches go through the Overtime server, so the rule no longer decides whether
+  you are ready. Multiplayer → Advanced still has "Allow..." for it: it only helps a direct link, used when the
+  server cannot carry a match.
+- **Multiplayer → Advanced in one grid.** Server, CPU, Reports and Firewall share the same columns; "Send the
+  result..." is now "Send result...".
+- ShadNet sign-in works on a PC that never ran shadPS4 (the app writes shadPS4's default users first).
+- **Cleaner screens.** The Update tab no longer shows the steps row or the "patched by an older Overtime" line.
+  Setup's roster card shows "13 free save slots from 15 total." and drops its hint line, and the Boost card says what
+  it does: 60 FPS.
+
+### Fixed
+
+- With nothing picked yet, Setup said "shadPS4 and NHL 19 are ready" and Folders said "all found".
+
 ## 0.82.0 (2026-11-10)
 
 0.80.1 and 0.81.0 were never published; what they had is in here. The texture encoder, 720p, the movable downloads

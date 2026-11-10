@@ -188,8 +188,74 @@ def test_find_game_takes_the_games_eboot(sc, tmp_path, monkeypatch):
     assert sc.setup_set_emulator(str(game / 'eboot.bin')) == {'ok': True}
     assert sc.ctl.game_dir == str(game) and sc.ctl.prefs['setup']['emulator'] == str(sc.world['emu'])
     monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2, near=(): [])
-    out = sc.setup_set_emulator(str(game))          # the folder works too; no shadPS4 found: says what to pick
-    assert 'shadPS4QtLauncher.exe' in out['error'] and sc.ctl.game_dir == str(game)
+    assert sc.setup_set_emulator(str(game)) == {'ok': True}    # the folder works too; the shadPS4 in use stays
+    assert sc.ctl.game_dir == str(game) and sc.known_emulator() == str(sc.world['emu'])
+
+
+def _no_shadps4(sc, monkeypatch):
+    """A PC that never had shadPS4: nothing found, and boost.enable writes the Kravickas exe (no download)."""
+    from overtime_roster.app import boost
+    sc.emulator, sc.boost = '', {}
+    monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2, near=(): [])
+    got = []
+
+    def enable(cache_dir, progress=None, cancelled=None):
+        exe = boost.exe_path()
+        with open(exe, 'wb') as f:
+            f.write(b'MZ')
+        got.append(exe)
+        return exe, 'ab' * 32, None
+    monkeypatch.setattr(boost, 'enable', enable)
+    return got
+
+
+def test_no_shadps4_gets_the_apps_own(sc, monkeypatch):
+    """Owner 2026-11-10: a player without shadPS4 picks the game, the app sets up the Kravickas build."""
+    from overtime_roster.app import boost
+    got = _no_shadps4(sc, monkeypatch)
+    assert not sc.known_emulator() and 'Find game' in sc._state(True, [], False)['text']
+    assert sc.setup_set_emulator(str(sc.world['game'] / 'eboot.bin')) == {'ok': True}
+    assert got and sc.known_emulator() == boost.exe_path() and sc.standalone()
+    assert sc.ctl.game_dir == str(sc.world['game'])
+    card = sc._boost_card(sc.known_emulator())
+    assert card['on'] and card['standalone'] and '60 FPS' in card['text'] and 'set up' in card['text']
+    out = sc.setup_boost(False)                    # nothing to go back to: refused in Python, not only hidden
+    assert 'no other one to go back to' in out['error'] and sc.known_emulator() == boost.exe_path()
+    # the player picks their own shadPS4 later: Boost comes off as usual from then on
+    sc.setup_set_emulator(str(sc.world['emu']))
+    assert not sc.standalone() and not sc._boost_card(sc.known_emulator())['standalone']
+
+
+def test_find_game_installs_a_pkg_and_sets_up_shadps4(sc, monkeypatch, tmp_path):
+    from overtime_roster.app import boost, pkginstall
+    got = _no_shadps4(sc, monkeypatch)
+    pkg = tmp_path / 'NHL19.pkg'
+    pkg.write_bytes(b'x')
+    calls = []
+
+    def install(path, game_dir=None, progress=None, **kw):
+        calls.append((path, game_dir))
+        progress('extract', 1, 2)
+        return str(sc.world['game']), pkginstall.BASE, {'ok': False, 'app_ver': '01.00', 'title_id': 'CUSA11126'}
+    monkeypatch.setattr(pkginstall, 'install', install)
+    assert sc.setup_set_emulator(str(pkg)) == {'ok': True}
+    assert calls == [(str(pkg), sc.ctl.game_dir and calls[0][1])]
+    assert sc.ctl.game_dir == str(sc.world['game']) and got and sc.known_emulator() == boost.exe_path()
+    said = [t for t, _ in sc.ctl.said]
+    assert any('Extracting the PKG... 50 %' in t for t in said)
+    assert any('Now press Find game again and pick the update 1.60 PKG' in t and 'set up too' in t for t in said)
+
+
+def test_a_pkg_refused_says_why(sc, monkeypatch, tmp_path):
+    from overtime_roster.app import pkginstall
+    pkg = tmp_path / 'other.pkg'
+    pkg.write_bytes(b'x')
+
+    def install(path, game_dir=None, progress=None, **kw):
+        raise pkginstall.PkgError('This PKG is CUSA00001, not NHL 19 (CUSA11126 or CUSA11116).')
+    monkeypatch.setattr(pkginstall, 'install', install)
+    sc.setup_set_emulator(str(pkg))
+    assert sc.ctl.said[-1] == ('This PKG is CUSA00001, not NHL 19 (CUSA11126 or CUSA11116).', 'bad')
 
 
 def test_assets_store_says_the_total_and_the_wait(sc):
@@ -718,7 +784,7 @@ def test_pack_card_downloads_all_and_switches_on(sc, monkeypatch, tmp_path):
     sc.ctl.patch_want.update(roster=True)
     sc.packs = SC.pack_status(SC.patch_cache())
     card = _card(sc)
-    assert card['title'] == SC.PACK_TITLE and not card['can_download'] and 'Pick shadPS4' in card['text']
+    assert card['title'] == SC.PACK_TITLE and not card['can_download'] and 'Find NHL 19' in card['text']
     sc.setup_set_emulator(str(sc.world['emu']))
     card = _card(sc)
     assert card['state'] == 'partial' and card['can_download'] and card['size'] == '25 MB'   # the 5 missing
@@ -816,7 +882,9 @@ def test_a_new_server_and_switched_off_network_need_no_patch(sc, monkeypatch):
     assert patch_ctl.start(sc) == {'ok': True}
     assert at_start[0]['intact'] and at_start[0]['targets']['redirector'] == 'ot.puckpeak.com'
     after = json.loads(cfg_path.read_text())
-    assert after['GPU'] == {'full_screen': False} and after['General']['shad_net_enabled'] is True
+    # readbacks back to Precise too, and the display mode the app holds (borderless by default) over a hand edit
+    assert after['GPU'] == {'full_screen': True, 'full_screen_mode': 'Fullscreen (Borderless)', **gamesetup.GPU_SETTINGS}
+    assert after['General']['shad_net_enabled'] is True
     assert patch_ctl.refresh_network(sc) == 'same'
     sc.setup_unpatch()                                  # the player's own settings come back as they were
     general = json.loads(cfg_path.read_text())['General']

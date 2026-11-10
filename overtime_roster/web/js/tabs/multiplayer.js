@@ -154,20 +154,12 @@ function Check({ c, action }) {
   </div>`;
 }
 
-// the controller's checks (roster, patch, server) and Setup's firewall line, one row each with what fixes it
-function checkRows(s, setup, go) {
-  const rows = s.checks.map((c) => ({ ...c, action: c.go
+// the controller's checks (roster, patch, server), one row each with what fixes it. No firewall row since 0.83.0:
+// matches go through the Overtime relay, so the rule is optional (Advanced).
+function checkRows(s, go) {
+  return s.checks.map((c) => ({ ...c, action: c.go
     ? html`<${Button} small kind=${c.tone === 'bad' ? 'primary' : 'ghost'} onClick=${() => go && go(c.go)}>${GO_TEXT[c.go] || 'Open'}<//>`
     : html`<${Tag} tone=${c.tone}>${c.tone === 'good' ? (c.key === 'server' ? 'reachable' : 'ok') : 'check'}<//>` }));
-  const fw = setup && setup.online && setup.online.firewall;
-  if (fw) {
-    const tone = ['good', 'caution', 'bad'].includes(fw.tone) ? fw.tone : 'idle';
-    rows.push({ key: 'firewall', label: 'Firewall', tone, text: fw.text, action: fw.can_fix
-      ? html`<${Button} small kind="primary" disabled=${setup.busy} title="Windows asks you to allow it"
-          onClick=${() => call('setup_firewall')}>Let it through...<//>`
-      : tone === 'good' ? html`<${Tag} tone="good">ok<//>` : null });
-  }
-  return rows;
 }
 
 function Option({ on, title, sub, onChange }) {
@@ -184,40 +176,42 @@ function AskReports() {
       <${Button} small onClick=${() => call('mp_set_reports', false)}>No<//></div></div>`;
 }
 
-// the opt-in reports (crashreport.py): the automatic switch, and a report sent now after a confirmation
+// the opt-in reports (crashreport.py): the automatic switch, and a report sent now after a confirmation. Rows of the
+// Advanced grid (OnlineLines), laid out like the CPU line: label | what the button does | button, the switch under it.
 function Reports({ r }) {
   const [ask, setAsk] = useState(false);
   const busy = !!r.busy;
-  return html`<div class="mp-reports">
+  return html`
+    <span class="field-label">Reports</span>
+    <span class="su-fw"><span class="su-fwt">The game's log, now</span></span>
+    <${Button} small disabled=${busy} onClick=${() => setAsk(true)}>${busy ? 'Sending...' : 'Send a report'}<//>
     <${Option} on=${r.on} title="Send reports by itself"
       sub="After a crash, or a match that ended early, send the game's log to the Overtime server. Off unless you turn it on."
       onChange=${(v) => call('mp_set_reports', v)}/>
-    <div class="mp-row"><${Button} small disabled=${busy} onClick=${() => setAsk(true)}>${busy ? 'Sending...' : 'Send a report'}<//>
-      ${r.note && html`<span class="mp-note">${r.note}</span>`}
-      ${r.error && html`<span class="mp-note bad" role="alert">${r.error}</span>`}</div>
+    ${r.note && html`<span class="mp-note su-row-note">${r.note}</span>`}
+    ${r.error && html`<span class="mp-note bad su-row-note" role="alert">${r.error}</span>`}
     ${ask && html`<${Modal} title="Send a report now?" onClose=${() => setAsk(false)}
       buttons=${html`<${Button} kind="ghost" onClick=${() => setAsk(false)}>Cancel<//>
         <${Button} kind="primary" onClick=${() => { setAsk(false); call('mp_send_report'); }}>Send<//>`}>
       <p class="mp-note">It sends the game's log (scrubbed, see What the Overtime server keeps below), this PC's app and
         emulator versions and CPU, and your ShadNet account number. Only the log and the details above go; nothing else.</p>
-    <//>`}
-  </div>`;
+    <//>`}`;
 }
 
 function Advanced({ setup, reports }) {
   const [open, setOpen] = useState(false);
   return html`<div class=${cls('mp-adv', open && 'open')}>
     <button type="button" class="mp-adv-head" aria-expanded=${open} onClick=${() => setOpen(!open)}>
-      <span class="mp-adv-main"><span class="mp-lbl caps">Advanced</span><span class="mp-adv-d">Server address, firewall rule, CPU check, reports, what the server keeps</span></span>
+      <span class="mp-adv-main"><span class="mp-lbl caps">Advanced</span><span class="mp-adv-d">Server address, CPU check, reports, firewall (optional), what the server keeps</span></span>
       <${Chevron}/>
     </button>
-    ${open && html`<div class="mp-adv-body"><${OnlineLines} s=${setup}/><${Reports} r=${reports}/><${Privacy}/></div>`}
+    ${open && html`<div class="mp-adv-body"><${OnlineLines} s=${setup}><${Reports} r=${reports}/><//><${Privacy}/></div>`}
   </div>`;
 }
 
 function You({ s, setup, go }) {
   const lobbyOpen = !!s.lobby;
-  const rows = checkRows(s, setup, go);
+  const rows = checkRows(s, go);
   const fix = rows.filter((c) => c.tone === 'bad').length;
   const hud = s.you.hud;
   return html`<${Card} n=${1} title="You and pre-flight" className="mp-card-fill">
@@ -237,6 +231,9 @@ function You({ s, setup, go }) {
       ${hud && html`<${Option} on=${hud.on} title="Chat and results in game"
         sub=${hud.available ? 'Toasts and the result card, only over the game window.' : 'Windows only.'}
         onChange=${(v) => call('mp_set_hud', v)}/>`}
+      ${hud && hud.link !== undefined && html`<${Option} on=${hud.link} title="Connection in the corner"
+        sub=${hud.available ? 'Ping and packet loss, top right of the game window, while a match runs.' : 'Windows only.'}
+        onChange=${(v) => call('mp_set_link', v)}/>`}
       <div class="mp-spacer"></div>
       ${setup && setup.online && html`<${Advanced} setup=${setup} reports=${s.reports || {}}/>`}
     </div>
@@ -265,7 +262,7 @@ function Pick({ s, go }) {
     ${patch && patch.tone === 'bad' && html`<div class="mp-notice caution">
       <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" class="mp-warn"><path d="M10 2l9 16H1z" fill="none" stroke="currentColor" stroke-width="2"/>
         <path d="M10 8v5M10 15v1" stroke="currentColor" stroke-width="2"/></svg>
-      <span class="sp"><b>${patch.go === 'setup' ? 'Set up shadPS4 first.' : 'Patch the game first.'}</b>${' '}Patch: ${patch.text},
+      <span class="sp"><b>${patch.go === 'setup' ? 'Find NHL 19 in Setup first.' : 'Patch the game first.'}</b>${' '}Patch: ${patch.text},
         so a lobby cannot start NHL 19.</span>
       ${patch.go && html`<${Button} small kind="caution" onClick=${() => go && go(patch.go)}>Open ${GO_TEXT[patch.go] || 'it'}<//>`}
     </div>`}

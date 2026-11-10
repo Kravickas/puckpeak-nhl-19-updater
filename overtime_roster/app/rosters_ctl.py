@@ -437,10 +437,10 @@ class RostersCtl(Part):
         used = sum(1 for s in saves if s.info.get('folder', '').startswith('RosterCustom'))
         free = SLOTS - used
         if free <= 0:
-            room = ('bad', f'Full: NHL 19 lists only {SLOTS}. Delete a roster you no longer play, or use '
+            room = ('bad', f'0 free save slots from {SLOTS} total. Delete a roster you no longer play, or use '
                            '"Update this roster" when you save.')
         else:
-            room = ('caution' if free == 1 else 'good', f'{free} free. NHL 19 lists up to {SLOTS} saved rosters.')
+            room = ('caution' if free == 1 else 'good', f'{free} free save slot{"s" if free != 1 else ""} from {SLOTS} total.')
         fits = self.fits(saves) if teams32 else {}
         rows = []
         for s in saves:
@@ -474,5 +474,5 @@ class RostersCtl(Part):
                        for i, n, note, tag in STARTS],
             'rows': rows,
             'empty': 'No saved rosters yet. Start fresh, then save it as a new roster in any team tab.' if known
-            else 'Pick shadPS4 first. Your rosters are listed here then.',
+            else 'Find NHL 19 first. Your rosters are listed here then.',
         }
