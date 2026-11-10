@@ -2,7 +2,7 @@
 
 What changed in each version, for players.
 
-## 0.82.0 (not released yet)
+## 0.82.0 (2026-11-10)
 
 0.80.1 and 0.81.0 were never published; what they had is in here. The texture encoder, 720p, the movable downloads
 folder, the power-cut-safe writes and the faster Patch are Kravickas's work (pull request #1).
@@ -82,6 +82,10 @@ folder, the power-cut-safe writes and the faster Patch are Kravickas's work (pul
 
 ### Changed
 
+- **Only finished matches count** (server update, 2026-11-10). A match that a player leaves or drops before the end
+  counts for no one: it leaves the list, the board, the in-game Recent Games and every rating. This replaces the 1-0
+  forfeit loss. A match with no result or only one report stays listed for an hour, so the result can still be
+  entered or confirmed.
 - **Everyone needs 0.82.0.** An older app and 0.82.0 are never paired, because only one of the two games would have
   the Cross-CPU fix. When one app is older, the lobby says who updates.
 - **Games meet only games set up like them.** The app gives the game an online version that stands for its patch and

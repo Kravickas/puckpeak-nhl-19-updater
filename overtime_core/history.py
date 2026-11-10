@@ -144,6 +144,27 @@ def score(value):
     return n if 0 <= n <= MAX_SCORE else None
 
 
+def full(match):
+    """A fully played match: both sides reported and the two results mirror. Only these are shown and rated
+    (MatchBook._snapshot); a forfeit, a lone report, a dispute and a match with no result are left out (2026-11-10)."""
+    claims = match.get('claims') or {}
+    if len(claims) != 2:
+        return False
+    x, y = claims.values()
+    return (x['for'], x['against']) == (y['against'], y['for'])
+
+
+def pending_until(match):
+    """When a match that is not full stops being shown, or None for one never shown (a forfeit, a dispute). A match with
+    no report yet shows for LEFT_AFTER seconds from its start, a lone report for LEFT_AFTER from the report, so the two
+    can still enter or confirm the result (the app's form); after that it is gone without a trace."""
+    claims = match.get('claims') or {}
+    if match.get('forfeit') or len(claims) > 1:
+        return None
+    since = next(iter(claims.values()))['at'] if claims else match['started']
+    return since + LEFT_AFTER
+
+
 def resolve(match):
     """What the claims of a match add up to:
     {status, teams: {pid: team|None}, scores: {pid: score|None}, winner: pid|None, waiting_for: pid|None, left: pid|None,
