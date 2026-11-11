@@ -103,7 +103,9 @@ def test_apply_then_restore_gives_the_players_files_back_byte_for_byte(world):
     with open(os.path.join(w['mods'] + MS.OWN_SUFFIX, 'databigs', 'boot.big'), 'rb') as f:
         assert f.read() == b'players boot'                          # the hardlink was replaced, not written through
     cfg = json.load(open(w['cfg'], encoding='utf-8'))
-    assert cfg['GPU']['vblank_frequency'] == 60 and cfg['Network']['shad_net_enabled'] is True
+    # 0.90.2: the player's own vblank stays (9999 here; mixed 9999/60 peers play fine), no longer forced to 60
+    assert cfg['GPU']['vblank_frequency'] == 9999 and cfg['Network']['shad_net_enabled'] is True
+    assert 'vblank_frequency' not in MS.MATCH_TIMING
     assert {k: cfg['GPU'][k] for k in gamesetup.GPU_SETTINGS} == gamesetup.GPU_SETTINGS     # every match (2026-11-10)
     assert os.path.isfile(got['patch'])
     assert MS.restore(running=w['off']) == 'done'

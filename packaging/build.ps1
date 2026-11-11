@@ -11,7 +11,8 @@
 #                           kitlayers_clubs.zip (NHL 27's jerseys the app makes into the game's textures on the player's PC at
 #                           Patch, overtime_core\kitcompose.py, tools\build_kitlayers.py) from packs\, made from the owner's own game files;
 #                           never in git), -Kits <file> (kits.zip) and shadps4_nhl19.zip (Boost performance: Kravickas's build as
-#                           its CI made it, docs/notes/shadps4-network.md). Each must read; photos.zip (p<artid> of that roster's bios) is checked
+#                           its CI made it, docs/notes/shadps4-network.md), shadps4_nightly.zip (the Nightly build: upstream's
+#                           shadps4-win64-sdl zip as GitHub published it, docs/notes/shadps4-builds.md). Each must read; photos.zip (p<artid> of that roster's bios) is checked
 #                           against -DefaultDb with packaging\check_photos.py, its sha256 goes into the build record.
 #   SHA256SUMS.txt          the exes' and the packs' checksums ("packs/<name>"): the downloads are compared with them
 #   latest.json             the release file the self-update reads, with "packs": {name: {file, sha256, size}}
@@ -28,7 +29,7 @@ param(
     [switch]$NoPacks,       # stage no packs and leave the NHL 27 data pack out (a spike, or before the packs are made)
     [switch]$Cli,           # also build OvertimeNHL19-cli.exe
     [switch]$NoSplash,      # no start-up splash (it needs Tcl/Tk in the exe: about 2 MB more)
-    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip', 'people.zip', 'ice_all.zip', 'rink.zip', 'clubart.zip', 'kitlayers_nhl.zip', 'kitlayers_intl.zip', 'kitlayers_clubs.zip', 'shadps4_nhl19.zip', 'cpu_estimates.zip'),   # the packs to stage (packdownload.KNOWN; cpu_estimates.zip: packaging\cpu_pack.ps1)
+    [string[]]$Packs = @('looks32.zip', 'looks.zip', 'photos.zip', 'people.zip', 'ice_all.zip', 'rink.zip', 'clubart.zip', 'kitlayers_nhl.zip', 'kitlayers_intl.zip', 'kitlayers_clubs.zip', 'shadps4_nhl19.zip', 'shadps4_nightly.zip', 'cpu_estimates.zip'),   # the packs to stage (packdownload.KNOWN; cpu_estimates.zip: packaging\cpu_pack.ps1)
     [string]$Kits = '',     # the kits pack to stage too (e.g. re\extract\release-fixture\app\packs\kits.zip)
     [string]$DefaultDb = '',    # the verified default roster: a capture folder (or its nhl_game.db); main picks it
     [string]$DefaultDbSha = '', # its sha256, needed when the folder has no db.json (with one, both must agree)
@@ -49,8 +50,9 @@ $name = 'OvertimeNHL19'
 (Get-Process -Id $PID).PriorityClass = $Priority      # pip and PyInstaller inherit it
 
 $distDir = Join-Path $root 'dist'     # only this checkout's exe is replaced: a copy running from elsewhere is fine
+# (a running exe moved out of dist\ keeps its old Path in Windows' list, but nothing is in the way any more)
 $running = Get-Process -Name $name, "$name-cli" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -and $_.Path.StartsWith($distDir, [StringComparison]::OrdinalIgnoreCase) }
+    Where-Object { $_.Path -and $_.Path.StartsWith($distDir, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path $_.Path) }
 if ($running -and -not $CheckOnly) { throw "Close $name first: Windows does not let a running program be replaced." }
 
 $py = Join-Path $root '.venv-build\Scripts\python.exe'

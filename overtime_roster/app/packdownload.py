@@ -37,9 +37,10 @@ from .patch import ART_ENV, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK
 # name -> what a player reads, and whether the patch needs it for the art (core; until v0.10.0 the one click fetched those)
 EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
 EMULATOR_EXE = 'shadPS4.exe'
+NIGHTLY_PACK = 'shadps4_nightly.zip'    # not art: upstream shadPS4's official nightly zip as is (boost.py 'nightly')
 CPUTEST_PACK = 'cpu_estimates.zip'      # not art: tools/cpu_estimates.py as an exe, Check my CPU (cpucheck.py)
 CPUTEST_EXE = 'cpu-estimates.exe'
-TOOL_PACKS = (EMULATOR_PACK, CPUTEST_PACK)     # the program packs: each one exe, not in PACKS (no art, no card)
+TOOL_PACKS = (EMULATOR_PACK, NIGHTLY_PACK, CPUTEST_PACK)   # the program packs: each one exe, not in PACKS (no art)
 PACKS = {
     'looks32.zip': {'title': 'Team art for all 32 teams', 'core': True},
     'looks.zip': {'title': 'Utah and Seattle looks', 'core': True},
@@ -671,7 +672,7 @@ def check_kitlayers(path):
         raise art.ArtError(f'{len(missing)} pictures missing, {missing[0]} first')
 
 
-CHECKS = {EMULATOR_PACK: check_emulator, CPUTEST_PACK: check_cputest, CLUBART_PACK: check_clubart,   # not art packs
+CHECKS = {EMULATOR_PACK: check_emulator, NIGHTLY_PACK: check_emulator, CPUTEST_PACK: check_cputest, CLUBART_PACK: check_clubart,   # not art packs
           **{name: check_kitlayers for name in KITLAYER_PACKS}}
 
 

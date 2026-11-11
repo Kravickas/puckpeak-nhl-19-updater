@@ -69,7 +69,16 @@ def match_row(m, you, now):
                  'score_for': sf, 'score_against': sa, 'again': bool(c)}
     return {'id': m['id'], 'ago': ago(now - m['started']), 'mode': m.get('mode') or 'versus', 'rules': m.get('rules') or '', 'status': r['status'],
             'tone': tone, 'text': text, 'mine': bool(mine), 'players': [_side(p, r, you) for p in order], 'entry': entry,
-            'delta': (m.get('deltas') or {}).get(you) if mine and r['status'] == H.CONFIRMED else None}
+            'delta': (m.get('deltas') or {}).get(you) if mine and r['status'] == H.CONFIRMED else None, **live_of(m)}
+
+
+def live_of(m):
+    """{'live': True, 'live_text': '12 min in'} for a match on the ice now (a 0.90.2 server's `live`, seconds of play),
+    else {}. The game sends no score, period or clock while it plays, so the time since the puck drop is all there is."""
+    s = m.get('live')
+    if not isinstance(s, (int, float)) or isinstance(s, bool):
+        return {}
+    return {'live': True, 'live_text': 'just started' if s < 60 else f'{int(s // 60)} min in'}
 
 
 def team_row(m, you, now):
@@ -92,7 +101,8 @@ def team_row(m, you, now):
             'rules': m.get('rules') or '', 'status': r['status'], 'tone': tone, 'text': text, 'mine': mine is not None,
             'team': True, 'sides': sides, 'players': [_side(p, r, you) for p in players], 'entry': None,
             'against': ', '.join(n for x in sides if not x['you'] for n in x['names']),
-            'delta': (m.get('deltas') or {}).get(you) if mine is not None and r['status'] == H.CONFIRMED else None}
+            'delta': (m.get('deltas') or {}).get(you) if mine is not None and r['status'] == H.CONFIRMED else None,
+            **live_of(m)}
 
 
 def player_row(row, you):
@@ -219,19 +229,61 @@ RATES = (('shooting', 'Shooting'), ('saving', 'Saves'), ('faceoffs', 'Faceoffs w
          ('power_play', 'Power play'))
 
 
+LESS_IS_BETTER = ('pims',)
+
+
+def _their_avg(recent, games):
+    """The opponents' per-game numbers over the same Versus games my averages count (their side of each box score), {}
+    when the listed games are not exactly those (more games than the server lists, or one without my numbers)."""
+    rows = [m for m in recent if (m.get('mode') or 'versus') == 'versus' and m['result'] and m.get('box')
+            and any(r['me'] is not None for r in m['box'])]
+    if len(rows) != games:
+        return {}
+    sums, n = {}, {}
+    for m in rows:
+        for r in m['box']:
+            if isinstance(r['them'], (int, float)):
+                sums[r['key']] = sums.get(r['key'], 0) + r['them']
+                n[r['key']] = n.get(r['key'], 0) + 1
+    return {k: round(v / n[k], 1) for k, v in sums.items()}
+
+
+def _share(mine, theirs):
+    """My part of the two numbers (0..1) for the me-against-them bar, None when either is missing or both are 0."""
+    if not isinstance(mine, (int, float)) or not isinstance(theirs, (int, float)) or mine + theirs <= 0:
+        return None
+    return round(mine / (mine + theirs), 3)
+
+
+def _rate(value):
+    return {'value': f'{value:g}%', 'share': round(min(100.0, max(0.0, value)) / 100, 3)}
+
+
+def goals_chart(recent):
+    """[{id, for, against, result}] of my credited games with a score, oldest first: the goals chart."""
+    return [{'id': m['id'], 'for': m['for'], 'against': m['against'], 'result': m['result']}
+            for m in reversed(recent) if m['result'] and isinstance(m['for'], int) and isinstance(m['against'], int)]
+
+
 def games_view(d, now):
-    """My games card from the server's `games` (my detail): the record, the numbers over every game that has them, and each
-    game with its score and box score. None while I have no game."""
+    """My games card from the server's `games` (my detail): the record, the numbers over every game that has them (mine
+    and, when the listed games are those, the opponents' for a bar), the goals of each game for a chart, and each game
+    with its score and box score. None while I have no game."""
     if not d or not d['recent']:
         return None
     st = d.get('stats')
     overall = None
     if st:
         t = st['totals']
+        theirs = _their_avg(d['recent'], st['games'])
         overall = {'games': st['games'],
                    'avg': [{'key': k, 'label': label, 'value': _shown(k, st['avg'].get(k)),
-                            'total': _shown(k, t.get(k))} for k, label in H.BOX if k in st['avg']],
-                   'rates': [{'label': label, 'value': f"{st['rates'][k]:g}%"} for k, label in RATES
+                            'total': _shown(k, t.get(k)),
+                            'them': _shown(k, theirs[k]) if k in theirs else None,
+                            'share': _share(st['avg'].get(k), theirs.get(k)),
+                            'better': 'low' if k in LESS_IS_BETTER else 'high'}
+                           for k, label in H.BOX if k in st['avg']],
+                   'rates': [{'label': label, **_rate(st['rates'][k])} for k, label in RATES
                              if st['rates'].get(k) is not None]}
     games = [{'id': m['id'], 'ago': ago(now - m['started']), 'status': m['status'], 'result': m['result'],
               'opponent': m['opponent']['name'], 'team': m['team'], 'opp_team': m['opp_team'], 'for': m['for'],
@@ -239,7 +291,8 @@ def games_view(d, now):
               'box': [{'label': r['label'], 'me': _shown(r['key'], r['me']), 'them': _shown(r['key'], r['them'])}
                       for r in m.get('box') or []]} for m in d['recent']]
     return {'w': d['w'], 'l': d['l'], 'played': d['played'], 'gf': d['gf'], 'ga': d['ga'], 'overall': overall,
-            'shootout': shootout_view(d.get('shootout')), 'games': games, 'with_stats': sum(1 for g in games if g['box'])}
+            'shootout': shootout_view(d.get('shootout')), 'games': games, 'with_stats': sum(1 for g in games if g['box']),
+            'chart': goals_chart(d['recent'])}
 
 
 def shootout_view(so):

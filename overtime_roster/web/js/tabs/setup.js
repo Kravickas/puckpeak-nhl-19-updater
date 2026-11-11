@@ -40,14 +40,14 @@ function LinkRow() {
 // --- 1 Where is NHL 19? ---------------------------------------------------------------------------------------------------
 const WHERE_INFO = [
   { head: 'What to pick', items: ['Press Find game and pick NHL 19\'s eboot.bin, or its PKG files to install the game.',
-    'No shadPS4 on this PC? None needed: Overtime gets the Kravickas build of shadPS4 by itself.',
+    'No shadPS4 on this PC? None needed: Overtime gets the build chosen under Boost performance by itself.',
     'Have shadPS4 already? Pick shadPS4QtLauncher.exe or shadPS4.exe and it is used (with QtLauncher, the version selected in it).',
     'The program finds the rest from there: NHL 19, the emulator and your roster saves.'] },
   { head: 'Installing from PKG', items: ['Pick the game PKG first, then the update 1.60 PKG. One at a time.',
     'The game goes into a new folder next to its PKG, the update into a new folder beside the game. Nothing is overwritten.',
     'It needs free space on that drive about the size of the PKG.',
     'The PKG tool is shadPS4Plus\'s pkg_extractor (GPL-2.0), downloaded from its GitHub page the first time: github.com/AzaharPlus/shadPS4Plus.'] },
-  { head: 'Folders', items: ['Shows where shadPS4, NHL 19, shadPS4\'s data and your saves are.',
+  { head: 'Folders', items: ['Open it for the checks (below) and where shadPS4, NHL 19, shadPS4\'s data and your saves are.',
     'Change... picks one yourself (a portable shadPS4, another drive). The program never changes a folder you set.',
     'Auto lets the program find it again.',
     'Downloads and cache: the packs downloaded and the jerseys made on this PC (several GB with every pack). Change... moves '
@@ -82,12 +82,24 @@ async function changeFolder(f) {
   if (typed && typed.trim()) call('setup_folder_set', f.key, typed.trim());
 }
 
-function Folders({ folders, busy }) {
-  if (!folders || !folders.length) return null;
+// the checks (shadPS4, NHL 19, ShadNet, Network) and the folders, inside one dropdown, collapsed by default (owner
+// 2026-11-11: "stupid proof"); its summary names the first check that is not good
+function Folders({ folders, checks, checking, busy }) {
+  folders = folders || [];
+  checks = checks || [];
   const mine = folders.filter((f) => f.custom).length;
   const missing = folders.filter((f) => !f.ok).length;
-  return html`<details class="su-folders" open=${missing > 0 || mine > 0}>
-    <summary>Folders <span class="su-fsum">${[mine && `${mine} set by you`, missing && `${missing} not found`].filter(Boolean).join(', ') || 'all found'}</span></summary>
+  const off = checks.find((c) => c.tone === 'bad') || checks.find((c) => c.tone === 'caution');
+  const sum = [off && `${off.label}: ${off.value}`, mine && `${mine} set by you`, missing && `${missing} not found`]
+    .filter(Boolean).join(', ') || (checking ? 'checking...' : 'all found');
+  return html`<details class="su-folders">
+    <summary>Folders <span class=${cls('su-fsum', off && off.tone)}>${sum}</span></summary>
+    ${checks.length > 0 && html`<div class=${cls('su-checks', checking && 'checking')}>
+      ${checks.map((c) => html`<div key=${c.key} class=${cls('su-check', c.tone || 'idle')} title=${c.text}>
+        <${Mark} tone=${c.tone}/>
+        <span class="su-ct"><span class="su-cl">${c.label}</span><span class="su-cv">${c.value}</span></span>
+      </div>`)}
+    </div>`}
     <div class="su-fgrid">${folders.map((f) => html`<div key=${f.key}
       class=${cls('su-folder', !f.ok && 'bad')}>
       <span class="su-fl">${f.label}</span>
@@ -115,13 +127,7 @@ function WhereCard({ s }) {
         <${Button} kind=${s.emulator.path ? 'ghost' : 'primary'} disabled=${busy} onClick=${() => findGame(s.emulator.path)}
           title="Pick NHL 19's eboot.bin or its PKG, or your shadPS4 (shadPS4QtLauncher.exe or shadPS4.exe)">Find game...<//>
       </div>
-      <div class=${cls('su-checks', s.checking && 'checking')}>
-        ${s.checks.map((c) => html`<div key=${c.key} class=${cls('su-check', c.tone || 'idle')} title=${c.text}>
-          <${Mark} tone=${c.tone}/>
-          <span class="su-ct"><span class="su-cl">${c.label}</span><span class="su-cv">${c.value}</span></span>
-        </div>`)}
-      </div>
-      <${Folders} folders=${s.folders} busy=${busy}/>
+      <${Folders} folders=${s.folders} checks=${s.checks} checking=${s.checking} busy=${busy}/>
       <div class=${cls('su-state', st.tone)}>
         <span class="su-st">${st.text}</span>
         ${s.emulator.path && html`<${Button} small disabled=${busy} onClick=${() => call('setup_refresh')}>Check again<//>`}
@@ -130,12 +136,17 @@ function WhereCard({ s }) {
   <//>`;
 }
 
-// --- Boost performance: Kravickas's NHL 19 build of shadPS4, on or off ---------------------------------------------------
+// --- Boost performance: the shadPS4 build the green Play NHL 19 button starts, Nightly or Kravickas -------------------------
 const BOOST_INFO = [
-  { head: 'What it does', items: ["Enables 60 FPS: NHL 19 plays on Kravickas's NHL 19 build of shadPS4.", 'Saves, patch and ShadNet login stay the same.'] },
-  { head: 'Your own shadPS4', items: ['It stays where it is, untouched.', 'Disable puts it back, in this app and in QtLauncher.',
-    'No shadPS4 of your own: Overtime set up the Kravickas build for you, so there is nothing to disable.'] },
-  { head: 'Resolution', items: ["1080p is the game's own. 1440p renders at 2560x1440 (Kravickas's patch): sharper, needs a stronger GPU.", "720p renders at 1280x720 (Kravickas's patch): softer, for a weaker GPU.", '1440p also sets Additional DMem to 3500 MB; 720p and 1080p put your own value back.', 'Works with any shadPS4, with or without Boost. Takes effect at the next start of NHL 19.'] },
+  { head: 'What it does', items: ['Picks the shadPS4 build that the green Play NHL 19 button starts. The lit one is in use.',
+    "Nightly (the default): upstream shadPS4's newest official build. Kravickas: Overtime's smooth build on Kravickas's NHL 19 fixes.",
+    'Play downloads the chosen build the first time, and again when a newer one is published. Update gets it now.',
+    'Saves, patch and ShadNet login stay the same with either build.'] },
+  { head: 'Online', items: ['Multiplayer lobbies start the lobby build by themselves, whichever one is chosen here.',
+    'Open matchmaking pairs you with players on the same build.'] },
+  { head: 'Your own shadPS4', items: ['It stays where it is, untouched.',
+    'A portable shadPS4 with its own "user" folder keeps playing itself: the builds would not find its saves.'] },
+  { head: 'Resolution', items: ["1080p is the game's own. 1440p renders at 2560x1440 (Kravickas's patch): sharper, needs a stronger GPU.", "720p renders at 1280x720 (Kravickas's patch): softer, for a weaker GPU.", '1440p also sets Additional DMem to 3500 MB; 720p and 1080p put your own value back.', 'Works with either build. Takes effect at the next start of NHL 19.'] },
   { head: 'Replays at 60 fps', items: ["Kravickas's patch, on for everyone: replays, celebrations and cutscenes run at 60 instead of 30."] },
 ];
 const RESOLUTIONS = [
@@ -150,15 +161,19 @@ function BoostCard({ s }) {
   const noEmu = !(s.emulator && s.emulator.path);
   const why = noEmu ? 'Find NHL 19 first' : undefined;
   const shut = () => setView(null);
+  const builds = (b.builds || []).map((x) => ({ value: x.id, label: x.label,
+    title: x.id === 'nightly' ? "Upstream shadPS4's newest official build" : "Overtime's smooth build on Kravickas's NHL 19 fixes" }));
   return html`<${Card} title="Boost performance" className="su-boost"
       aside=${html`<${Info} title="Boost performance" sections=${BOOST_INFO}/>`}>
     <div class="card-body">
       <div class=${cls('su-state', b.tone)}>
         <span class="su-st">${b.text}</span>
-        ${b.newer && html`<${Button} small disabled=${!b.can} title="Kravickas build" onClick=${() => call('setup_boost', true)}>Update<//>`}
-        ${!b.standalone && html`<${Button} small kind=${b.on ? 'ghost' : 'primary'} disabled=${!b.can} title="Kravickas build"
-          onClick=${() => call('setup_boost', !b.on)}>${b.on ? 'Disable' : 'Enable'} Boost performance<//>`}
-        <${Button} small kind="ghost" onClick=${() => call('setup_boost_source')}>Source code<//>
+      </div>
+      <div class="su-state su-build">
+        <span class="su-st">Build</span>
+        <${Segmented} options=${builds} value=${b.build} disabled=${!b.can} onChange=${(v) => call('setup_build', v)}/>
+        <${Button} small disabled=${!b.can_update} title="Download the chosen build now" onClick=${() => call('setup_build_update')}>Update<//>
+        <${Button} small kind="ghost" title="The chosen build's source code (GPL-2.0)" onClick=${() => call('setup_boost_source')}>Source code<//>
       </div>
       ${b.news && html`<div class="su-news" title=${b.upstream || ''}>${b.news}</div>`}
       <div class="su-state su-res">

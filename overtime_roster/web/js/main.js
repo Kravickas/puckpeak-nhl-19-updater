@@ -152,7 +152,7 @@ function App() {
 
   return html`<div id="app" class=${cls('app', short && 'compact', params.has('still') && 'still')}>
     <${Backdrop}/>
-    <${Header} meta=${meta}/>
+    <${Header} meta=${meta} play=${app && app.play}/>
     <${TabBar} tabs=${TABS} tab=${tab} onTab=${pickTab}/>
     <main class="stage">
       ${TABS.filter((t) => !t.team && seen.has(t.id)).map((t) => html`<section key=${t.id}

@@ -42,6 +42,8 @@ HOOK_SECONDS = 1800     # the hook the launch bakes works this long (the jump ha
 BOOT_WAIT = 60          # seconds from start to the first title press (docs/notes/zero-press.md)
 TITLE_GAP = 20          # seconds between the two title presses
 WATCH_POLL = 2.0
+LINK_POLL = 2.0         # seconds between link asks for a game started from Play (watch_open_link)
+LINK_STALE = 10.0       # ... figures older than this are an ended match's: no readout
 WANT_ASKS, WANT_GAP = 4, 15  # after a game: how often the server is asked for an early end, seconds apart
 READY_SETTLE = 3        # seconds from the app seeing stage 'setup' to the READY press (the screen draws first; a READY
                         # the second title press already gave shows up as 'searching' by then: CHAT_POLL < READY_SETTLE)
@@ -140,6 +142,7 @@ class MultiplayerCtl(Part):
         self.report = {'busy': False, 'note': '', 'error': ''}  # the last report (manual, or automatic when it went)
         self.hud = None
         self.link_shown = False     # the corner readout got figures (it gets None once the game stops running)
+        self.open_link = None       # the thread showing the readout for a game started from Play (no lobby), 0.90.2
         self.chat_mark = {}         # (code, token) -> the newest chat number already shown
         self.url_override = str(prefs.get('url') or '')
         self.logged = {'npid': '', 'account': None, 'why': ''}   # what shadPS4's log said at the last look
@@ -909,6 +912,39 @@ class MultiplayerCtl(Part):
             self._hud_call('link', None, force=True)
         self._changed()
         return {'ok': True}
+
+    def watch_open_link(self, proc):
+        """A game started from Play, not from a lobby (0.90.2, owner 2026-11-11): while it runs, the corner readout
+        (ping, loss) of a match the game found itself, from the server's copy of the game's own link reports
+        (POST /api/lobbies/link). Nothing shows outside a match: the server has no figures then. A lobby's own
+        readout takes over while I am in one."""
+        with self.mlock:
+            if not (self.show_link and self.hud_ok()) or (self.open_link is not None and self.open_link.is_alive()):
+                return
+            self.open_link = threading.Thread(target=self._open_link_loop, args=(proc,), daemon=True, name='mp-link')
+            thread = self.open_link
+        thread.start()
+
+    def _open_link_loop(self, proc):
+        shown = False
+        while proc.poll() is None:
+            self.sleep(LINK_POLL)
+            with self.mlock:
+                mine = self.show_link and not self.code      # a lobby's poll shows its own figures
+            ext = self.ext()[0] if mine else None
+            link = None
+            if ext:
+                try:
+                    link = self.client().link(ext)
+                except Exception:   # noqa: BLE001 - offline, an older server (404): no readout, try again
+                    link = None
+            if isinstance(link, dict) and float(link.get('age') or 0) > LINK_STALE:
+                link = None         # an earlier match's last figures (the server keeps them a while): back in the menus
+            if link is not None or (shown and mine):
+                self._hud_call('link', link)
+            shown = link is not None
+        if shown:
+            self._hud_call('link', None, force=True)
 
     def _hud_call(self, what, *args, force=False):
         """Hand something to the HUD (started on first use); a machine that cannot draw it, or an off switch, drops it.

@@ -815,8 +815,11 @@ def start(setup):
         ctl.patch_running = True    # Check again sees when it is closed
     why = _tag_why(emu, game_dir)
     ctl.say('NHL 19 is starting in shadPS4...' + (f' {why}' if why else ''), 'caution' if why else 'info')
-    ctl.changed('setup', 'patch')
+    ctl.changed('setup', 'patch', 'app')
     threading.Thread(target=setup._watch_play, args=(emu, proc), daemon=True, name='play-watch').start()
+    mp = getattr(ctl, 'parts', {}).get('multiplayer')
+    if mp is not None and hasattr(mp, 'watch_open_link'):
+        mp.watch_open_link(proc)    # the ping / loss corner in a match the game finds itself (0.90.2)
     return {'ok': True}
 
 

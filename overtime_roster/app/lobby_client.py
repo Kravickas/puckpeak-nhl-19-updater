@@ -160,6 +160,11 @@ class LobbyClient:
                 raise
             return self._call('GET', '/api/lobbies')
 
+    def link(self, ext):
+        """My live link figures ({ping, loss_in, ...} or None) from the game's own reports: a match the game found
+        itself, outside a lobby (0.90.2 servers; an older one answers 404, LobbyRefused)."""
+        return self._call('POST', '/api/lobbies/link', {'ext': ext}).get('link')
+
     def history(self, ext=None, pid=None, limit=None):
         """The match history: {me, matches, players, detail}. `ext` only tells the server which pid is mine; `pid` asks
         for that player's detail. Both go in the body, like every id. `teams`: this app shows team (WoC) matches."""

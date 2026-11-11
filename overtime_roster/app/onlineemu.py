@@ -11,6 +11,9 @@ import os
 from . import boost, gamesetup, packdownload, paths
 
 PACK = packdownload.EMULATOR_PACK
+# the builds a lobby may name (0.90.2): the server pins one by its pack's sha256, the app fetches the published pack that
+# has it. Kravickas when the release does not say (offline, an older release), as before.
+PACKS = (packdownload.EMULATOR_PACK, packdownload.NIGHTLY_PACK)
 KEEP = 2            # builds kept: the current one and the one before (a server switch mid-update still finds it)
 
 
@@ -41,15 +44,28 @@ def ready(sha):
     return exe if os.path.isfile(exe) else None
 
 
+def pack_for(want, table=None):
+    """The pack name of the build `want` (a pack sha256): the published one of PACKS with that sha256, else PACK."""
+    if want:
+        table = packdownload.published() if table is None else table
+        for name in PACKS:
+            rel = (table or {}).get(name)
+            if rel is not None and str(rel.digest or '').lower() == want:
+                return name
+    return PACK
+
+
 def ensure(cache_dir, want=None, progress=None, cancelled=None):
-    """The online copy for the build the lobby names (`want`, a sha256; None: the release's), downloaded once.
-    Returns (exe, sha). OnlineEmuError when the release serves another build (the app or the server is behind)."""
+    """The online copy for the build the lobby names (`want`, a sha256; None: the release's Kravickas pack),
+    downloaded once. Returns (exe, sha). OnlineEmuError when the release serves another build (the app or the server
+    is behind)."""
     if want and ready(want):
         return exe_path(want), want
-    (_name, ok, message), = packdownload.download([PACK], cache_dir, progress, cancelled=cancelled)
+    name = pack_for(want)
+    (_name, ok, message), = packdownload.download([name], cache_dir, progress, cancelled=cancelled)
     if not ok:
         raise OnlineEmuError(message)
-    found = packdownload.located(PACK, cache_dir)
+    found = packdownload.located(name, cache_dir)
     if not found:
         raise OnlineEmuError('The online shadPS4 did not download.')
     pack, sha = found

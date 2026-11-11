@@ -1526,3 +1526,56 @@ def test_a_team_match_row_puts_my_side_first():
     assert row['sides'][0] == {'names': ['C'], 'score': 2, 'won': False, 'you': True}
     assert row['sides'][1]['names'] == ['A', 'B'] and row['sides'][1]['won'] is True
     assert row['against'] == 'A, B'
+
+
+class Proc:
+    """A game process that runs for `polls` checks."""
+
+    def __init__(self, polls):
+        self.left = polls
+
+    def poll(self):
+        self.left -= 1
+        return None if self.left >= 0 else 0
+
+
+def test_a_match_the_game_found_itself_gets_the_corner_readout_too(mp):
+    """0.90.2: a game started from Play (no lobby) polls the server's copy of its own link reports; figures go to the
+    corner, an old (stale) figure or none hides it, a lobby's own poll takes over, and the game's end takes it away."""
+    rec = RecordingHud()
+    mp.hud_ok, mp.make_hud = (lambda: True), (lambda: rec)
+    mp.set_ext('16349')
+    fresh = {'age': 0.4, 'ping': 17, 'loss_in': 0.0, 'loss_out': 0.0, 'pktl': 0}
+    answers = [None, fresh, fresh, {**fresh, 'age': MC.LINK_STALE + 5}, None, LC.LobbyDown('offline')]
+    asked = []
+
+    def link(ext):
+        asked.append(ext)
+        got = answers.pop(0) if answers else None
+        if isinstance(got, Exception):
+            raise got
+        return got
+    mp.service.link = link
+    mp._open_link_loop(Proc(6))
+    assert asked == [16349] * 6
+    assert rec.calls == [('link', fresh), ('link', fresh), ('link', None)]   # menus: hidden once, not again and again
+    rec.calls.clear()
+    answers[:] = [fresh, fresh]
+    mp._open_link_loop(Proc(1))
+    assert rec.calls == [('link', fresh), ('link', None)]                      # the game ended: taken away
+    rec.calls.clear()
+    mp.code = 'K7M2Q'                                                          # in a lobby: its own poll shows it
+    mp._open_link_loop(Proc(2))
+    assert rec.calls == []
+
+
+def test_the_open_play_watch_starts_only_with_the_readout_on(mp, monkeypatch):
+    started = []
+    monkeypatch.setattr(MC.threading, 'Thread', lambda **kw: type('T', (), {'start': lambda s: started.append(kw['name']),
+                                                                           'is_alive': lambda s: True})())
+    mp.watch_open_link(Proc(1))
+    assert started == []                                                       # this PC cannot draw the HUD
+    mp.hud_ok = lambda: True
+    mp.watch_open_link(Proc(1))
+    mp.watch_open_link(Proc(1))
+    assert started == ['mp-link']                                              # one at a time

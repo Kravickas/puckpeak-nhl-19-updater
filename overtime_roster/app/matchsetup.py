@@ -36,8 +36,11 @@ JOURNAL = 'match-setup.json'
 VIEW_SUFFIX, OWN_SUFFIX, TRASH_SUFFIX = '.match', '.own', '.match-old'
 MARKER = 'overtime-match-view.json'     # in every view: restore deletes only folders that carry it
 MATCH_XML = 'overtime-match.xml'
-# the timing every match plays with (not the host's: a stray vblank 9999 Hz, live 2026-11-08, must not travel)
-MATCH_TIMING = {'vblank_frequency': 60, 'neo_mode': False}
+# the timing every match plays with. The vblank is each player's own (0.90.2, owner 2026-11-11: an unlocked 9999 Hz plays
+# smoother, and peers on 9999 and on 60 play together fine), so a match no longer sets 60 Hz; an older host's recipe
+# still names it (TIMING_KEYS reads it) and it is left out
+MATCH_TIMING = {'neo_mode': False}
+TIMING_KEYS = ('vblank_frequency', 'neo_mode')
 ALWAYS_LAYERS = ('menus',)              # the autoplay hook lives in the menus layer's boot.big
 # AMD math on Intel (gamesetup.amd_math_needed): set here too, for a match on a config install() has not seen
 AMD_MATH_KEY = gamesetup.AMD_MATH_KEY
@@ -150,7 +153,7 @@ def check(r):
     if any(x['id'] not in overlay.LAYERS for x in layers):
         raise MatchSetupError('the match setup asks for a data layer this app does not have (update the app)')
     timing = r.get('timing')
-    if not isinstance(timing, dict) or set(timing) - set(MATCH_TIMING):
+    if not isinstance(timing, dict) or set(timing) - set(TIMING_KEYS):
         raise MatchSetupError('the match setup names timing this app does not know (update the app)')
     if 'vblank_frequency' in timing and not (isinstance(timing['vblank_frequency'], int)
                                              and 30 <= timing['vblank_frequency'] <= 240):
@@ -277,9 +280,7 @@ def _config_values(cfg, user, xml_text, timing):
     # Precise readbacks + readback linear images in every match (owner 2026-11-10), the player's display mode with
     # exclusive fullscreen as borderless (the HUD needs it)
     gpu.update(gamesetup.gpu_wanted(match=True))
-    if 'vblank_frequency' in timing:
-        gpu['vblank_frequency'] = timing['vblank_frequency']
-    if 'neo_mode' in timing:
+    if 'neo_mode' in timing:      # the vblank stays the player's own (MATCH_TIMING)
         general['neo_mode'] = timing['neo_mode']
     if gamesetup.amd_math_needed():
         general[AMD_MATH_KEY] = True

@@ -150,6 +150,56 @@ def test_no_save_while_the_game_runs_or_a_match_is_set_up(user, monkeypatch):
     assert not _game_file(user).exists()
 
 
+def test_defaults_without_patch_readbacks_always_pro_and_shader_cache_once(user, monkeypatch):
+    # owner 2026-11-11 (0.90.2): a found game gets these with no Patch; a tester's unpatched game showed Disabled
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    monkeypatch.setattr(matchsetup, 'active', lambda: False)
+    wrote = emusettings.apply_defaults(str(user), True)
+    cfg = _read(user)
+    assert sorted(wrote) == ['GPU.direct_memory_access_enabled', 'GPU.readback_linear_images_enabled',
+                             'GPU.readbacks_mode', 'GPU.vblank_frequency', 'General.extra_dmem_in_mbytes',
+                             'General.neo_mode', 'Vulkan.pipeline_cache_enabled']
+    # owner 2026-11-11: vblank 9999, direct memory access and DMem 3500 by default, not locked
+    assert cfg['GPU']['vblank_frequency'] == 9999 and cfg['GPU']['direct_memory_access_enabled'] is True
+    assert cfg['General']['extra_dmem_in_mbytes'] == 3500
+    assert not {'GPU.vblank_frequency', 'GPU.direct_memory_access_enabled', 'General.extra_dmem_in_mbytes'} & set(emusettings.locks())
+    assert cfg['GPU']['readbacks_mode'] == 2 and cfg['GPU']['readback_linear_images_enabled'] is True
+    assert cfg['General']['neo_mode'] is True and cfg['Vulkan']['pipeline_cache_enabled'] is True
+    assert cfg['GPU']['present_mode'] == 'Fifo' and cfg['General']['volume_slider'] == 80   # started from config.json
+    view = emusettings.view(str(user))
+    assert _field(view, 'GPU.readbacks_mode')['value'] == 2 and _field(view, 'General.neo_mode')['value']
+    assert emusettings.apply_defaults(str(user), True) == []                        # all set: no write
+    emusettings.save(str(user), {'General.neo_mode': False, 'Vulkan.pipeline_cache_enabled': False,
+                                 'GPU.vblank_frequency': 60})
+    cfg = _read(user)
+    cfg['GPU']['readbacks_mode'] = 0
+    _write(user, cfg)
+    assert emusettings.apply_defaults(str(user), False) == ['GPU.readbacks_mode']   # the player's own choice stays
+    assert _read(user)['General']['neo_mode'] is False and _read(user)['Vulkan']['pipeline_cache_enabled'] is False
+    assert _read(user)['GPU']['vblank_frequency'] == 60                              # changed back by the player: stays
+
+
+def test_the_dmem_default_never_lowers_a_bigger_value(user, monkeypatch):
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    monkeypatch.setattr(matchsetup, 'active', lambda: False)
+    emusettings.apply_defaults(str(user), True)
+    cfg = _read(user)
+    cfg['General']['extra_dmem_in_mbytes'] = 5000
+    _write(user, cfg)
+    emusettings.apply_defaults(str(user), True)
+    assert _read(user)['General']['extra_dmem_in_mbytes'] == 5000
+
+
+def test_defaults_wait_while_the_game_runs_and_need_a_data_folder(user, tmp_path, monkeypatch):
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: True)
+    with pytest.raises(emusettings.SettingsError, match='Close NHL 19'):
+        emusettings.apply_defaults(str(user), True)
+    monkeypatch.setattr(overlay, 'emulator_running', lambda: False)
+    with pytest.raises(emusettings.SettingsError, match='data folder'):
+        emusettings.apply_defaults(str(tmp_path / 'nothing'), True)
+    assert not _game_file(user).exists()
+
+
 def test_display_mode_is_the_apps_choice(user):
     emusettings.save(str(user), {emusettings.DISPLAY_ID: 'Windowed'})
     assert _read(user)['GPU']['full_screen'] is False and _read(user)['GPU']['full_screen_mode'] == 'Windowed'
@@ -235,6 +285,20 @@ def test_views_wait_for_the_emulator(sc, monkeypatch):  # noqa: F811
     for got in (sc.emu_settings(), sc.emu_settings_save({'GPU.fsr_enabled': True}), sc.emu_input('pad'),
                 sc.emu_input_save('pad', {})):
         assert got == {'error': 'Find NHL 19 in Setup first.'}
+
+
+def test_a_look_that_finds_the_game_sets_the_defaults_once(sc, monkeypatch):  # noqa: F811
+    user = sc.world['user']
+    sc.setup_refresh()
+    cfg = json.loads((user / 'custom_configs' / TITLE).read_text(encoding='utf-8'))
+    assert cfg['GPU']['readbacks_mode'] == 2 and cfg['General']['neo_mode'] is True
+    assert sc.ctl.prefs['setup']['defaults_done'] == [os.path.normcase(os.path.abspath(str(user)))]
+    cfg['General']['neo_mode'] = False                              # the player turns PS4 Pro mode off
+    cfg['GPU']['readbacks_mode'] = 1
+    (user / 'custom_configs' / TITLE).write_text(json.dumps(cfg), encoding='utf-8')
+    sc.setup_refresh()
+    cfg = json.loads((user / 'custom_configs' / TITLE).read_text(encoding='utf-8'))
+    assert cfg['General']['neo_mode'] is False and cfg['GPU']['readbacks_mode'] == 2
 
 
 def test_display_choice_is_kept_for_the_next_start(ready):

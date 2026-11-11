@@ -39,7 +39,15 @@ TRUSTED_EXES = {'fe88293d67e4e9ab6d0799ac6dcff84644def7806ff0d03b028967cbfdf0e99
                 # 0.90.0: Overtime's smooth-motion build = 749170d + early flip, present ticks, thread priority (no CPU
                 # math change; docs/notes/smooth-motion.md)
                 'cfe895b55fd3d3360cb43df6b8cef8ccff576d3ca411d772624a99188f7e9907':
-                    'Overtime smooth c97b8b51 (Kravickas 749170d)'}
+                    'Overtime smooth c97b8b51 (Kravickas 749170d)',
+                # 0.90.2, provisional (as 749170d was) until an Intel PC's self-check and a mixed-CPU match: upstream
+                # 4788f0b, the Nightly (and the lobby build once the server pins it). Its cpu_patches, linker and
+                # memory_patcher are upstream's, which 749170d merged; the two differ in GPU/shader/videoout code only
+                # (docs/notes/shadps4-builds.md "Upstream nightly 4788f0b vs ours"). It reads General.redzone_patches.
+                'b04e3a3c90837ccb28fd08865b2e95dc114497cb08e43571b07914f1e351442e': 'upstream shadPS4 nightly 4788f0b'}
+# 0.90.2: the Nightly build on Setup's card (upstream's official zip). Its exe sha in the tag: Nightly players meet each
+# other in open matchmaking.
+NIGHTLY_EXES = {'b04e3a3c90837ccb28fd08865b2e95dc114497cb08e43571b07914f1e351442e': 'upstream shadPS4 nightly 4788f0b'}
 MARK = '; Overtime Roster: matchmaking tag (only games that stay in step meet). Unpatch removes this file.'
 TMP = '.overtime-tmp'
 
@@ -172,9 +180,12 @@ def why(inp):
     if inp.get('foreign'):
         return (f"Another mod's versioninfo.ini in the NHL 19-mods folder sets your online version "
                 f"({inp['foreign']}), so Overtime's matchmaking tag is not used: you meet only games with that one.")
-    if inp['sha'] not in TRUSTED_EXES:
-        reasons.append('this shadPS4 is not the online build (turn on Boost performance in Setup: that is the one; '
-                       'a Multiplayer lobby plays on it too)')
+    if inp['sha'] in NIGHTLY_EXES:
+        reasons.append('it runs the Nightly build, so open matchmaking pairs it with Nightly players (a Multiplayer '
+                       'lobby starts the lobby build by itself)')
+    elif inp['sha'] not in TRUSTED_EXES:
+        reasons.append("this shadPS4 is not the online build (choose Kravickas on Setup's Boost performance card: "
+                       'that is the one; a Multiplayer lobby plays on it too)')
     if not inp['crossvendor']:
         reasons.append('the Cross-CPU fix is not in the patch (it needs the v1.60 eboot.bin)')
     if gamesetup.amd_math_needed() and not inp['key']:

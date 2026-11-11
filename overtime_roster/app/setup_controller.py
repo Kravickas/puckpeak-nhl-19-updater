@@ -153,7 +153,8 @@ class SetupController(Part):
              'setup_packs_get': 'packs_get', 'setup_packs_drop': 'packs_drop', 'setup_pack_switch': 'pack_switch',
              'setup_check_updates': 'check_updates', 'setup_check_updates_now': 'check_now',
              'setup_patch': 'setup_patch', 'setup_unpatch': 'setup_unpatch', 'setup_verify': 'setup_verify',
-             'setup_play': 'setup_play', 'setup_boost': 'setup_boost',
+             'setup_play': 'setup_play', 'setup_build': 'setup_build', 'setup_build_update': 'setup_build_update',
+             'setup_boost': 'setup_boost',
              'setup_boost_source': 'setup_boost_source', 'setup_resolution': 'setup_resolution',
              'setup_pkg_source': 'setup_pkg_source',
              'setup_emu_settings': 'emu_settings', 'setup_emu_settings_save': 'emu_settings_save',
@@ -182,8 +183,19 @@ class SetupController(Part):
         self.dl = None          # {names, name, part, share} while packs download
         self.dl_stop = False    # a pack switched off while it downloads
         self.asked = set()      # the core asset switches (patch_ctl.PACK_KEYS) switched on here: their packs download
-        self.boost = prefs.get('boost') or {}   # Boost performance: {sha256, emulator, selected}, what comes back when off
-        self.boost_part = None  # how far its download is (0..1)
+        self.first_assets = bool(ctl.prefs.get('first_assets'))  # a new install's asset packs still to download
+        # the shadPS4 builds (boost.py): the one chosen on the Boost performance card (Nightly from the first start,
+        # owner 2026-11-11), and {emulator: the player's own shadPS4, sha: {build: sha256 of the pack in place}}
+        self.build = boost.name_of(prefs.get('build'))
+        old = prefs.get('boost') or {}
+        sha = {b: s for b, s in (old.get('sha') or {}).items() if b in boost.BUILDS and isinstance(s, str)}
+        if isinstance(old.get('sha256'), str):      # apps before 0.90.2: the Kravickas build's
+            sha.setdefault(boost.KRAVICKAS, old['sha256'])
+        self.boost = {'emulator': old.get('emulator') or '', 'sha': sha}
+        self.boost_part = None  # how far a build's download is (0..1)
+        self.boost_getting = ''     # the label of the build downloading
+        # the data folders (normcased) that got PS4 Pro mode and Shader cache once (emusettings.apply_defaults)
+        self.defaults_done = [d for d in prefs.get('defaults_done') or [] if isinstance(d, str)]
         self.cpu = dict(CPU_IDLE)   # Check my CPU (cpucheck.py): the run and its last result, this session only
         self.resolution = prefs.get('resolution') if prefs.get('resolution') in xmlpatch.RESOLUTIONS else 1080
         gamesetup.set_display(prefs.get('display'))     # Game settings' display mode (default borderless)
@@ -196,6 +208,7 @@ class SetupController(Part):
     # --- helpers -------------------------------------------------------------------------------------------
     def _remember(self):
         self.ctl.remember(setup={'emulator': self.emulator, 'skipped': self.skipped, 'boost': self.boost,
+                                 'build': self.build, 'defaults_done': list(self.defaults_done),
                                  'resolution': self.resolution, 'display': gamesetup.display_mode(),
                                  'custom': dict(self.custom),
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
@@ -226,7 +239,7 @@ class SetupController(Part):
                 return None
             ctl.busy = busy
         ctl.say(busy, 'info', -1)
-        ctl.changed('setup', 'patch')
+        ctl.changed('setup', 'patch', 'app')
 
         def end():
             if after:
@@ -234,7 +247,7 @@ class SetupController(Part):
             if rescan:
                 self._scan()
             else:
-                ctl.changed('setup', 'patch')
+                ctl.changed('setup', 'patch', 'app')
 
         def done(out):
             with ctl.lock:
@@ -337,6 +350,8 @@ class SetupController(Part):
                     self.emulator = found['emulator']   # found: remembered
                     self._remember()
             self._follow(found, picked, auto)
+            self._defaults(found)
+            self._first_assets(found)
             if announce:
                 text, tone = self._outcome()
                 ctl.say(text, tone, 1)
@@ -375,6 +390,53 @@ class SetupController(Part):
             if callable(getattr(c, 'set_save_dir', None)):
                 c.host.log(f'Saves folder: {saves} (shadPS4\'s).')
                 c.set_save_dir(saves)
+
+    def _defaults(self, found=None):
+        """Game settings without Patch, once a game is found (owner 2026-11-11, 0.90.2): Readbacks Precise and Readback
+        linear images every time; PS4 Pro mode, Shader cache, Direct memory access, Vblank 9999 and DMem 3500 once
+        per data folder (emusettings.apply_defaults, FIRST_DEFAULTS).
+        While the game runs or a match is set up, the next look does it."""
+        f = found if found is not None else (self.found or {})
+        emu = self.known_emulator()
+        user, game = f.get('user_dir') or (gamesetup.emu_user_dir(emu) if emu else ''), f.get('game') or {}
+        if not user or not game.get('ok'):
+            return
+        key = os.path.normcase(os.path.abspath(user))
+        first = key not in self.defaults_done
+        try:
+            wrote = emusettings.apply_defaults(user, first)
+        except emusettings.SettingsError as err:
+            self.ctl.host.log(f'Game settings not set now: {err}')
+            return
+        if first:
+            with self.ctl.lock:
+                self.defaults_done.append(key)
+                self._remember()
+        if wrote:
+            self.ctl.host.log(f"Game settings set without Patch: {', '.join(wrote)} ({user})")
+
+    def _first_assets(self, found):
+        """A new install's first look that finds NHL 19 and the published packs (0.90.2, owner 2026-11-11): the team
+        art, 3D jerseys and player photos it starts with switched on (controller: `first_assets`) download now, in turn,
+        The mark goes only once nothing is left to fetch (all here, or switched off, or a failed pack's switch went off):
+        busy, offline or an app closed mid-download, the next look (or start) tries again."""
+        c = self.ctl
+        if not self.first_assets or self.packs is None or not (found.get('game') or {}).get('ok') \
+                or not self.known_emulator() or c.busy:
+            return
+        rows = {r['name']: r for r in self.packs}
+        names = {n for k in patch_ctl.PACK_KEYS for n in patch_ctl.ASSET_PACKS[k]}
+        if any(rows.get(n, {}).get('state') == 'offline' for n in names):
+            return
+        with c.lock:
+            self.asked.update(k for k in patch_ctl.PACK_KEYS if c.patch_want.get(k))
+        if not self._extras_wanted():
+            with c.lock:
+                self.first_assets = False
+                c.remember(first_assets=False)
+            return
+        c.host.log('New install: downloading the team art, 3D jerseys and player photos (Updated assets).')
+        self._extras_next()
 
     def find_at_start(self):
         """At the app's start (rosters_ctl.start): with no shadPS4 picked yet, look for one (no network, no
@@ -453,24 +515,32 @@ class SetupController(Part):
 
     # --- no shadPS4 on this PC: the app's own (owner 2026-11-10, docs/notes/standalone.md) ---------------------------
     def standalone(self):
-        """True when NHL 19 plays on the Kravickas build the app set up with no shadPS4 of the player's to go back to
-        (Boost on, nothing kept): Boost then has no Disable."""
+        """True when NHL 19 plays on a build the app set up with no shadPS4 of the player's on this PC."""
         own = self.boost.get('emulator') or ''
         return self._boosted() and not os.path.isfile(own)
 
+    def _build_label(self, build=None):
+        return boost.BUILDS[boost.name_of(build or self.build)]['label']
+
+    def _install_build(self, build=None):
+        """boost.install of the chosen build with the card's progress (in a job)."""
+        build = boost.name_of(build or self.build)
+        with self.ctl.lock:
+            self.boost_getting = self._build_label(build)
+        return build, boost.install(build, patch_cache(), self._boost_progress)
+
     def _standalone(self, intro):
-        """The published Kravickas build as this PC's shadPS4 (boost.enable, the Boost download), a job."""
+        """The chosen build as this PC's shadPS4 (boost.install), a job."""
         if self._wait():
             return None
         self.ctl.say(intro, 'info')
 
         def said(out):
-            self._boost_applied({}, out)
-            return ('NHL 19 plays on the Kravickas build of shadPS4, which Overtime set up for you. Sign in to ShadNet '
-                    'on the Multiplayer tab to play online.', 'good')
-        self._job('Getting shadPS4 (the Kravickas build) for NHL 19...',
-                  lambda: boost.enable(patch_cache(), self._boost_progress), said, expected=(boost.BoostError,),
-                  after=self._boost_done)
+            self._boost_applied(*out)
+            return (f'NHL 19 plays on the {self._build_label(out[0])} build of shadPS4, which Overtime set up for you. '
+                    'Sign in to ShadNet on the Multiplayer tab to play online.', 'good')
+        self._job(f'Getting shadPS4 (the {self._build_label()} build) for NHL 19...', self._install_build, said,
+                  expected=(boost.BoostError,), after=self._boost_done)
         return {'ok': True}
 
     def setup_install_pkg(self, path):
@@ -490,7 +560,7 @@ class SetupController(Part):
         def work():
             use, kind, game = pkginstall.install(path, game_dir, progress)
             c.set_game_dir(use)
-            got = None if emu else boost.enable(patch_cache(), self._boost_progress)
+            got = None if emu else self._install_build()
             return use, kind, game, got
 
         def said(out):
@@ -498,8 +568,8 @@ class SetupController(Part):
             c.host.log(f"PKG installed: {path} -> {use} ({'update' if kind == pkginstall.UPDATE else 'game'}, "
                        f"version {game.get('app_ver')})")
             if got is not None:
-                self._boost_applied({}, got)
-            also = ' shadPS4 (the Kravickas build) is set up too.' if got is not None else ''
+                self._boost_applied(*got)
+            also = f' shadPS4 (the {self._build_label(got[0])} build) is set up too.' if got is not None else ''
             version = (game.get('app_ver') or '').lstrip('0') or '?'
             needed = gamesetup.APP_VER.lstrip('0')
             if game.get('ok'):
@@ -614,9 +684,99 @@ class SetupController(Part):
         """Compare the game folder with the clean record (made at the first patch, or now)."""
         return patch_ctl.verify(self, full)
 
+    def play_state(self):
+        """The header's Play NHL 19 button (shell.app): {can, text, why, progress}. It can once a game is found and
+        nothing else runs."""
+        c = self.ctl
+        if self.found is None:      # before the first look: the game and shadPS4 the app remembers
+            game_ok = bool(c.game_dir and self.known_emulator())
+        else:
+            game_ok = bool((self.found.get('game') or {}).get('ok'))
+        part = self.boost_part
+        running = (self.play or {}).get('state') in ('starting', 'running') or self._launching
+        if part is not None:
+            return {'can': False, 'text': f'Getting {self.boost_getting or self._build_label()} {round(part * 100)}%',
+                    'why': 'Downloading the shadPS4 build.', 'progress': part}
+        if running:
+            return {'can': False, 'text': 'NHL 19 is running', 'why': 'NHL 19 is running.', 'progress': None}
+        if not game_ok:
+            return {'can': False, 'text': 'Play NHL 19', 'why': 'Find NHL 19 first: press Find game in Setup.',
+                    'progress': None}
+        if c.busy:
+            return {'can': False, 'text': 'Play NHL 19', 'why': waiting(c.busy), 'progress': None}
+        return {'can': True, 'text': 'Play NHL 19', 'why': f'Starts NHL 19 on the {self._build_label()} build.',
+                'progress': None}
+
+    def _play_exe(self):
+        """(exe to play on, build or None, why it is the player's own or '') without downloading. exe '' = the chosen
+        build must download first."""
+        current = self.known_emulator()
+        own = current if current and boost.build_of(current) is None else (self.boost.get('emulator') or '')
+        if own and os.path.isfile(own) and boost.own_portable(own):
+            return own, None, ('Your shadPS4 keeps its saves in its own user folder, so NHL 19 starts on it, not on the '
+                               f'{self._build_label()} build.')
+        build = self.build
+        exe = boost.here(build)
+        pub = (self.boost_table or {}).get(boost.BUILDS[build]['pack'])
+        if exe and pub is not None and pub.digest != self.boost['sha'].get(build):
+            exe = ''                    # a newer build is published: Play gets it first
+        return exe, build, ''
+
     def setup_play(self):
-        """Play (patch_ctl.play): not patched, the Question first."""
-        return patch_ctl.play(self)
+        """Play NHL 19 (the header button, Game patch's Play): the chosen build, downloaded first when it is not here or
+        a newer one is published (offline with it here: plays as it is); then patch_ctl.play (not patched: the
+        Question first)."""
+        if self._wait():
+            return None
+        if overlay.emulator_running():
+            self.ctl.say('NHL 19 is already running.', 'caution')
+            return {'error': 'NHL 19 is already running.'}
+        exe, build, why = self._play_exe()
+        if exe:
+            if build is None:
+                self._use_own(exe)
+            else:
+                self._use_build(build, exe)
+            if why:
+                self.ctl.say(why, 'caution')
+            self._defaults()
+            return patch_ctl.play(self)
+
+        def said(out):
+            self._boost_applied(*out)
+            self._defaults()
+            patch_ctl.play(self)
+            return '', ''
+
+        def work():
+            try:
+                return self._install_build(build)
+            except boost.BoostError:
+                old = boost.here(build)
+                if old and self.boost['sha'].get(build):
+                    return build, (old, self.boost['sha'][build])   # offline: the build here plays as it is
+                raise
+        self._job(f'Getting the {self._build_label(build)} build of shadPS4...', work, said,
+                  expected=(boost.BoostError,), after=self._boost_done)
+        self.ctl.changed('app')
+        return {'ok': True}
+
+    def _use_own(self, exe):
+        with self.ctl.lock:
+            if not boost.same(self.emulator, exe):
+                self.emulator = exe
+                self._remember()
+
+    def _use_build(self, build, exe):
+        """`exe` (a build here) is the shadPS4 the app plays with; the player's own is kept."""
+        with self.ctl.lock:
+            current = self.known_emulator()
+            if current and boost.build_of(current) is None:
+                self.boost['emulator'] = current
+            if not boost.same(self.emulator, exe):
+                self.emulator = exe
+                self.ctl.host.log(f'shadPS4: the {self._build_label(build)} build ({exe})')
+            self._remember()
 
     def _watch_play(self, emu, proc):
         """Read the emulator log for a few minutes: did the patch apply, is ShadNet signed in?"""
@@ -627,7 +787,7 @@ class SetupController(Part):
             exited = proc.poll() is not None
             with self.ctl.lock:
                 self.play = {'state': 'ended' if exited else 'running', 'pid': proc.pid, 'log': info}
-            self.ctl.changed('setup')
+            self.ctl.changed('setup', 'app')
             if exited:
                 return
 
@@ -702,7 +862,7 @@ class SetupController(Part):
 
     def _boosted(self):
         emu = self.known_emulator()
-        return bool(emu) and boost.same(emu, boost.exe_path())
+        return boost.build_of(emu) is not None
 
     def folder_pick(self, key):
         """Change...: Windows' picker (a file for shadPS4, a folder for the rest), then folder_set. {type: true} in
@@ -739,8 +899,8 @@ class SetupController(Part):
                               'from, or %APPDATA%\\shadPS4. Pick a folder named "user", or %APPDATA%\\shadPS4.')
             if self._boosted() and os.path.normcase(os.path.abspath(path)) != os.path.normcase(
                     gamesetup.emu_user_dir(boost.exe_path())):
-                return None, ('Boost performance is on, and it uses %APPDATA%\\shadPS4. Disable Boost performance '
-                              'first to use another data folder.')
+                return None, ("Overtime's shadPS4 builds use %APPDATA%\\shadPS4. To use another data folder, pick "
+                              'your own shadPS4 with Find game first.')
             return os.path.abspath(path), None
         if key == 'cache':
             return self._check_cache(path)
@@ -1014,75 +1174,84 @@ class SetupController(Part):
             return f'{title} is deleted. Patch the game again to take it out.', 'good'
         return self._job(f'Deleting {title}...', work, said, expected=(packdownload.PackError,), rescan=False)
 
-    # --- Boost performance: Kravickas's NHL 19 build of shadPS4 (boost.py) ------------------------------------------------
+    # --- Boost performance: the shadPS4 build Play starts, Nightly or Kravickas (boost.py, owner 2026-11-11) --------
     def setup_boost_source(self):
-        webbrowser.open(boost.SOURCE)
+        webbrowser.open(boost.BUILDS[self.build]['source'])
         return {'ok': True}
 
-    def setup_boost(self, on):
-        """The Boost performance button: on installs the published build (also over an older one), off puts the
-        player's own shadPS4 back. Each is a job."""
+    def setup_boost(self, on=True):
+        """The pre-0.90.2 name (Boost on/off), kept for old pages: on = Kravickas (what Boost was), off = Nightly."""
+        return self.setup_build(boost.KRAVICKAS if on else boost.NIGHTLY)
+
+    def setup_build(self, name):
+        """Nightly / Kravickas on the Boost performance card: remembered (it stays until another click), and when that
+        build is here and shadPS4 is closed, the app plays with it from now on. Play downloads it when it is not."""
+        if name not in boost.BUILDS:
+            return {'error': f'no build {name}'}
         c = self.ctl
-        current = self.known_emulator()
+        with c.lock:
+            self.build = name
+            self._remember()
+        exe, build, _why = self._play_exe()
+        if exe and build and not overlay.emulator_running():
+            self._use_build(build, exe)
+            text = f'NHL 19 plays on the {self._build_label()} build of shadPS4.'
+        else:
+            text = f'{self._build_label()} chosen: Play NHL 19 gets it first.'
+        c.say(text, 'good')
+        c.changed('setup', 'app', 'patch')
+        return {'ok': True}
+
+    def setup_build_update(self):
+        """Update on the Boost performance card: the published chosen build, now (a job)."""
+        c = self.ctl
         if self._wait():
             return None
-        no = boost.refused(current, on)
-        if not no and not on and self.standalone():
-            no = ('Overtime set up this shadPS4 for you, so there is no other one to go back to. To play on your own '
-                  'shadPS4, pick it with Find game.')
+        no = boost.refused(None)
         if no:
             c.say(no, 'caution')
             return {'error': no}
-        return self._boost_on(current) if on else self._boost_off()
+
+        def said(out):
+            build, got = out
+            self._boost_applied(build, got)
+            return f'The {self._build_label(build)} build of shadPS4 is up to date.', 'good'
+        self._job(f'Getting the {self._build_label()} build of shadPS4...', self._install_build, said,
+                  expected=(boost.BoostError,), after=self._boost_done)
+        return {'ok': True}
 
     def _boost_progress(self, _name, done, total):
         c = self.ctl
         part = min(1.0, done / total) if total else 0.0
         with c.lock:
             self.boost_part = part
-        c.say(f'Downloading the Kravickas build... {round(part * 100)} %', 'info', part)
-        c.changed('setup')
+        c.say(f'Downloading the {self.boost_getting or self._build_label()} build... {round(part * 100)} %', 'info',
+              part)
+        c.changed('setup', 'app')
 
     def _boost_done(self):
         with self.ctl.lock:
-            self.boost_part = None
+            self.boost_part, self.boost_getting = None, ''
 
-    def _boost_on(self, current):
-        keep = self._boost_keep(current)
-
-        def said(out):
-            self._boost_applied(keep, out)
-            return 'Boost performance is on: NHL 19 now plays on the Kravickas build.', 'good'
-        return self._job('Turning on Boost performance...', lambda: boost.enable(patch_cache(), self._boost_progress),
-                         said, expected=(boost.BoostError,), after=self._boost_done)
-
-    def _boost_keep(self, current):
-        keep = dict(self.boost)     # what QtLauncher had before stays, also when a shadPS4 was picked by hand since
-        if current and not boost.same(current, boost.exe_path()):
-            keep['emulator'] = current
-        return keep
-
-    def _boost_applied(self, keep, out):
-        exe, sha, selected = out
+    def _boost_applied(self, build, got):
+        """A build put in place (boost.install's (exe, sha)): remembered, and the shadPS4 the app plays with."""
+        exe, sha = got
         with self.ctl.lock:
-            self.boost = {**keep, 'sha256': sha}
-            if 'selected' not in keep and selected is not None:
-                self.boost['selected'] = selected
-            self.emulator = exe
-            self._remember()
-        self.ctl.host.log(f'Boost performance on: {exe}')
+            self.boost['sha'][build] = sha
+        self._use_build(build, exe)
 
     def online_boost(self, note=None):
-        """Before an online Ready (multiplayer_ctl): NHL 19 on the published Kravickas build, switched on or brought up
-        to date with no click (owner 2026-11-08: "we just handle all things for him"). Lockstep play needs the same
-        shadPS4 on both PCs: sonku's other build desynced with gr4vity's through both relays. Waits for the download.
-        Returns what it did: 'on', 'already', or why not ('none published', a refusal); the lobby compares what is
-        there either way."""
+        """Before an online Ready in a lobby without a match plan (multiplayer_ctl): NHL 19 on the published Kravickas
+        build (the lobby build), switched on or brought up to date with no click (owner 2026-11-08: "we just handle all
+        things for him"). Lockstep play needs the same shadPS4 on both PCs. The build chosen on the card stays chosen:
+        the next Play starts it again. Waits for the download. Returns what it did: 'on', 'already', or why not
+        ('none published', a refusal); the lobby compares what is there either way."""
         c = self.ctl
+        k = boost.KRAVICKAS
         pub = (self.boost_table or {}).get(boost.PACK)
         current = self.known_emulator()
-        on = boost.same(current, boost.exe_path()) and os.path.isfile(current)
-        if on and (pub is None or pub.digest == self.boost.get('sha256')):
+        on = boost.build_of(current) == k
+        if on and (pub is None or pub.digest == self.boost['sha'].get(k)):
             return 'already'
         if pub is None:
             return 'none published'
@@ -1092,10 +1261,10 @@ class SetupController(Part):
                 no = waiting(c.busy)
             if not no:
                 c.busy = 'Getting the NHL 19 build of shadPS4 for online play...'
+                self.boost_getting = self._build_label(k)
         if no:
             c.host.log(f'Online: the Kravickas build not switched on ({no})')
             return no
-        keep = self._boost_keep(current)
 
         def progress(_name, done, total):
             part = min(1.0, done / total) if total else 0.0
@@ -1103,60 +1272,55 @@ class SetupController(Part):
                 self.boost_part = part
             if note:
                 note(f'Getting the NHL 19 build of shadPS4 for online play... {round(part * 100)} %')
-            c.changed('setup')
+            c.changed('setup', 'app')
         try:
-            self._boost_applied(keep, boost.enable(patch_cache(), progress))
+            self._boost_applied(k, boost.install(k, patch_cache(), progress))
             return 'on'
         except (boost.BoostError, OSError, ValueError) as err:
             c.host.log(f'Online: the Kravickas build did not download ({err})')
             return str(err) or 'download failed'
         finally:
             with c.lock:
-                c.busy, self.boost_part = None, None
-            c.changed('setup')
-
-    def _boost_off(self):
-        c = self.ctl
-        before = dict(self.boost)
-
-        def said(_out):
-            own = before.get('emulator') or ''
-            with c.lock:
-                self.boost = {}
-                self.emulator = own if os.path.isfile(own) else ''
-                self._remember()
-            c.host.log(f'Boost performance off: {self.emulator or "no shadPS4 kept"}')
-            return 'Boost performance is off: your own shadPS4 is back.', 'good'
-        return self._job('Turning off Boost performance...', lambda: boost.disable(before.get('selected')), said)
+                c.busy, self.boost_part, self.boost_getting = None, None, ''
+            c.changed('setup', 'app')
 
     def _boost_card(self, emulator):
-        """The Boost performance card: on or off, and what the button does."""
+        """The Boost performance card: the build choice (the chosen one lit), what Play starts, Update."""
         c = self.ctl
-        on = boost.same(emulator, boost.exe_path()) and os.path.isfile(emulator)
-        pub = (self.boost_table or {}).get(boost.PACK)
-        size = _megabytes(pub.size) if pub else ''
-        newer = on and pub is not None and pub.digest != self.boost.get('sha256')
+        table = self.boost_table or {}
+        builds = []
+        for b, info in boost.BUILDS.items():
+            pub = table.get(info['pack'])
+            here = bool(boost.here(b))
+            builds.append({'id': b, 'label': info['label'], 'here': here, 'published': pub is not None,
+                           'newer': here and pub is not None and pub.digest != self.boost['sha'].get(b),
+                           'size': _megabytes(pub.size) if pub else ''})
+        cur = next(x for x in builds if x['id'] == self.build)
+        label = cur['label']
         part = self.boost_part
+        own, _build, why = self._play_exe() if self.found is not None else ('', None, '')
         if part is not None:
-            text, tone = f'Downloading... {round(part * 100)} %{f" of {size}" if size else ""}', 'info'
-        elif newer:
-            text, tone = 'On: 60 FPS. A newer Kravickas build is out.', 'info'
-        elif on and self.standalone():
-            text, tone = 'On: 60 FPS. Overtime set up the Kravickas build for you.', 'good'
-        elif on:
-            text, tone = 'On: 60 FPS on the Kravickas build.', 'good'
-        elif pub is not None:
-            text, tone = f'Off. Enable it for 60 FPS ({size} download).' if size else 'Off. Enable it for 60 FPS.', ''
+            text, tone = f'Downloading the {self.boost_getting or label} build... {round(part * 100)} %', 'info'
+        elif why:
+            text, tone = why, 'caution'
+        elif cur['newer']:
+            text, tone = f'{label}: a newer build is out. Press Update, or Play NHL 19 gets it.', 'info'
+        elif cur['here']:
+            text, tone = f'{label}: ready. Play NHL 19 starts it.', 'good'
+        elif cur['published']:
+            size = f' ({cur["size"]})' if cur['size'] else ''
+            text, tone = f'{label}: Play NHL 19 downloads it first{size}.', ''
         elif self.found is None:
             text, tone = 'Looking...', ''
         elif self.boost_table is None:
             text, tone = 'The Overtime server does not answer: check your internet connection.', 'caution'
         else:
-            text, tone = 'Not available for download yet.', 'caution'
-        news, upstream = self._emulator_news() if on else ('', '')
-        return {'on': on, 'newer': newer, 'text': text, 'tone': tone, 'progress': part,
-                'standalone': on and self.standalone(), 'can': (on or pub is not None) and not c.busy,
-                'resolution': self.resolution, 'news': '' if newer or part is not None else news, 'upstream': upstream}
+            text, tone = f'{label}: not available for download yet.', 'caution'
+        news, upstream = self._emulator_news() if self.build == boost.KRAVICKAS else ('', '')
+        return {'build': self.build, 'builds': builds, 'playing': boost.build_of(emulator) or '',
+                'text': text, 'tone': tone, 'progress': part, 'can': not c.busy,
+                'can_update': cur['published'] and not c.busy and part is None,
+                'resolution': self.resolution, 'news': '' if part is not None else news, 'upstream': upstream}
 
     @staticmethod
     def _emulator_news():

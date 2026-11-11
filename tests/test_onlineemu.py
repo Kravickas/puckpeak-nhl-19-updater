@@ -88,3 +88,39 @@ def test_start_dir_follows_the_players_own_data(home, monkeypatch):
         onlineemu.start_dir(str(exe))
     with pytest.raises(onlineemu.OnlineEmuError):
         onlineemu.start_dir('')
+
+
+def test_the_pack_follows_the_servers_pin(monkeypatch):
+    """0.90.2: lobbies play whichever pack the server pins: the Nightly pack when its digest is the pin, else the
+    Kravickas pack (also for no pin or an unknown digest)."""
+    class Rel:
+        def __init__(self, digest):
+            self.digest = digest
+    table = {packdownload.EMULATOR_PACK: Rel('a' * 64), packdownload.NIGHTLY_PACK: Rel('B' * 64)}
+    assert onlineemu.pack_for('b' * 64, table) == packdownload.NIGHTLY_PACK
+    assert onlineemu.pack_for('a' * 64, table) == packdownload.EMULATOR_PACK
+    assert onlineemu.pack_for('c' * 64, table) == onlineemu.PACK == packdownload.EMULATOR_PACK
+    assert onlineemu.pack_for(None, table) == onlineemu.PACK
+    assert onlineemu.pack_for('b' * 64, {}) == onlineemu.PACK
+
+
+def test_a_nightly_pin_unpacks_the_nightly_zip_with_its_exe_at_the_root(home, monkeypatch):
+    folder = str(home / 'cache')
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, packdownload.NIGHTLY_PACK)
+    with zipfile.ZipFile(path, 'w') as z:
+        z.writestr('shadPS4.exe', b'MZ nightly')          # upstream's layout: the exe at the root
+    sha = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+
+    class Rel:
+        digest = sha
+    monkeypatch.setattr(packdownload, 'published', lambda: {packdownload.NIGHTLY_PACK: Rel()})
+    asked = []
+
+    def download(names, cache_dir, progress=None, cancelled=None, **kw):
+        asked.append(names)
+        return [(names[0], True, '')]
+    monkeypatch.setattr(packdownload, 'download', download)
+    monkeypatch.setattr(packdownload, 'located', lambda name, cache_dir: (path, sha) if name == packdownload.NIGHTLY_PACK else None)
+    exe, got = onlineemu.ensure(folder, want=sha)
+    assert asked == [[packdownload.NIGHTLY_PACK]] and got == sha and open(exe, 'rb').read() == b'MZ nightly'

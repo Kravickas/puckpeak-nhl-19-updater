@@ -15,9 +15,23 @@ export function Backdrop() {
 }
 
 // the Puck Peak logo, the tagline with the site, and the title line as the game's breadcrumb
-export function Header({ meta }) {
+// The green Play NHL 19 button, top right on every tab (owner 2026-11-11): grey until a game is found; it starts the
+// build chosen on Setup's Boost performance card. play: {can, text, why, progress} (shell.app)
+function PlayButton({ play }) {
+  const p = play || { can: false, text: 'Play NHL 19', why: 'Find NHL 19 first: press Find game in Setup.' };
+  const part = typeof p.progress === 'number' ? Math.max(0, Math.min(1, p.progress)) : null;
+  return html`<button type="button" class=${cls('playnow', p.can && 'ready', part !== null && 'getting')}
+      disabled=${!p.can} title=${p.why || ''} onClick=${() => call('setup_play')}>
+    ${part !== null && html`<span class="fill" style=${{ width: `${part * 100}%` }}></span>`}
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9.5-5.5z" fill="currentColor"/></svg>
+    <span class="label">${p.text}</span>
+  </button>`;
+}
+
+export function Header({ meta, play }) {
   const [name, game, version] = meta.title || [meta.app_name, '', meta.version];
   return html`<header class="header">
+    <${PlayButton} play=${play}/>
     <img class="logo" src="img/logo.png" alt="Puck Peak" draggable="false" onClick=${() => call('open_site')}/>
     <div class="tagline">${meta.tagline} · <a onClick=${() => call('open_site')}>${meta.site_label}</a></div>
     <div class="crumb"><b>${name}<i class="dashes"></i></b><span class="sep">|</span><span class="light">${game}</span>

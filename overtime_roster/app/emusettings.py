@@ -196,8 +196,9 @@ FIELDS = [
        'Extra memory for the game. 1440p needs 3500 MB or more: Overtime sets it with the Resolution choice.',
        min=0, max=100000),
     _f('Experimental', 'Console', 'GPU', 'vblank_frequency', 'Vblank (Hz)', 'number', 60,
-       'The game paces its frames by this: 60 Hz is right for NHL 19. Online matches always use 60 Hz.',
-       min=60, max=240),
+       "The game paces its frames by this. 60 Hz is the console's; 9999 unlocks it and plays smoother. "
+       'Online matches use yours too (players on different values play together fine).',
+       min=60, max=9999),
 ]
 BY_ID = {f['id']: f for f in FIELDS}
 DISPLAY_ID = 'GPU.full_screen_mode'
@@ -387,6 +388,51 @@ def _backup(path):
         except OSError:
             pass
     return dest
+
+
+# Written once per data folder after a game is found, without Patch (owner 2026-11-11, 0.90.2: "this should be default
+# for anyone after they locate a game ... people should be able to change it"); not locked, the player may change them
+# later. Vblank 9999 unlocks the frame pacing (60 Hz glitches); Additional DMem only goes up (a bigger value stays).
+# The locked GPU keys (gamesetup.GPU_SETTINGS) are written at every look.
+FIRST_DEFAULTS = {('General', 'neo_mode'): True, ('Vulkan', 'pipeline_cache_enabled'): True,
+                  ('GPU', 'direct_memory_access_enabled'): True, ('GPU', 'vblank_frequency'): 9999,
+                  ('General', gamesetup.DMEM_KEY): gamesetup.DMEM_1440}
+AT_LEAST = {('General', gamesetup.DMEM_KEY)}
+
+
+def apply_defaults(user_dir, first):
+    """Readbacks Precise and readback linear images on (always), and with `first` the FIRST_DEFAULTS (PS4 Pro mode,
+    Shader cache, Direct memory access, Vblank 9999, Additional DMem 3500 MB or more), in the game's own config file, without Patch. A new file starts from config.json; the file before is backed up.
+    Returns the keys written ([] when all were set already). SettingsError while the game runs, a match is set up or
+    the file does not read."""
+    if not gamesetup.is_data_dir(user_dir):
+        raise SettingsError('No shadPS4 data folder yet.')
+    why = blocked()
+    if why:
+        raise SettingsError(why)
+    path = gamesetup.custom_config_path(user_dir)
+    try:
+        cfg = gamesetup._game_config(path, user_dir)
+    except gamesetup.SetupError as err:
+        raise SettingsError(str(err))
+    want = {('GPU', k): v for k, v in gamesetup.GPU_SETTINGS.items()}
+    if first:
+        want.update(FIRST_DEFAULTS)
+    wrote = []
+    for (sec_name, key), value in want.items():
+        sec = cfg.setdefault(sec_name, {})
+        if not isinstance(sec, dict):
+            raise SettingsError(f'{path}: "{sec_name}" is not a section; fix or delete the file first')
+        have = sec.get(key)
+        if (sec_name, key) in AT_LEAST and isinstance(have, int) and not isinstance(have, bool) and have >= value:
+            continue
+        if have != value:
+            sec[key] = value
+            wrote.append(f'{sec_name}.{key}')
+    if wrote:
+        _backup(path)
+        gamesetup._write(path, json.dumps(cfg, indent=4).encode('utf-8'))
+    return wrote
 
 
 def save(user_dir, changes, resolution=1080):

@@ -164,9 +164,15 @@ class Controller:
         # it the one click serves the stock roster, 31 teams and no Seattle. The pack switches (art, photos, kits)
         # are off until the Photos, logos pack is downloaded (v0.10.0); packs_migrate keeps an older install's.
         # The World of Chel tile is on by default (chel_migrate: once, for an install that had the hub on).
+        # A new install (no patch switches saved yet, 0.90.2, owner 2026-11-11) starts with the team art, 3D jerseys and
+        # player photos on too, and only those of the Updated assets: their packs download at the first look that finds
+        # NHL 19 (SetupController._first_assets). Every install since v0.10.0 has its switches saved: unchanged.
+        fresh = not isinstance(prefs.get('patch'), dict)
         self.patch_want = chel_migrate(prefs, {'text': True, 'names': True, 'league': True, 'roster': True,
-                                               'menus': True, 'chel': True, 'art': False, 'photos': False,
-                                               'kits': False, **packs_migrate(prefs, self.game_dir)})
+                                               'menus': True, 'chel': True, **{k: fresh for k in PACK_KEYS},
+                                               **packs_migrate(prefs, self.game_dir)})
+        if fresh:
+            self.remember(first_assets=True)
         if prefs.get('packs_default') != PACKS_DEFAULT or prefs.get('chel_default') != CHEL_DEFAULT:
             self.remember(patch=dict(self.patch_want), packs_default=PACKS_DEFAULT, chel_default=CHEL_DEFAULT)
         self.patch_status = None  # overlay.status, after the Game patch tab was opened

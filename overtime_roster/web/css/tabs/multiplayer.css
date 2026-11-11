@@ -262,10 +262,79 @@
 .tab-multiplayer .mp-chat-chip:hover { background: var(--tile-hi); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 
 
-/* My games: per-game averages and a box score under each game */
-.mp-avg { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
-.mp-avg-cell { display: flex; flex-direction: column; padding: 8px 10px; border: 1px solid var(--line, #3a3a3a); border-radius: 6px; }
-.mp-avg-v { font-size: 1.25rem; font-weight: 700; }
+/* Live matches (0.90.2): a pulsing red dot, LIVE where the score goes, a red edge on the row */
+.mp-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: #ff4d5e; }
+.mp-live-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #ff3b4e;
+  vertical-align: middle; animation: mp-live-pulse 1.4s ease-out infinite; }
+.seg .mp-live-dot { width: 7px; height: 7px; margin-left: 5px; }
+@keyframes mp-live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 59, 78, .65); opacity: 1; }
+  70% { box-shadow: 0 0 0 7px rgba(255, 59, 78, 0); opacity: .75; }
+  100% { box-shadow: 0 0 0 0 rgba(255, 59, 78, 0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .mp-live-dot { animation: none; } }
+.tab-multiplayer .mp-match.live { box-shadow: inset 3px 0 0 #ff3b4e; background: linear-gradient(90deg, rgba(255, 59, 78, .10), var(--tile) 40%); }
+.tab-multiplayer .mp-score.live { font-size: 15px; letter-spacing: .14em; color: #ff4d5e; }
+.tab-multiplayer .mp-live-head { color: #ff4d5e; }
+.tab-multiplayer .mp-ranks-note { padding: 2px 2px 0; }
+
+/* My games (0.90.2): record and form on top, then two columns (goals chart and rates | per game, me against them).
+   The big view draws the same inside a full Modal (outside .tab-multiplayer, hence no prefix). */
+.mp-games { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mp-gtop { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; }
+.mp-gsum { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+.mp-gsum .mp-tally-n { font: 700 30px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); color: var(--text); }
+.mp-gfacts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--text-3); }
+.mp-gfacts b { color: var(--text); font-variant-numeric: tabular-nums; }
+.mp-gfacts .plus { color: var(--good); font-weight: 700; }
+.mp-gfacts .minus { color: #ff6b8f; font-weight: 700; }
+.mp-gtop > .btn { margin-left: auto; }
+.mp-form-strip { display: flex; gap: 3px; }
+.mp-pill { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px;
+  font-weight: 700; color: var(--text); background: var(--tile-hi); }
+.mp-pill.W { background: color-mix(in srgb, var(--good) 70%, transparent); color: #0b1a10; }
+.mp-pill.L { background: color-mix(in srgb, var(--bad) 65%, transparent); }
+.mp-gcols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 12px 18px; align-items: start; }
+.mp-gcol { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 10px 12px; background: var(--tile); }
+.mp-chart { display: flex; flex-direction: column; gap: 6px; }
+.mp-chart svg { width: 100%; height: 92px; display: block; }
+.mp-chart.big svg { height: 180px; }
+.mp-chart-head, .mp-vs-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; font-size: 11.5px; color: var(--text-3); }
+.mp-chart-head .mp-note, .mp-vs-head .mp-note { font-size: 11.5px; color: var(--text-3); }
+.mp-key { display: inline-block; width: 9px; height: 9px; margin: 0 4px 0 6px; vertical-align: -1px; }
+.mp-key.me { background: var(--accent); }
+.mp-key.them { background: var(--text-off); }
+.mp-chart-axis { stroke: var(--text-3); stroke-width: .4; vector-effect: non-scaling-stroke; }
+.mp-bar-for { fill: color-mix(in srgb, var(--accent) 55%, transparent); }
+.mp-bar-for.won { fill: var(--accent); }
+.mp-bar-against { fill: var(--text-off); }
+.mp-meters { display: flex; flex-direction: column; gap: 6px; }
+.mp-meter { display: grid; grid-template-columns: minmax(90px, auto) 1fr 44px; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.mp-meter b { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.mp-meter-bar, .mp-vs-bar { position: relative; height: 6px; background: var(--panel-deep); overflow: hidden; }
+.mp-meter-bar > span { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+.mp-vs-head .mp-vs-legend { margin-left: auto; display: flex; gap: 14px; font-size: 10.5px; }
+.mp-vs-legend span:first-child { color: var(--accent); }
+.mp-vs-list { display: flex; flex-direction: column; gap: 5px; }
+.mp-vs { display: grid; grid-template-columns: minmax(0, 1fr) 38px minmax(40px, 64px) 38px; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.mp-games.big .mp-vs { grid-template-columns: minmax(0, 1fr) 48px minmax(80px, 2fr) 48px; font-size: 13.5px; }
+.mp-vs-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-vs-me { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.mp-vs-me.ahead { color: var(--accent); }
+.mp-vs-them { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.mp-vs-bar { background: var(--text-off); }
+.mp-vs-bar > span { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+.mp-vs-bar.none { background: none; }
+.mp-vs-bar.low > span { background: var(--text-3); }      /* penalty minutes: a bigger share of mine is not better */
+.mp-games .mp-empty { padding: 8px; font-size: 13px; color: var(--text-3); background: var(--panel-deep); }
+.mp-games .mp-note { font-size: 12.5px; color: var(--text-2); }
+.mp-games .mp-sub { margin-bottom: 0; }
+.mp-games.big { gap: 16px; }
+.mp-games.big .mp-gsum .mp-tally-n { font-size: 40px; }
+.mp-games.big .mp-gcol { padding: 14px 16px; }
+.mp-games.big .mp-recent { max-height: none; }
+.mp-games .mp-ago { font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .mp-rates { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; }
 .mp-game > summary { cursor: pointer; list-style: none; }
 .mp-game > summary::-webkit-details-marker { display: none; }

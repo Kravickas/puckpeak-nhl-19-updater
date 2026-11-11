@@ -68,6 +68,22 @@ a:hover { color: var(--accent-hi); text-decoration: underline; }
 .compact .header .logo { height: 26px; }
 .compact .header .tagline { display: none; }
 .compact .crumb { margin-top: 4px; }
+/* the green Play NHL 19 button, top right on every tab; grey until a game is found */
+.playnow { position: absolute; top: 16px; right: 20px; z-index: 2; display: inline-flex; align-items: center; gap: 9px;
+  height: 42px; padding: 0 20px 0 16px; border: 0; border-radius: 4px; overflow: hidden; cursor: default;
+  font-family: var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); font-weight: 700;
+  font-size: 16px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap;
+  color: var(--text-off); background: rgba(38, 42, 49, .75); box-shadow: inset 0 0 0 1px var(--line-hi); }
+.playnow svg { width: 15px; height: 15px; flex: none; position: relative; }
+.playnow .label { position: relative; font-variant-numeric: tabular-nums; }
+.playnow .fill { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(49, 199, 120, .35); transition: width .3s; }
+.playnow.getting { color: var(--text); }
+.playnow.ready { cursor: pointer; color: #fff; background: linear-gradient(180deg, #3BD487, #22A862);
+  box-shadow: 0 4px 14px rgba(49, 199, 120, .35), inset 0 1px 0 rgba(255, 255, 255, .25); }
+.playnow.ready:hover, .playnow.ready:focus-visible { outline: none; background: linear-gradient(180deg, #4BE296, #27B86C);
+  box-shadow: 0 6px 18px rgba(49, 199, 120, .5), inset 0 1px 0 rgba(255, 255, 255, .3); }
+.playnow.ready:active { transform: translateY(1px); }
+.compact .playnow { top: 6px; height: 32px; font-size: 13px; padding: 0 14px 0 12px; }
 
 /* --- tabs: [L1] Setup · Update · Game patch | Roster · ... · Front office [R1] ------------------------------------------- */
 .tabs { position: relative; z-index: 1; display: flex; justify-content: center; align-items: center; gap: 14px;

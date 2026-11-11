@@ -90,7 +90,7 @@ class Shell(Part):
             return {'emulator_known': bool(emulator), 'roster_known': known,
                     'start': 'setup',
                     'roster': {'id': roster['id'], 'name': roster['name']} if roster else None,
-                    'busy': bool(c.busy)}
+                    'busy': bool(c.busy), 'play': c.setup.play_state()}
 
     def question(self):
         with self._lock:

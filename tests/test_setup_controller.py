@@ -85,6 +85,18 @@ def sc(world, monkeypatch):  # noqa: F811
     monkeypatch.setattr(SC, 'patch_cache', lambda: None)
     monkeypatch.setattr(patch_ctl, 'game_text', lambda game_dir, log=None: 'eng_us')    # the fake game has no loc files
     monkeypatch.setattr(SC.SetupController, '_seattle_ready', lambda self, database: getattr(self, 'seattle', False))
+    from overtime_roster.app import boost
+    installed = []
+
+    def install(build, cache_dir, progress=None, cancelled=None):     # the build's exe, no download
+        exe = boost.exe_path(build)
+        os.makedirs(os.path.dirname(exe), exist_ok=True)
+        with open(exe, 'wb') as f:
+            f.write(b'MZ ' + build.encode())
+        installed.append(build)
+        return exe, 'ab' * 32
+    monkeypatch.setattr(boost, 'install', install)
+    calls['installed'] = installed
     ctl = FakeCtl(str(world['game']))
     s = SC.SetupController(ctl)
     s.calls, s.world = calls, world
@@ -193,37 +205,26 @@ def test_find_game_takes_the_games_eboot(sc, tmp_path, monkeypatch):
 
 
 def _no_shadps4(sc, monkeypatch):
-    """A PC that never had shadPS4: nothing found, and boost.enable writes the Kravickas exe (no download)."""
-    from overtime_roster.app import boost
-    sc.emulator, sc.boost = '', {}
+    """A PC that never had shadPS4: nothing found; boost.install (the fixture's) writes the chosen build's exe."""
+    sc.emulator, sc.boost = '', {'emulator': '', 'sha': {}}
     monkeypatch.setattr(SC.gamesetup, 'find_emulators', lambda roots=None, depth=2, near=(): [])
-    got = []
-
-    def enable(cache_dir, progress=None, cancelled=None):
-        exe = boost.exe_path()
-        with open(exe, 'wb') as f:
-            f.write(b'MZ')
-        got.append(exe)
-        return exe, 'ab' * 32, None
-    monkeypatch.setattr(boost, 'enable', enable)
-    return got
+    return sc.calls['installed']
 
 
 def test_no_shadps4_gets_the_apps_own(sc, monkeypatch):
-    """Owner 2026-11-10: a player without shadPS4 picks the game, the app sets up the Kravickas build."""
+    """Owner 2026-11-10: a player without shadPS4 picks the game, the app sets up the chosen build (Nightly from the
+    first start, owner 2026-11-11)."""
     from overtime_roster.app import boost
     got = _no_shadps4(sc, monkeypatch)
     assert not sc.known_emulator() and 'Find game' in sc._state(True, [], False)['text']
     assert sc.setup_set_emulator(str(sc.world['game'] / 'eboot.bin')) == {'ok': True}
-    assert got and sc.known_emulator() == boost.exe_path() and sc.standalone()
-    assert sc.ctl.game_dir == str(sc.world['game'])
+    assert got == ['nightly'] and sc.known_emulator() == boost.exe_path('nightly') and sc.standalone()
+    assert sc.ctl.game_dir == str(sc.world['game']) and sc.ctl.prefs['setup']['build'] == 'nightly'
     card = sc._boost_card(sc.known_emulator())
-    assert card['on'] and card['standalone'] and '60 FPS' in card['text'] and 'set up' in card['text']
-    out = sc.setup_boost(False)                    # nothing to go back to: refused in Python, not only hidden
-    assert 'no other one to go back to' in out['error'] and sc.known_emulator() == boost.exe_path()
-    # the player picks their own shadPS4 later: Boost comes off as usual from then on
+    assert card['build'] == 'nightly' and card['playing'] == 'nightly' and 'ready' in card['text']
+    # the player picks their own shadPS4 later: it is kept, and Play still starts the chosen build
     sc.setup_set_emulator(str(sc.world['emu']))
-    assert not sc.standalone() and not sc._boost_card(sc.known_emulator())['standalone']
+    assert not sc.standalone()
 
 
 def test_find_game_installs_a_pkg_and_sets_up_shadps4(sc, monkeypatch, tmp_path):
@@ -240,10 +241,11 @@ def test_find_game_installs_a_pkg_and_sets_up_shadps4(sc, monkeypatch, tmp_path)
     monkeypatch.setattr(pkginstall, 'install', install)
     assert sc.setup_set_emulator(str(pkg)) == {'ok': True}
     assert calls == [(str(pkg), sc.ctl.game_dir and calls[0][1])]
-    assert sc.ctl.game_dir == str(sc.world['game']) and got and sc.known_emulator() == boost.exe_path()
+    assert sc.ctl.game_dir == str(sc.world['game']) and got and sc.known_emulator() == boost.exe_path('nightly')
     said = [t for t, _ in sc.ctl.said]
     assert any('Extracting the PKG... 50 %' in t for t in said)
-    assert any('Now press Find game again and pick the update 1.60 PKG' in t and 'set up too' in t for t in said)
+    assert any('Now press Find game again and pick the update 1.60 PKG' in t and 'Nightly build) is set up too' in t
+               for t in said)
 
 
 def test_a_pkg_refused_says_why(sc, monkeypatch, tmp_path):
@@ -271,7 +273,10 @@ def test_play_refusal_is_reported(sc, monkeypatch):
         raise launch.LaunchError('shadPS4 is already running.')
     monkeypatch.setattr(launch, 'start', refuse)
     sc.setup_refresh()
-    assert sc.setup_play() == {'error': 'shadPS4 is already running.'}
+    assert sc.setup_play() == {'ok': True}                  # the Nightly build downloads first (a job), then starts
+    assert sc.calls['installed'] == ['nightly'] and sc.ctl.said[-1] == ('shadPS4 is already running.', 'bad')
+    assert sc.setup_play() == {'error': 'shadPS4 is already running.'}     # here now: no download
+    assert sc.calls['installed'] == ['nightly']
 
 
 def test_one_click_switch_off_takes_its_layer_away(sc, monkeypatch):
@@ -325,7 +330,8 @@ def test_play_double_click_starts_one_emulator(sc, monkeypatch):
     monkeypatch.setattr(launch, 'start', lambda *a, **kw: started.append(a) or object())
     sc.emulator = str(sc.world['emu'])
     sc._launching = True  # the first click is still inside launch.start
-    assert sc.setup_play() is None and started == []
+    sc.setup_play()
+    assert started == []
 
 
 def test_one_click_keeps_31_teams_without_seattle(sc):
@@ -1140,7 +1146,7 @@ def test_custom_data_folder_refused_while_boost_is_on(sc, tmp_path, monkeypatch)
         f.write(b'MZ')
     sc.emulator = exe
     out = sc.folder_set('data', str(_portable(tmp_path)))
-    assert 'Disable Boost performance' in out['error'] and 'data' not in sc.custom
+    assert 'pick your own shadPS4' in out['error'] and 'data' not in sc.custom
 
 
 def test_saves_pick_of_shadps4s_home_folder_finds_the_games_saves(sc, tmp_path):
@@ -1288,3 +1294,54 @@ def test_downloads_folder_set_by_hand_moves_the_cache_and_auto_moves_it_back(sc,
     sc.folder_auto('cache')
     assert paths.cache_dir() == paths.default_cache_dir() and 'cache' not in sc.custom
     assert os.path.isfile(os.path.join(paths.default_cache_dir(), 'photos.zip'))
+
+
+def test_a_new_installs_first_look_downloads_its_three_asset_switches_once(sc, monkeypatch, tmp_path):
+    """0.90.2: a new install starts with team art, 3D jerseys and player photos on (controller `first_assets`); the
+    first look that finds NHL 19, shadPS4 and the published packs downloads theirs, once, and nothing else."""
+    from overtime_roster.app import patch_ctl
+    have, got = _packs_world(sc, monkeypatch, tmp_path)
+    monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
+    sc.packs = SC.pack_status(SC.patch_cache())
+    sc.ctl.patch_want.update(roster=True, art=True, photos=True, kits=True)   # a new install's (photos need the roster)
+    sc.first_assets = True
+    sc._first_assets({'game': {'ok': True}})
+    assert got == [] and sc.first_assets                                    # no shadPS4 yet: the next look
+    sc._first_assets({'game': {'ok': False}})
+    assert got == [] and sc.first_assets                                    # no NHL 19 found: the next look
+    sc.setup_set_emulator(str(sc.world['emu']))                             # its look finds both: the downloads
+    assert got == ['looks.zip', 'clubart.zip', 'photos.zip', 'people.zip', 'kits.zip']   # looks32 was here already
+    assert sc.ctl.busy is None and not any(sc.ctl.patch_want.get(k) for k in patch_ctl.EXTRA_KEYS)
+    got.clear()
+    sc._first_assets({'game': {'ok': True}})
+    assert got == [] and not sc.first_assets and sc.ctl.prefs['first_assets'] is False   # all here: the mark goes
+
+
+def test_a_new_installs_downloads_cut_short_try_again_at_the_next_look(sc, monkeypatch, tmp_path):
+    from overtime_roster.app import patch_ctl
+    have, got = _packs_world(sc, monkeypatch, tmp_path)
+    monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
+    sc.packs = SC.pack_status(SC.patch_cache())
+    sc.setup_set_emulator(str(sc.world['emu']))
+    sc.ctl.patch_want.update(roster=True, art=True, photos=False, kits=True)
+    sc.first_assets = True
+    sc.ctl.busy = 'Patching'                                                # busy: nothing now, the mark stays
+    sc._first_assets({'game': {'ok': True}})
+    assert got == [] and sc.first_assets
+    sc.ctl.busy = None
+    sc._first_assets({'game': {'ok': True}})
+    assert got == ['looks.zip', 'clubart.zip', 'kits.zip']
+    sc._first_assets({'game': {'ok': True}})
+    assert not sc.first_assets and sc.ctl.prefs['first_assets'] is False   # all here: the mark goes
+
+
+def test_a_new_install_switched_an_asset_off_before_the_first_look_gets_only_the_others(sc, monkeypatch, tmp_path):
+    from overtime_roster.app import patch_ctl
+    have, got = _packs_world(sc, monkeypatch, tmp_path)
+    monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: sorted(have))
+    sc.packs = SC.pack_status(SC.patch_cache())
+    sc.setup_set_emulator(str(sc.world['emu']))
+    sc.ctl.patch_want.update(art=True, photos=False, kits=False)
+    sc.first_assets = True
+    sc._first_assets({'game': {'ok': True}})
+    assert got == ['looks.zip', 'clubart.zip']

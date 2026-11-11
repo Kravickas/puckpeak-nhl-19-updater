@@ -559,22 +559,26 @@ function MatchRow({ m }) {
   const chelName = m.mode && m.mode.startsWith('chel_') ? ` · CHEL ${(CHEL_MODE_NAMES[m.mode] || '')}` : '';
   const shown = a.score != null && b.score != null;
   const score = shown ? `${a.score}–${b.score}` : (a.score != null ? `${a.score}–${b.score}?` : '–');
-  // three parts (mockup): the first player with the match's state, the score, the second player with the buttons
-  return html`<div class=${cls('mp-match', m.status)}>
+  const modeText = m.mode === 'shootout' ? ' · Shootout' : m.mode === 'threes' ? ' · Threes' : chelName;
+  // three parts (mockup): the first player with the match's state, the score, the second player with the buttons.
+  // A confirmed match needs no tag (0.90.2, owner: the score says it); a live one has the red dot instead of a score.
+  return html`<div class=${cls('mp-match', m.status, m.live && 'live')}>
     <div class="mp-match-a">
       <${Side} p=${a}/>
       <div class="mp-match-sub">
-        <${Tag} tone=${STATUS_TONE[m.tone] || 'info'}>${m.text}<//>
-        <span class="mp-ago">${m.ago}${m.mode === 'shootout' ? ' · Shootout' : m.mode === 'threes' ? ' · Threes' : chelName}${m.rules && m.rules !== 'Default rules' ? ` · ${m.rules}` : ''}</span>
+        ${m.live ? html`<span class="mp-live"><span class="mp-live-dot"></span>Live</span>`
+          : m.status !== 'confirmed' && html`<${Tag} tone=${STATUS_TONE[m.tone] || 'info'}>${m.text}<//>`}
+        <span class="mp-ago">${m.live ? m.live_text : m.ago}${modeText}${m.rules && m.rules !== 'Default rules' ? ` · ${m.rules}` : ''}</span>
         ${m.delta != null && html`<span class=${cls('mp-delta', m.delta > 0 && 'plus', m.delta < 0 && 'minus')}>${signed(m.delta)}</span>`}
       </div>
     </div>
-    <span class=${cls('mp-score', m.status !== 'confirmed' && 'tentative')}>${score}</span>
+    <span class=${cls('mp-score', m.status !== 'confirmed' && 'tentative', m.live && 'live')}
+      title=${m.live ? 'The game sends its score only at the end' : null}>${m.live ? 'LIVE' : score}</span>
     <div class="mp-match-b">
       <${Side} p=${b}/>
       <div class="mp-match-sub">
         ${m.mine && m.status === 'confirmed' && html`<${Button} small onClick=${() => call('mp_review_open', m.id)}>Review<//>`}
-        ${m.entry && html`<${Button} small kind=${m.entry.again ? 'ghost' : 'primary'} onClick=${() => call('mp_result_open', m.id)}>
+        ${m.entry && !m.live && html`<${Button} small kind=${m.entry.again ? 'ghost' : 'primary'} onClick=${() => call('mp_result_open', m.id)}>
           ${m.entry.again ? 'Change my result' : 'Enter result'}<//>`}
       </div>
     </div>
@@ -624,23 +628,86 @@ function RatingCard({ r }) {
   <//>`;
 }
 
-// My games: how I played, over every game that has the game's own numbers, then each game with its box score.
-function MyGames({ g }) {
+// My games (0.90.2, owner: compact, with charts, and a big view in its own window): the record with the form of the last
+// games, a goals chart, my numbers per game against my opponents' as bars, the rates as meters, then each game.
+const FORM = 10;        // results in the form strip
+
+function GoalsChart({ rows, big }) {
+  if (rows.length < 2) return null;
+  const shown = rows.slice(-(big ? 40 : 20));
+  const top = Math.max(1, ...shown.map((r) => Math.max(r.for, r.against)));
+  const w = 100 / shown.length;
+  const h = big ? 70 : 44;          // half height (for above the line, against below), in viewBox units
+  return html`<div class=${cls('mp-chart', big && 'big')}>
+    <div class="mp-chart-head"><span class="caps">Goals per game</span>
+      <span class="mp-note"><i class="mp-key me"></i>scored <i class="mp-key them"></i>allowed · oldest left</span></div>
+    <svg viewBox=${`0 0 100 ${h * 2 + 2}`} preserveAspectRatio="none" role="img"
+        aria-label=${`Goals in my last ${shown.length} games`}>
+      <line x1="0" x2="100" y1=${h + 1} y2=${h + 1} class="mp-chart-axis"/>
+      ${shown.map((r, i) => {
+        const up = (r.for / top) * h, down = (r.against / top) * h;
+        return html`<g key=${r.id}><title>${`${r.result === 'W' ? 'Won' : 'Lost'} ${r.for}–${r.against}`}</title>
+          <rect x=${i * w + w * 0.18} width=${w * 0.64} y=${h + 1 - up} height=${up} class=${cls('mp-bar-for', r.result === 'W' && 'won')}/>
+          <rect x=${i * w + w * 0.18} width=${w * 0.64} y=${h + 1} height=${down} class="mp-bar-against"/></g>`;
+      })}
+    </svg>
+  </div>`;
+}
+
+function VsRow({ a }) {
+  const mineWins = a.share != null && (a.better === 'low' ? a.share < 0.5 : a.share > 0.5);
+  return html`<div class="mp-vs" title=${`Total ${a.total}`}>
+    <span class="mp-vs-label">${a.label}</span>
+    <b class=${cls('mp-vs-me', mineWins && 'ahead')}>${a.value}</b>
+    ${a.share != null
+      ? html`<span class=${cls('mp-vs-bar', a.better === 'low' && 'low')}><span style=${{ width: `${Math.round(a.share * 100)}%` }}></span></span>`
+      : html`<span class="mp-vs-bar none"></span>`}
+    <span class="mp-vs-them">${a.them != null ? a.them : ''}</span>
+  </div>`;
+}
+
+function MyGames({ g, big }) {
+  const [open, setOpen] = useState(false);
   const o = g.overall;
-  return html`<div class="mp-games">
-    <div class="mp-tally"><span class="mp-tally-n">${g.w}–${g.l}</span>
-      <span class="mp-note">${g.played} confirmed ${g.played === 1 ? 'game' : 'games'}, goals ${g.gf}–${g.ga}</span></div>
-    ${o
-      ? html`<div class="caps mp-sub">Per Versus game over ${o.games} ${o.games === 1 ? 'game' : 'games'} with the game's numbers</div>
-        <div class="mp-avg">${o.avg.map((a) => html`<div class="mp-avg-cell" key=${a.key} title=${`Total ${a.total}`}>
-          <span class="mp-avg-v">${a.value}</span><span class="mp-note">${a.label}</span></div>`)}</div>
-        ${o.rates.length > 0 && html`<div class="mp-rates">${o.rates.map((r) => html`<span key=${r.label}><b>${r.value}</b> <span class="mp-note">${r.label}</span></span>`)}</div>`}`
-      : !g.shootout && html`<div class="mp-empty">No numbers yet. They come from the game's own match report after an online game;
-        a result typed in the app has no numbers.</div>`}
+  const form = g.games.filter((m) => m.result).slice(0, FORM).reverse();
+  const diff = g.gf - g.ga;
+  const vs = o && o.avg.some((a) => a.them != null);
+  return html`<div class=${cls('mp-games', big && 'big')}>
+    <div class="mp-gtop">
+      <div class="mp-gsum">
+        <span class="mp-tally-n">${g.w}–${g.l}</span>
+        <span class="mp-gfacts"><span><b>${g.played}</b> ${g.played === 1 ? 'game' : 'games'}</span>
+          <span>goals <b>${g.gf}–${g.ga}</b></span>
+          <span class=${cls(diff > 0 && 'plus', diff < 0 && 'minus')}>${diff > 0 ? '+' : ''}${diff}</span></span>
+      </div>
+      ${form.length > 0 && html`<div class="mp-form-strip" title="The last games, newest right">
+        ${form.map((m) => html`<span key=${m.id} class=${cls('mp-pill', m.result)}>${m.result}</span>`)}</div>`}
+      ${!big && html`<${Button} small kind="ghost" title="My games in a big window" onClick=${() => setOpen(true)}>⤢ Big view<//>`}
+    </div>
+    ${open && html`<${Modal} full title="My games" onClose=${() => setOpen(false)}
+        buttons=${html`<${Button} kind="primary" onClick=${() => setOpen(false)}>Close<//>`}>
+      <${MyGames} g=${g} big/><//>`}
+    <div class="mp-gcols">
+      <div class="mp-gcol">
+        <${GoalsChart} rows=${g.chart || []} big=${big}/>
+        ${o && o.rates.length > 0 && html`<div class="mp-meters">${o.rates.map((r) => html`<div class="mp-meter" key=${r.label}>
+          <span class="mp-meter-label">${r.label}</span><span class="mp-meter-bar"><span style=${{ width: `${Math.round(r.share * 100)}%` }}></span></span>
+          <b>${r.value}</b></div>`)}</div>`}
+      </div>
+      <div class="mp-gcol">
+        ${o
+          ? html`<div class="mp-vs-head"><span class="caps">Per game</span>
+              <span class="mp-note">over ${o.games} Versus ${o.games === 1 ? 'game' : 'games'} with the game's numbers</span>
+              ${vs && html`<span class="mp-vs-legend caps"><span>Me</span><span>Them</span></span>`}</div>
+            <div class="mp-vs-list">${o.avg.map((a) => html`<${VsRow} key=${a.key} a=${a}/>`)}</div>`
+          : !g.shootout && html`<div class="mp-empty">No numbers yet. They come from the game's own match report after an
+            online game; a result typed in the app has no numbers.</div>`}
+      </div>
+    </div>
     ${g.shootout && html`<div class="caps mp-sub">Shootout over ${g.shootout.games} ${g.shootout.games === 1 ? 'game' : 'games'}</div>
       <div class="mp-note">${g.shootout.line}</div>
       ${g.shootout.rates.length > 0 && html`<div class="mp-rates">${g.shootout.rates.map((r) => html`<span key=${r.label}><b>${r.value}</b> <span class="mp-note">${r.label}</span></span>`)}</div>`}`}
-    <div class="caps mp-sub">My games</div>
+    <div class="caps mp-sub">Each game <span class="mp-note">(open one for its box score)</span></div>
     <div class="mp-recent">${g.games.map((m) => html`<details class=${cls('mp-game', m.result)} key=${m.id}>
       <summary class=${cls('mp-recent-row', m.result)}>
         <span class="mp-res">${m.result || '–'}</span>
@@ -656,26 +723,32 @@ function MyGames({ g }) {
   </div>`;
 }
 
+// Online (0.90.2, owner: was "History"): Matches (the live ones first), My games, Leaderboard, Ranks. The "Match review
+// ready" strip is gone: a match's Review button is on its row in Matches.
 function History({ h }) {
   const [view, setView] = useState('matches');
   const [sort, setSort] = useState('rating');
   const empty = h.loaded && !h.matches.length;
+  const live = h.matches.filter((m) => m.live);
+  const done = h.matches.filter((m) => !m.live);
   const players = sort === 'rating' && h.players.some((p) => p.rating != null) ? [...h.players].sort(byRating) : h.players;
-  return html`<${Card} title="History" className="mp-card-fill"
+  return html`<${Card} title="Online" className="mp-card-fill"
       aside=${html`<${Button} small kind="ghost" onClick=${() => call('mp_history_refresh')}>Refresh<//>`}>
     <div class="mp-body mp-fill mp-hist">
-      ${h.banner && html`<div class="mp-notice info" role="status"><span class="sp"><b>Match review ready:</b> ${h.banner.text}</span>
-        <${Button} small kind="primary" onClick=${() => call('mp_review_open', h.banner.match)}>View<//></div>`}
       <${Segmented} value=${view} onChange=${setView}
-        options=${[{ value: 'matches', label: 'Recent matches' }, ...(h.games ? [{ value: 'games', label: 'My games' }] : []),
-          { value: 'players', label: 'Leaderboard' }]}/>
+        options=${[{ value: 'matches', label: live.length ? html`Matches <span class="mp-live-dot" title="A match is live"></span>` : 'Matches' },
+          ...(h.games ? [{ value: 'games', label: 'My games' }] : []),
+          { value: 'players', label: 'Leaderboard' }, ...(h.ladder.length ? [{ value: 'ranks', label: 'Ranks' }] : [])]}/>
       ${h.error && html`<div class="mp-note warn" role="alert">${h.error}</div>`}
       <div class="mp-hist-scroll">
-        ${!h.loaded && !h.error && html`<div class="mp-empty">Loading the history...</div>`}
+        ${!h.loaded && !h.error && html`<div class="mp-empty">Loading...</div>`}
         ${view === 'matches' && empty && html`<div class="mp-empty">No matches yet. Every game two players start from a lobby shows up here;
           after it, both enter the result and it counts.</div>`}
         ${view === 'games' && h.games && html`<${MyGames} g=${h.games}/>`}
-        ${view === 'matches' && h.matches.length > 0 && html`<div class="mp-matches">${h.matches.map((m) => html`<${MatchRow} key=${m.id} m=${m}/>`)}</div>`}
+        ${view === 'matches' && live.length > 0 && html`<div class="caps mp-sub mp-live-head">Live now</div>
+          <div class="mp-matches">${live.map((m) => html`<${MatchRow} key=${m.id} m=${m}/>`)}</div>
+          ${done.length > 0 && html`<div class="caps mp-sub">Played</div>`}`}
+        ${view === 'matches' && done.length > 0 && html`<div class="mp-matches">${done.map((m) => html`<${MatchRow} key=${m.id} m=${m}/>`)}</div>`}
         ${view === 'players' && h.players.some((p) => p.rating != null) && html`<${Segmented} value=${sort} onChange=${setSort}
           options=${[{ value: 'rating', label: 'By rating' }, { value: 'wins', label: 'By wins' }]}/>`}
         ${view === 'players' && html`${h.players.length
@@ -685,7 +758,7 @@ function History({ h }) {
                 <span class="mp-prow-n">L</span><span class="mp-prow-n">GP</span><span class="mp-prow-n">+/-</span></div>
               ${players.map((p) => html`<${PlayerRow} key=${p.pid} p=${p}/>`)}</div>`
           : h.loaded && html`<div class="mp-empty">Nobody has a confirmed match yet.</div>`}`}
-        ${view === 'players' && h.ladder.length > 0 && html`<div class="caps mp-sub">Ranks (a rank shows after 5 rated games)</div>
+        ${view === 'ranks' && html`<div class="mp-note mp-ranks-note">A rank shows after 5 rated games.</div>
           <div class="mp-ladder">${h.ladder.map((t) => html`<div key=${t.name} class=${cls('mp-ladder-row', t.you && 'you')}>
             <${TierIcon} tier=${t.name} size=${22}/><b>${t.name}</b><span class="mp-note">${t.min ? t.min + '+' : 'under 1000'}</span><span class="mp-note mp-ladder-b">${t.blurb}</span></div>`)}</div>`}
       </div>
@@ -701,7 +774,7 @@ function Privacy() {
       <li>The name you enter here and your ShadNet account number. Other players never see the number, only your name.</li>
       <li>Every match two players start from a lobby: both names, the teams, the scores, the match rules and when it was
         played. Matches are kept so the history and the ratings add up; the server's operator can remove one.</li>
-      <li>Other Overtime players see your name, results and rating in their History. The public web board shows the same;
+      <li>Other Overtime players see your name, results and rating on their Online card. The public web board shows the same;
         with "Show me on the web board" off it shows you as "Hidden player" (your place and rating stay, so the others'
         numbers still add up).</li>
       <li>Lobby chat lasts only as long as the lobby and is never written down.</li>

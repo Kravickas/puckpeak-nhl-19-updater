@@ -183,6 +183,9 @@
 .tab-setup .su-folders > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text-2); text-transform: uppercase;
   letter-spacing: .04em; padding: 2px 0; user-select: none; }
 .tab-setup .su-folders .su-fsum { margin-left: 6px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text-3); }
+.tab-setup .su-folders .su-fsum.bad { color: var(--bad); }
+.tab-setup .su-folders .su-fsum.caution { color: var(--caution); }
+.tab-setup .su-folders > .su-checks { margin-top: 6px; }
 .tab-setup .su-fgrid { display: grid; gap: 6px; margin-top: 6px; }
 .tab-setup .su-folder { display: grid; grid-template-columns: 150px minmax(0, 1fr) 72px auto 52px; align-items: center;
   gap: 8px; min-width: 0; padding: 6px 10px 6px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--good);
@@ -195,8 +198,9 @@
 .tab-setup .su-folder > .chip { justify-self: end; }     /* found / not found / yours: the paths line up */
 
 /* --- Boost: Game settings, Controllers, Keyboard (the views portal to #app, so they are not under .tab-setup) ---------- */
-.tab-setup .su-emu { flex-wrap: wrap; }
-.tab-setup .su-emu .su-st { flex: 0 0 auto; min-width: 66px; }
+/* the three rows' buttons start at one line after their label (owner 2026-11-11: Resolution sat at the right) */
+.tab-setup .su-emu, .tab-setup .su-build, .tab-setup .su-res { flex-wrap: wrap; }
+.tab-setup .su-emu .su-st, .tab-setup .su-build .su-st, .tab-setup .su-res .su-st { flex: 0 0 auto; min-width: 66px; }
 .emu-ico { width: 17px; height: 14px; flex: none; }
 .modal.emu-modal { width: min(960px, calc(100% - 32px)); }
 .modal.emu-game { height: min(760px, calc(100% - 48px)); }

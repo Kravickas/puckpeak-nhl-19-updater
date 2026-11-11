@@ -2,6 +2,39 @@
 
 What changed in each version, for players.
 
+## 0.90.2 (2026-11-11)
+
+### Added
+
+- **Play NHL 19 button.** A green button at the top right of every tab starts the game. It is grey until the app has
+  found NHL 19, and shows the download progress while it fetches the emulator.
+- **Choose the emulator build: Nightly or Kravickas.** Nightly (the default) is the official shadPS4 pre-release
+  `4788f0b` (2026-11-10), unchanged from its GitHub release; on a test PC it ran about 20 % faster than our previous
+  build. Kravickas is the Overtime build of Kravickas's NHL19-Build from 0.90.0. Pick one under Setup, Boost; the app
+  downloads it and keeps both. Source: https://github.com/shadps4-emu/shadPS4 and
+  https://github.com/MatusRiedl/shadPS4/tree/overtime-ship-1.
+- **Live matches.** Matches being played right now show in Online, Matches with a pulsing red LIVE dot and how many
+  minutes they are in. The game sends the score only at the end, so a live row has no score.
+- **My games, redone.** Goals for and against per game as a chart, meters for your rates, you-against-opponents bars,
+  your recent form as W/L pills, and a Big view pop-up with the larger charts.
+- **Ping readout in any online match.** The connection pill now also shows in a match found inside NHL 19 (not only
+  in lobby matches), when the game was started from the app.
+
+### Changed
+
+- **Good emulator settings from the start.** The first time the app finds a game, it turns on PS4 Pro mode, direct
+  memory access and the shader cache, sets extra DMem to 3500 MB (never lowers a bigger value) and vblank to 9999.
+  These are set once; you can change any of them later in Game settings.
+- **First-run Patch defaults.** A new install has teams, league, menus and server texts on, and of Updated assets
+  only team art, 3D jerseys and player photos, which it downloads on its own after the first look.
+- **Lobby matches no longer lock vblank to 60.** Each player keeps their own vblank; mixed values play fine.
+- **Lobbies use the emulator build the server picks**, and the app gets it on its own. Update to 0.90.2 to keep
+  joining lobby matches.
+- Online: "History" is now "Online", "Recent matches" is now "Matches", and Ranks has its own section next to the
+  leaderboard. The "Match review ready" banner and the CONFIRMED tag are gone.
+- Setup: the Folders checks are folded away (open them to see each one); the Boost resolution buttons line up left.
+- New splash screen.
+
 ## 0.90.1 (2026-11-11)
 
 ### Changed
