@@ -107,6 +107,20 @@ def packs_migrate(prefs, game_dir):
     return want
 
 
+CHEL_DEFAULT = 1       # settings marker: World of Chel's tile is on by default (v0.90.0, M5), applied once
+
+
+def chel_migrate(prefs, want):
+    """The World of Chel switch on by default. Once (no chel_default marker yet): an install whose patch has the
+    closed-modes hub on (menus) gets the tile on too. Its game still has the tile off until it is patched again, and
+    the Patch tab says so (patch_ctl's `changed`). Without the marker a fresh install takes the default (on)."""
+    if prefs.get('chel_default') == CHEL_DEFAULT:
+        return want
+    if want.get('menus'):
+        want['chel'] = True
+    return want
+
+
 class Controller:
     def __init__(self, host, game_dir=None, save_dir=None, reopen=False):
         self.host = host
@@ -149,11 +163,12 @@ class Controller:
         # game patch. The default roster is on: it is the verified default the exe carries (defaultdb), and without
         # it the one click serves the stock roster, 31 teams and no Seattle. The pack switches (art, photos, kits)
         # are off until the Photos, logos pack is downloaded (v0.10.0); packs_migrate keeps an older install's.
-        self.patch_want = {'text': True, 'names': True, 'league': True, 'roster': True, 'menus': True,
-                           'chel': False, 'art': False, 'photos': False, 'kits': False,
-                           **packs_migrate(prefs, self.game_dir)}
-        if prefs.get('packs_default') != PACKS_DEFAULT:
-            self.remember(patch=dict(self.patch_want), packs_default=PACKS_DEFAULT)
+        # The World of Chel tile is on by default (chel_migrate: once, for an install that had the hub on).
+        self.patch_want = chel_migrate(prefs, {'text': True, 'names': True, 'league': True, 'roster': True,
+                                               'menus': True, 'chel': True, 'art': False, 'photos': False,
+                                               'kits': False, **packs_migrate(prefs, self.game_dir)})
+        if prefs.get('packs_default') != PACKS_DEFAULT or prefs.get('chel_default') != CHEL_DEFAULT:
+            self.remember(patch=dict(self.patch_want), packs_default=PACKS_DEFAULT, chel_default=CHEL_DEFAULT)
         self.patch_status = None  # overlay.status, after the Game patch tab was opened
         self.patch_running = False
         # the parts (registry.py): each registers its slices with the host; `calls` is what window/api.py runs

@@ -35,7 +35,11 @@ SALT = 'overtime-tag-1'
 # docs/notes/cross-vendor-review.md) and 749170d (0.82.0's; its 11 commits since b23fb67 leave cpu_patches, the linker
 # and memory_patcher as they were, docs/notes/shadps4-builds.md)
 TRUSTED_EXES = {'fe88293d67e4e9ab6d0799ac6dcff84644def7806ff0d03b028967cbfdf0e994': 'Kravickas NHL19-Build b23fb67',
-                'e8226f593c74e5f60bf0525e00f892e0f79d9d4d2cd452303bfa6bc692c9275c': 'Kravickas NHL19-Build 749170d'}
+                'e8226f593c74e5f60bf0525e00f892e0f79d9d4d2cd452303bfa6bc692c9275c': 'Kravickas NHL19-Build 749170d',
+                # 0.90.0: Overtime's smooth-motion build = 749170d + early flip, present ticks, thread priority (no CPU
+                # math change; docs/notes/smooth-motion.md)
+                'cfe895b55fd3d3360cb43df6b8cef8ccff576d3ca411d772624a99188f7e9907':
+                    'Overtime smooth c97b8b51 (Kravickas 749170d)'}
 MARK = '; Overtime Roster: matchmaking tag (only games that stay in step meet). Unpatch removes this file.'
 TMP = '.overtime-tmp'
 

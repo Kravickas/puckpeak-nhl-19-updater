@@ -71,9 +71,11 @@ def review(matches, rated, pid, match_id=None):
     if m is None or d is None:
         return None
     res = H.resolve(m)
-    opp = next(p for p in m['players'] if p['pid'] != pid)
-    won, gf, ga = res['winner'] == pid, res['scores'][pid], res['scores'][opp['pid']]
-    team, opp_team = res['teams'][pid], res['teams'][opp['pid']]
+    them = H.opponents(m, pid, res)
+    opp = them[0] if len(them) == 1 else {'pid': them[0]['pid'], 'name': ', '.join(p['name'] for p in them)}
+    won, gf, ga = H.won(res, pid), res['scores'][pid], H.goals_against(m, res, pid)
+    team, opp_team = res['teams'][pid], res['teams'].get(opp['pid'])
+    rivals = {p['pid'] for p in them}
     before, after = d['before'], d['after']
     games_b = _games_before(rated['timeline'], rated['deltas'], pid, m['id'])
     games_a = games_b + (1 if d['weight'] > 0 else 0)
@@ -83,9 +85,11 @@ def review(matches, rated, pid, match_id=None):
     streak, h2h, with_team = 0, [0, 0], [0, 0]
     for x in older:
         r = H.resolve(x)
-        w = r['winner'] == pid
+        if r['scores'].get(pid) is None:   # left that team match: not credited
+            continue
+        w = H.won(r, pid)
         streak = (max(streak, 0) + 1) if w else (min(streak, 0) - 1)
-        if any(p['pid'] == opp['pid'] for p in x['players']):
+        if {p['pid'] for p in H.opponents(x, pid, r)} == rivals:
             h2h[0 if w else 1] += 1
         if team and r['teams'][pid] == team:
             with_team[0 if w else 1] += 1

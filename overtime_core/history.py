@@ -164,15 +164,159 @@ def _agree(x, y, mode=None):
         return True
     if x.get('source') != 'game' or y.get('source') != 'game':
         return False
-    if mode == 'threes' and _own_scores_agree(x, y):
+    if mode in OWN_SCORE_MODES and _own_scores_agree(x, y):
         return True
     return ((x['for'] > x['against']) == (y['against'] > y['for'])
             and abs(x['for'] - y['against']) <= GAME_DRIFT and abs(y['for'] - x['against']) <= GAME_DRIFT)
 
 
+OWN_SCORE_MODES = ('threes', 'chel_gm3on3')   # GM3on3 is the Threes game in WoC: assumed to share its report quirk (0.90.0)
+
+
+# --- team matches (0.90.0): a World of Chel row with more than one human on a side, or more than two sides ----------
+# Such a match carries `sides` (the number of sides) and each player its seat `side` and `left` (left the game before
+# its end). A claim may carry the `side` the game's own report put the player on (teamSide); it wins over the seat.
+
+def is_team(match):
+    return bool(match.get('sides'))
+
+
+def _side_map(match):
+    """{pid: side}: the side each player's own report names, else the seat."""
+    claims = match.get('claims') or {}
+    out = {}
+    for p in match['players']:
+        c = claims.get(p['pid']) or {}
+        out[p['pid']] = c['side'] if isinstance(c.get('side'), int) else p.get('side', 0)
+    return out
+
+
+def _same(x, y, mode):
+    """Two claims of one side say the same thing (each from that side's view)."""
+    return _agree(x, {**y, 'for': y['against'], 'against': y['for']}, mode)
+
+
+def _resolve_team(match):
+    """A team match: confirmed when every side that has a human still in the game reported, the claims within each side
+    agree and the two sides mirror (`_agree`). Only two-sided matches confirm here (Ones has its own placements). A player
+    who left is neither credited nor rated; the rest stands. Lone sides, disputes and no reports count for no one."""
+    claims = match.get('claims') or {}
+    side_of = _side_map(match)
+    present = [p['pid'] for p in match['players'] if not p.get('left')]
+    by_side = {}
+    for pid in present:
+        by_side.setdefault(side_of[pid], []).append(pid)
+    teams = {p['pid']: (claims.get(p['pid']) or {}).get('team') for p in match['players']}
+    out = {'status': OPEN, 'teams': teams, 'scores': {}, 'against': {}, 'winner': None, 'winners': [],
+           'waiting_for': None, 'left': None, 'forfeit': False, 'side_of': side_of, 'sides': []}
+    said = {s: [claims[p] for p in pids if p in claims] for s, pids in by_side.items()}
+    if not any(said.values()):
+        return out
+    if len(by_side) != 2 or not all(said.values()):
+        out['status'] = WAITING if all(_side_agrees(c, match.get('mode')) for c in said.values() if c) else DISPUTED
+        return out
+    (s0, c0), (s1, c1) = sorted(said.items())
+    if not (_side_agrees(c0, match.get('mode')) and _side_agrees(c1, match.get('mode'))
+            and _agree(c0[0], c1[0], match.get('mode'))):
+        out['status'] = DISPUTED
+        return out
+    score = {s0: c0[0]['for'], s1: c1[0]['for']}            # each side's own score
+    win = s0 if c0[0]['for'] > c0[0]['against'] else s1
+    out['status'] = CONFIRMED
+    for s, other in ((s0, s1), (s1, s0)):
+        out['sides'].append({'side': s, 'pids': by_side[s], 'score': score[s], 'won': s == win})
+        for pid in by_side[s]:
+            out['scores'][pid], out['against'][pid] = score[s], score[other]
+    out['winners'] = list(by_side[win])
+    out['winner'] = out['winners'][0]
+    return out
+
+
+ONES = 'chel_ones'
+
+
+def _resolve_ones(match):
+    """Ones (0.90.0 M8, GUESSED: the lab never reached a Ones game): 2-4 players, each on a side of his own. A claim carries
+    `places` {pid: goals}, every player's goals from that game's own report. Confirmed when two reports of players still in
+    the game name the same players with each one's goals within GAME_DRIFT; the first of those reports gives the goals.
+    The most goals win (ties share a place). A lone report waits, reports that disagree dispute the game."""
+    claims = match.get('claims') or {}
+    side_of = _side_map(match)
+    present = [p['pid'] for p in match['players'] if not p.get('left')]
+    out = {'status': OPEN, 'teams': {p['pid']: None for p in match['players']}, 'scores': {}, 'against': {},
+           'winner': None, 'winners': [], 'waiting_for': None, 'left': None, 'forfeit': False, 'side_of': side_of,
+           'sides': [], 'places': {}}
+    said = [claims[p]['places'] for p in present if (claims.get(p) or {}).get('places')]
+    if not said:
+        return out
+
+    def same(x, y):
+        return set(x) == set(y) and all(abs(x[k] - y[k]) <= GAME_DRIFT for k in x)
+    agreed = next((x for i, x in enumerate(said) for y in said[i + 1:] if same(x, y)), None)
+    if agreed is None:
+        out['status'] = WAITING if len(said) == 1 else DISPUTED
+        return out
+    goals = {pid: agreed[pid] for pid in present if pid in agreed}
+    if len(goals) < 2:
+        out['status'] = WAITING
+        return out
+    best = max(goals.values())
+    out['status'] = CONFIRMED
+    for pid, g in goals.items():
+        out['scores'][pid] = g
+        out['against'][pid] = max(v for q, v in goals.items() if q != pid)
+        out['places'][pid] = 1 + sum(1 for v in goals.values() if v > g)
+        out['sides'].append({'side': side_of[pid], 'pids': [pid], 'score': g, 'won': g == best})
+    out['winners'] = [pid for pid, g in goals.items() if g == best]
+    out['winner'] = out['winners'][0]
+    return out
+
+
+def _resolve_any_team(match):
+    return _resolve_ones(match) if match.get('mode') == ONES else _resolve_team(match)
+
+
+def _side_agrees(claims, mode):
+    return all(_same(claims[0], c, mode) for c in claims[1:])
+
+
+def won(result, pid):
+    """`pid` was on the winning side of a resolved match."""
+    return pid in result['winners'] if 'winners' in result else result['winner'] == pid
+
+
+def credited(match, result):
+    """The pids a confirmed result counts for: both players of a pair, the players still in at the end of a team match."""
+    return [p['pid'] for p in match['players'] if result['scores'].get(p['pid']) is not None]
+
+
+def goals_against(match, result, pid):
+    if 'against' in result:
+        return result['against'].get(pid)
+    return result['scores'][next(p['pid'] for p in match['players'] if p['pid'] != pid)]
+
+
+def opponents(match, pid, result=None):
+    """The players on the other side(s) from `pid`."""
+    if not is_team(match):
+        return [p for p in match['players'] if p['pid'] != pid]
+    side_of = (result or {}).get('side_of') or _side_map(match)
+    return [p for p in match['players'] if side_of.get(p['pid']) != side_of.get(pid)]
+
+
+def mates(match, pid, result=None):
+    """`pid`'s teammates (never itself); [] in a pair."""
+    if not is_team(match):
+        return []
+    side_of = (result or {}).get('side_of') or _side_map(match)
+    return [p for p in match['players'] if p['pid'] != pid and side_of.get(p['pid']) == side_of.get(pid)]
+
+
 def full(match):
     """A fully played match: both sides reported and the two results agree (`_agree`). Only these are shown and rated
     (MatchBook._snapshot); a forfeit, a lone report, a dispute and a match with no result are left out (2026-11-10)."""
+    if is_team(match):
+        return _resolve_any_team(match)['status'] == CONFIRMED
     claims = match.get('claims') or {}
     if len(claims) != 2:
         return False
@@ -185,6 +329,10 @@ def pending_until(match):
     no report yet shows for LEFT_AFTER seconds from its start, a lone report for LEFT_AFTER from the report, so the two
     can still enter or confirm the result (the app's form); after that it is gone without a trace."""
     claims = match.get('claims') or {}
+    if is_team(match):   # shown while its sides still report: LEFT_AFTER from the latest report
+        if _resolve_any_team(match)['status'] == DISPUTED:
+            return None
+        return max([c['at'] for c in claims.values()] + [match['started']]) + LEFT_AFTER
     if match.get('forfeit') or len(claims) > 1:
         return None
     since = next(iter(claims.values()))['at'] if claims else match['started']
@@ -201,7 +349,9 @@ def resolve(match):
     one who left pays for it, and a report of his own, however late, puts the two claims to the normal test.
     `match['forfeit']` (pid) quit the match on the ice (the server saw him leave it in play): confirmed, a FORFEIT_SCORE
     loss for him, whatever single or disputed claims say; only two mirroring claims (both games reported a finished
-    match) stand over it."""
+    match) stand over it. A team match (`is_team`) follows `_resolve_team` and adds winners, against, side_of, sides."""
+    if is_team(match):
+        return _resolve_any_team(match)
     a, b = (p['pid'] for p in match['players'])
     claims = match.get('claims') or {}
     ca, cb = claims.get(a), claims.get(b)
@@ -239,10 +389,10 @@ def mode_records(matches, pid):
     out = {'versus': {'w': 0, 'l': 0}, 'shootout': {'w': 0, 'l': 0}, 'threes': {'w': 0, 'l': 0}}
     for m in matches:
         r = m.get('result') or resolve(m)
-        if r['status'] != CONFIRMED or pid not in r['scores']:
+        if r['status'] != CONFIRMED or r['scores'].get(pid) is None:
             continue
         rec = out.setdefault(m.get('mode') or 'versus', {'w': 0, 'l': 0})
-        rec['w' if r['winner'] == pid else 'l'] += 1
+        rec['w' if won(r, pid) else 'l'] += 1
     return out
 
 
@@ -261,12 +411,11 @@ def standings(matches):
         r = resolve(m)
         if r['status'] != CONFIRMED:
             continue
-        for p in m['players']:
-            row, mine = table[p['pid']], p['pid']
-            other = next(q['pid'] for q in m['players'] if q['pid'] != mine)
-            row['w' if r['winner'] == mine else 'l'] += 1
+        for mine in credited(m, r):
+            row = table[mine]
+            row['w' if won(r, mine) else 'l'] += 1
             row['gf'] += r['scores'][mine]
-            row['ga'] += r['scores'][other]
+            row['ga'] += goals_against(m, r, mine)
             last[mine] = max(last.get(mine, 0), m['started'])
     rows = [{'pid': k, **v, 'played': v['w'] + v['l'], 'last': last.get(k)} for k, v in table.items()]
     rows = [r for r in rows if r['played']]
@@ -287,42 +436,49 @@ def player_detail(matches, who, limit=20):
     status, newest first) seen from this player's side. None when the player is in no match."""
     name = None
     record = _blank('')
-    opponents, with_team, against_team, recent, played, shootouts = {}, {}, {}, [], [], []
+    faced, with_team, against_team, recent, played, shootouts = {}, {}, {}, [], [], []
     for m in matches:
         mine = next((p for p in m['players'] if p['pid'] == who), None)
         if mine is None:
             continue
-        theirs = next(p for p in m['players'] if p['pid'] != who)
-        name = name or mine['name']
         r = resolve(m)
-        won = r['winner'] == who if r['status'] == CONFIRMED else None
-        if won is not None:
-            record['w' if won else 'l'] += 1
+        them = opponents(m, who, r) or [{'pid': None, 'name': ''}]
+        theirs = them[0]
+        name = name or mine['name']
+        gone = r['status'] == CONFIRMED and r['scores'].get(who) is None   # left a team match: not credited
+        win = won(r, who) if r['status'] == CONFIRMED and not gone else None
+        if win is not None:
+            record['w' if win else 'l'] += 1
             record['gf'] += r['scores'][who]
-            record['ga'] += r['scores'][theirs['pid']]
-            _bump(opponents, (theirs['pid'], theirs['name']), won)
+            record['ga'] += goals_against(m, r, who)
+            for o in them:
+                _bump(faced, (o['pid'], o['name']), win)
             if r['teams'][who]:
-                _bump(with_team, r['teams'][who], won)
-            if r['teams'][theirs['pid']]:
-                _bump(against_team, r['teams'][theirs['pid']], won)
+                _bump(with_team, r['teams'][who], win)
+            if r['teams'].get(theirs['pid']):
+                _bump(against_team, r['teams'][theirs['pid']], win)
         mine_stats = ((m.get('claims') or {}).get(who) or {}).get('stats')
         their_stats = ((m.get('claims') or {}).get(theirs['pid']) or {}).get('stats')
         mode = m.get('mode') or 'versus'
-        if won is not None and mine_stats and mode != 'threes':   # Threes' report class is not known: no totals yet
+        # Threes' report class is not known and WoC's is the club one (sk*/gl* keys): no Versus totals from either
+        against = r['against'].get(who) if is_team(m) else r['scores'][theirs['pid']]
+        if win is not None and mine_stats and mode in ('versus', 'shootout'):
             (shootouts if mode == 'shootout' else played).append(
-                {'stats': with_opponent(mine_stats, their_stats), 'for': r['scores'][who],
-                 'against': r['scores'][theirs['pid']]})
+                {'stats': with_opponent(mine_stats, their_stats), 'for': r['scores'][who], 'against': against})
         if len(recent) < limit:
-            recent.append({'id': m['id'], 'started': m['started'], 'status': r['status'], 'rules': m.get('rules'),
-                           'mode': mode, 'box': box_score(mine_stats, their_stats, mode),
-                           'opponent': theirs, 'team': r['teams'][who], 'opp_team': r['teams'][theirs['pid']],
-                           'for': r['scores'][who], 'against': r['scores'][theirs['pid']],
-                           'result': None if won is None else 'W' if won else 'L'})
+            row = {'id': m['id'], 'started': m['started'], 'status': r['status'], 'rules': m.get('rules'),
+                   'mode': mode, 'box': box_score(mine_stats, their_stats, mode),
+                   'opponent': theirs, 'team': r['teams'][who], 'opp_team': r['teams'].get(theirs['pid']),
+                   'for': r['scores'].get(who), 'against': against,
+                   'result': None if win is None else 'W' if win else 'L'}
+            if is_team(m):
+                row.update(opponents=them, mates=mates(m, who, r), left=bool(mine.get('left')))
+            recent.append(row)
     if name is None:
         return None
     return {'pid': who, 'name': name, 'w': record['w'], 'l': record['l'], 'played': record['w'] + record['l'],
             'gf': record['gf'], 'ga': record['ga'],
-            'opponents': _by_games({'pid': k[0], 'name': k[1], **v} for k, v in opponents.items()),
+            'opponents': _by_games({'pid': k[0], 'name': k[1], **v} for k, v in faced.items()),
             'teams': _by_games({'team': k, **v} for k, v in with_team.items()),
             'against': _by_games({'team': k, **v} for k, v in against_team.items()),
             'recent': recent, 'stats': stat_summary(played), 'shootout': shootout_summary(shootouts)}

@@ -80,6 +80,19 @@ RESTART_UNSUPPORTED = 'NHL 19 is running: close it, then press Start again.'
 STEPS = ('Online start set', 'NHL 19 started', 'Pressing the title screen', 'Game Setup: pressing READY',
          'Online {game}, searching for {{partner}}', 'Match found: pick your team')
 GAME_NAMES = {RU.VERSUS: 'Versus', RU.SHOOTOUT: 'Shootout', RU.THREES: 'Threes'}
+# 0.90.0 CHEL lobbies: the World of Chel modes a lobby can pick (the club ones come with club games), and the game's
+# own path to each (the app serves the tile; the player walks it, docs/notes/woc.md)
+CHEL_NAMES = {RU.CHEL_DROPIN: 'Drop-in 6s', RU.CHEL_DROPIN3: 'Drop-in 3s', RU.CHEL_GM3ON3: 'Drop-in 3-on-3 arcade',
+              RU.CHEL_ONES: 'Ones', RU.CHEL_PROAM: 'Pro-Am', RU.CHEL_CLUB: 'Club 6s', RU.CHEL_CLUB3: 'Club 3s',
+              RU.CHEL_PLAYOFFS: 'Club playoffs 6s', RU.CHEL_PLAYOFFS3: 'Club playoffs 3s',
+              RU.CHEL_OTP: 'Online Team Play'}
+CHEL_PICK = (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3, RU.CHEL_ONES, RU.CHEL_PROAM)
+CHEL_SPLIT = (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3)      # the modes with Home and Away
+OLD_SERVER_CHEL = ('This server has no CHEL lobbies yet: it needs the 0.90.0 server update. '
+                   'Quick lobbies work as before.')
+CHEL_STEPS = ('World of Chel tile on', 'NHL 19 started', 'Pressing the title screen',
+              'Open World of Chel, pick {game}, press Play', 'Searching with your lobby', 'Match found')
+ALL_NAMES = {**GAME_NAMES, **CHEL_NAMES}
 PHASES = {'hook': 0, 'starting': 1, 'title': 2, 'ready': 3, 'running': 4}
 # a 0.80 match-setup launch: one step before (the restart, then the match setup), the rest one further on
 MATCH_STEP = 'Match set up (your own setup comes back after)'
@@ -99,7 +112,8 @@ class MultiplayerCtl(Part):
              'mp_review_open': 'review_open', 'mp_review_close': 'review_close', 'mp_set_hidden': 'set_hidden',
              'mp_set_hud': 'set_hud', 'mp_set_link': 'set_link', 'mp_say': 'say', 'mp_shadnet_signin': 'shadnet_signin',
              'mp_shadnet_register': 'shadnet_register', 'mp_shadnet_create': 'shadnet_create',
-             'mp_set_reports': 'set_reports', 'mp_send_report': 'send_report'}
+             'mp_set_reports': 'set_reports', 'mp_send_report': 'send_report', 'mp_create_chel': 'create_chel',
+             'mp_side': 'set_side'}
     TAB = 'multiplayer'
 
     def __init__(self, ctl):
@@ -442,6 +456,46 @@ class MultiplayerCtl(Part):
     def create(self, public=True):
         return self._enter('create', lambda ext, name: self.client().create(name, ext, bool(public)))
 
+    def create_chel(self, mode=RU.CHEL_DROPIN, public=True, split=False):
+        """A CHEL lobby (0.90.0): a World of Chel party of 1 or more in `mode`; `split` into Home and Away (the members
+        play each other, the CPU fills the rest), else the party plays another party or solo players."""
+        if mode not in CHEL_PICK:
+            return self._fail('Pick a World of Chel mode.')
+        def make(ext, name):
+            try:
+                return self.client().create(name, ext, bool(public), mode=mode, kind='chel',
+                                            split=bool(split) and mode in CHEL_SPLIT)
+            except LC.LobbyRefused as err:
+                if err.status == 422 and 'versus, shootout or threes' in (err.text or ''):
+                    # a server before 0.90.0 knows Quick modes only
+                    raise LC.LobbyRefused(422, OLD_SERVER_CHEL) from None
+                raise
+        return self._enter('create', make)
+
+    def set_side(self, side):
+        """A member of a split CHEL lobby moves to Home (0) or Away (1)."""
+        if side not in (0, 1):
+            return {'ok': False}
+        with self.mlock:
+            code, token = self.code, self.token
+        if not code:
+            return {'ok': False}
+        try:
+            lobby = self.client().side(code, token, side)
+        except LC.LobbyError as err:
+            return self._lobby_error(err)
+        self._apply(lobby)
+        return {'ok': True}
+
+    def _chel(self):
+        with self.mlock:
+            return (self.lobby or {}).get('kind') == 'chel'
+
+    def _game_name(self):
+        with self.mlock:
+            mode = (self.lobby or {}).get('mode')
+        return ALL_NAMES.get(mode) or GAME_NAMES[RU.VERSUS]
+
     def join(self, code):
         try:
             code = LC._code(code)
@@ -729,9 +783,10 @@ class MultiplayerCtl(Part):
         return mode if mode in RU.MODES else RU.VERSUS
 
     def set_mode(self, mode):
-        """The host picks the game, Versus, Shootout or Threes (before Ready; the rules go back to that game's defaults)."""
-        if mode not in RU.MODES:
-            return self._fail('Pick Versus, Shootout or Threes.')
+        """The host picks the game, Versus, Shootout or Threes (before Ready; the rules go back to that game's defaults);
+        in a CHEL lobby one of CHEL_PICK."""
+        if mode not in (CHEL_PICK if self._chel() else RU.MODES):
+            return self._fail('Pick a World of Chel mode.' if self._chel() else 'Pick Versus, Shootout or Threes.')
         with self.mlock:
             code, token, me = self.code, self.token, self.me
             state = (self.lobby or {}).get('state')
@@ -745,7 +800,7 @@ class MultiplayerCtl(Part):
             lobby = self.client().mode(code, token, mode)
         except LC.LobbyRefused as err:
             if err.status == 404:
-                return self._fail('This server does not offer Online %s yet.' % GAME_NAMES[mode])
+                return self._fail('This server does not offer Online %s yet.' % ALL_NAMES[mode])
             return self._lobby_error(err)
         except LC.LobbyError as err:
             return self._lobby_error(err)
@@ -1183,21 +1238,15 @@ class MultiplayerCtl(Part):
         self._signin_ready(user)
         rules = self._launch_rules()
         if self.running():
-            note = 'NHL 19 is already running. Press PLAY in Online %s to meet your friend.' % GAME_NAMES[self._mode()]
+            note = self._rematch_note()
             if rules:
                 note += ' It keeps the rules it started with: close the game and Ready again to play the lobby\'s.'
             self._phase('rematch', note)
             self._hud_call('ping')
             self._watch(emu, hooked=False)
             return
-        until = int(self.now()) + HOOK_SECONDS
         self._phase('hook')
-        launch_opts = {'until': until}
-        if self._mode() != RU.VERSUS:
-            launch_opts['mode'] = self._mode()
-        if rules:
-            launch_opts['rules'] = rules
-        overlay.set_menus(game_dir, launch_opts)
+        overlay.set_menus(game_dir, self._hook_opts(rules))
         before = (gamesetup.shadnet_log(user) or {}).get('when')
         try:
             self._phase('starting')
@@ -1208,8 +1257,16 @@ class MultiplayerCtl(Part):
         finally:
             self._unhook(game_dir)
 
+    def _rematch_note(self):
+        if self._chel():
+            return ('NHL 19 is already running. Open World of Chel, pick %s and press Play: the server seats your lobby '
+                    'together.' % self._game_name())
+        return 'NHL 19 is already running. Press PLAY in Online %s to meet your friend.' % GAME_NAMES[self._mode()]
+
     def _hook_opts(self, rules):
         opts = {'until': int(self.now()) + HOOK_SECONDS}
+        if self._chel():   # the World of Chel tile, whatever the player's switch; no hook (menus.CHEL_LAUNCH)
+            return {**opts, 'mode': 'chel'}
         if self._mode() != RU.VERSUS:
             opts['mode'] = self._mode()
         if rules:
@@ -1229,8 +1286,7 @@ class MultiplayerCtl(Part):
         rules = self._launch_rules()
         if self.running():
             if matchsetup.tag() == plan['id']:      # started for this very match setup: keep it (a rematch)
-                note = 'NHL 19 is already running. Press PLAY in Online %s to meet your friend.' % GAME_NAMES[self._mode()]
-                self._phase('rematch', note)
+                self._phase('rematch', self._rematch_note())
                 self._hud_call('ping')
                 try:
                     self._watch(emu, hooked=False)
@@ -1266,6 +1322,8 @@ class MultiplayerCtl(Part):
         a lobby at its 3-minute default still bakes), else None."""
         with self.mlock:
             lobby = (self.lobby or {}).get('rules')
+        if self._chel():
+            return None             # World of Chel takes its settings in the game
         if self.rules:
             return self.rules
         if not isinstance(lobby, dict):
@@ -1329,7 +1387,8 @@ class MultiplayerCtl(Part):
         the card says to press READY."""
         with self.mlock:
             manual = (self.game or {}).get('manual', False)
-        if manual or not self.press_title:
+        if manual or not self.press_title or self._chel():
+            # a CHEL lobby: no Game Setup stage ever comes, and a blind ✕ would land on World of Chel's screens
             self._phase('ready', ready_manual=True)
             return
         self._phase('ready')
@@ -1566,7 +1625,11 @@ class MultiplayerCtl(Part):
                 'checks': self._checks_view(),
                 'lobby': lobby,
                 'lobbies': [{'code': str(r['code']), 'host': str(r.get('host') or ''), 'players': r.get('players'),
-                             'age': _age(r.get('age'))} for r in self.lobbies],
+                             'age': _age(r.get('age')), 'kind': 'chel' if r.get('kind') == 'chel' else 'quick',
+                             'game': ALL_NAMES.get(r.get('mode')) or GAME_NAMES[RU.VERSUS],
+                             'cap': r.get('cap') if isinstance(r.get('cap'), int) else 2,
+                             'split': bool(r.get('split'))} for r in self.lobbies],
+                'chel_modes': [{'mode': m, 'name': CHEL_NAMES[m], 'split': m in CHEL_SPLIT} for m in CHEL_PICK],
                 'game': self._game_view(lobby),
                 'history': self._history_view(),
                 'reports': {'on': self.reports, 'asked': self.reports_asked, 'busy': self.report['busy'],
@@ -1595,16 +1658,24 @@ class MultiplayerCtl(Part):
         lobby = self.lobby
         if not lobby:
             return None
+        chel = lobby.get('kind') == 'chel'
         players = [{'name': str(p.get('name') or ''), 'you': i == self.me, 'ready': bool(p.get('ready')),
                     'roster': p.get('roster') or 'unknown', 'stage': p.get('stage') or 'lobby',
+                    'side': p.get('side') if p.get('side') in (0, 1) else 0,
                     'game': [str(k) for k in p.get('game') or () if isinstance(k, str)][:5]}
                    for i, p in enumerate(lobby.get('players') or [])]
         mine = players[self.me] if self.me < len(players) else None
         other = next((p for p in players if not p['you']), None)
         host = self.me == 0
-        rules = self._rules_view(lobby, host) if isinstance(lobby.get('rules'), dict) else None   # None: a server before M3b
+        cap = lobby.get('cap') if isinstance(lobby.get('cap'), int) else 2
+        rules = (None if chel else   # None: a CHEL lobby (settings in the game) or a server before M3b
+                 self._rules_view(lobby, host) if isinstance(lobby.get('rules'), dict) else None)
         return {'code': lobby.get('code'), 'public': bool(lobby.get('public')), 'state': lobby.get('state'),
-                'mode': self._mode(), 'game': GAME_NAMES[self._mode()], 'mode_pick': (
+                'kind': 'chel' if chel else 'quick', 'cap': cap, 'split': bool(lobby.get('split')),
+                'chel_mode': lobby.get('mode') if chel else None,
+                'side_pick': ({'edit': lobby.get('state') not in LAUNCHING, 'mine': mine['side'] if mine else 0}
+                              if chel and lobby.get('split') else None),
+                'mode': lobby.get('mode') if chel else self._mode(), 'game': self._game_name(), 'mode_pick': (
                     {'edit': host and lobby.get('state') not in LAUNCHING} if 'mode' in lobby else None),
                 'waiting': lobby.get('waiting'), 'players': players, 'rules': rules,
                 'roster_mode': (None if 'roster_mode' not in lobby else
@@ -1615,7 +1686,7 @@ class MultiplayerCtl(Part):
                          for c in (lobby.get('chat') or [])[-CHAT_SHOWN:] if isinstance(c, dict) and isinstance(c.get('n'), int)],
                 'host': host, 'host_name': players[0]['name'] if players else '',
                 'me_ready': bool(mine and mine['ready']), 'partner': other['name'] if other else '',
-                'full': len(players) == 2}
+                'full': len(players) >= cap}
 
     @staticmethod
     def _rules_view(lobby, host):
@@ -1646,18 +1717,24 @@ class MultiplayerCtl(Part):
                                                                       for p in lobby['players']))
         steps = []
         match = self._match_plan() is not None
-        phases, names = (MATCH_PHASES, (RESTART_STEP if phase == 'restarting' else MATCH_STEP,) + STEPS) if match             else (PHASES, STEPS)
+        chel = bool(lobby) and lobby.get('kind') == 'chel'
+        base = CHEL_STEPS if chel else STEPS
+        phases, names = (MATCH_PHASES, (RESTART_STEP if phase == 'restarting' else MATCH_STEP,) + base) if match             else (PHASES, base)
+        searching = bool(lobby) and any(p['you'] and p['stage'] == 'searching' for p in lobby['players'])
         if phase in phases:
             at = 1 if match else 0
-            now = (at + 5 if matched else at + 4) if phase == 'running' else phases[phase]
+            if chel and phase == 'running':   # the player walks to Play: the server's stages move the card on
+                now = at + 5 if matched else at + 4 if searching else at + 3
+            else:
+                now = (at + 5 if matched else at + 4) if phase == 'running' else phases[phase]
             for i, text in enumerate(names):
-                text = text.format(game=GAME_NAMES[self._mode()]).format(partner=partner)
+                text = text.format(game=self._game_name()).format(partner=partner)
                 if i == at + 2 and (game.get('manual') or not self.press_title):
                     text = 'Press ✕ on the title screen'
-                if i == at + 3 and (game.get('ready_manual') or not self.press_title):
+                if i == at + 3 and not chel and (game.get('ready_manual') or not self.press_title):
                     text = 'Press ✕ (READY) on Game Setup'
                 steps.append({'text': text, 'state': 'done' if i < now else 'now' if i == now else 'todo'})
-        return {'phase': phase, 'game': GAME_NAMES[self._mode()], 'note': game.get('note') or '',
+        return {'phase': phase, 'game': self._game_name(), 'note': game.get('note') or '',
                 'manual': bool(game.get('manual')), 'steps': steps,
                 'again': phase in ('failed', 'ended') and bool(lobby) and lobby['state'] in LAUNCHING}
 

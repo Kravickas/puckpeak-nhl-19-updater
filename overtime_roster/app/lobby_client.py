@@ -85,15 +85,23 @@ class LobbyClient:
         return LobbyRefused(status, text or f'the lobby service answered {status}')
 
     # --- the API ----------------------------------------------------------------------------------------------------
-    def create(self, name, ext, public=False, roster_crc=None, mode=None):
-        # quick: the lobby starts at the table's defaults (3-minute periods, 0.81.0), not the game's stock rules
+    def create(self, name, ext, public=False, roster_crc=None, mode=None, kind=None, split=False):
+        # quick: the lobby starts at the table's defaults (3-minute periods, 0.81.0), not the game's stock rules.
+        # kind 'chel' (0.90.0): a World of Chel party, `mode` a chel_* mode, `split` into Home and Away
         return self._call('POST', '/api/lobby', {'name': name, 'ext': ext, 'public': bool(public), 'quick': True,
                                                   **({'roster_crc': roster_crc} if roster_crc else {}),
-                                                  **({'mode': mode} if mode else {})})
+                                                  **({'mode': mode} if mode else {}),
+                                                  **({'kind': kind, 'split': bool(split)} if kind == 'chel' else {})})
 
     def join(self, code, name, ext, roster_crc=None):
+        # kinds: this app joins CHEL lobbies too (a server refuses them to apps that do not say so)
         return self._call('POST', f'/api/lobby/{_code(code)}/join',
-                          {'name': name, 'ext': ext, **({'roster_crc': roster_crc} if roster_crc else {})})
+                          {'name': name, 'ext': ext, 'kinds': ['chel'],
+                           **({'roster_crc': roster_crc} if roster_crc else {})})
+
+    def side(self, code, token, side):
+        """A member of a split CHEL lobby moves to Home (0) or Away (1)."""
+        return self._call('POST', f'/api/lobby/{_code(code)}/side', {'token': token, 'side': int(side)})
 
     def ready(self, code, token, value=True, patch=None, game=None, caps=None):
         """Ready on or off. `caps` (0.80: ['match_setup']) tells the server what this app can do; it keeps them until
@@ -143,12 +151,19 @@ class LobbyClient:
         return self._call('POST', f'/api/lobby/{_code(code)}/leave', {'token': token})
 
     def lobbies(self):
-        return self._call('GET', '/api/lobbies')
+        """Public lobbies, quick and CHEL (each row with its `kind`); a server before 0.90.0 lists quick ones only."""
+        try:
+            return self._call('GET', '/api/lobbies/all')
+        except LobbyRefused as e:
+            if e.status != 404:
+                raise
+            return self._call('GET', '/api/lobbies')
 
     def history(self, ext=None, pid=None, limit=None):
         """The match history: {me, matches, players, detail}. `ext` only tells the server which pid is mine; `pid` asks
-        for that player's detail. Both go in the body, like every id."""
+        for that player's detail. Both go in the body, like every id. `teams`: this app shows team (WoC) matches."""
         body = {k: v for k, v in (('ext', ext), ('pid', pid), ('limit', limit)) if v}
+        body['teams'] = True
         return self._call('POST', '/api/history', body)
 
     def review(self, ext, match=None):

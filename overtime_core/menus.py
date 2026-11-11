@@ -49,8 +49,8 @@ PATHS = (HOMEPAGE_PATH, LAYOUT_PATH)
 LAUNCH_PATHS = PATHS + (HUB_PATH, THREES_HUB_PATH) + tuple(rules.PATHS.values())   # what a launch (set_menus) adds, and a clear takes off again
 
 DEAD = ('ULTIMATETEAM', 'HOCKEYDRAFT', 'EASHL')  # MODES_NAMES keys: Hockey Ultimate Team, Draft Champions, WOC
-OPTIONS = {'chel': False, 'news': True, 'hut': False}
-# chel = bring back World of Chel; news = keep the news tile (Puck Peak); hut = keep the Hockey Ultimate Team tile (the
+OPTIONS = {'chel': True, 'news': True, 'hut': False}
+# chel = bring back World of Chel (on by default since v0.90.0, M5); news = keep the news tile (Puck Peak); hut = keep the Hockey Ultimate Team tile (the
 # server's CardHouse is scaffolding only, docs/notes/hut.md; no switch in the app, set with overlay `menus={'hut': True}`)
 SERVED_DEAD = {'EASHL': 'chel', 'ULTIMATETEAM': 'hut'}   # the dead modes an option brings back
 
@@ -282,10 +282,16 @@ def options(given=None, served=None):
     return out
 
 
+# A CHEL lobby launch (0.90.0): the World of Chel tile is served whatever the player's switch says, and no hook jumps
+# anywhere (the WoC tile's nav event and its hub's mode pick are not known facts yet): the player walks World of Chel ->
+# the lobby's mode -> Play, and the server seats the lobby together (game_manager._woc_search).
+CHEL_LAUNCH = 'chel'
+
+
 def launch_mode(launch):
-    """The game a launch jumps into: 'versus' (the default), 'shootout' or 'threes'."""
+    """The game a launch jumps into: 'versus' (the default), 'shootout' or 'threes'; 'chel' serves the tile only."""
     mode = (launch or {}).get('mode') or rules.VERSUS
-    if mode not in HUB_MODES:
+    if mode not in HUB_MODES and mode != CHEL_LAUNCH:
         raise MenuError(f'unknown game mode: {str(mode)[:20]}')
     return mode
 
@@ -293,7 +299,10 @@ def launch_mode(launch):
 def edits(read, opts, launch=None):
     """{path: new bytes} for the two files, plus hub.lua with `launch` ({'until': unix seconds, 'diag': bool, 'mode':
     versus|shootout, 'rules': {rule: value}}) and that mode's rules file when it names rules; `read(path)` gives the
-    game's own bytes."""
+    game's own bytes. A 'chel' launch changes only the homepage: the tile on, no hook."""
+    if launch and launch_mode(launch) == CHEL_LAUNCH:
+        return {HOMEPAGE_PATH: edit_homepage(read(HOMEPAGE_PATH), chel=True, news=opts['news'], hut=opts['hut']),
+                LAYOUT_PATH: edit_layout(read(LAYOUT_PATH))}
     out = {HOMEPAGE_PATH: edit_homepage(read(HOMEPAGE_PATH), chel=opts['chel'], news=opts['news'], launch=launch, hut=opts['hut']),
            LAYOUT_PATH: edit_layout(read(LAYOUT_PATH))}
     if launch:
@@ -317,6 +326,6 @@ def record(opts, launch=None):
     if launch:
         rec['autoplay_until'] = int(launch['until'])
         rec['autoplay_mode'] = launch_mode(launch)
-        if launch.get('rules'):
+        if launch.get('rules') and launch_mode(launch) != CHEL_LAUNCH:
             rec['rules'] = rules.validate(launch['rules'], partial=True, mode=launch_mode(launch))
     return rec

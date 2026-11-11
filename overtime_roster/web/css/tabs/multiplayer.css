@@ -115,6 +115,11 @@
 
 /* --- players: two cards with their marks ----------------------------------------------------------------------------- */
 .tab-multiplayer .mp-players { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* 0.90.0 CHEL lobbies: Home and Away columns, each a stack of player cards */
+.tab-multiplayer .mp-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tab-multiplayer .mp-chel-side { grid-template-columns: 1fr; align-content: start; }
+.tab-multiplayer .mp-chel-pick { display: flex; flex-direction: column; gap: 8px; }
+.tab-multiplayer .mp-lobby-row .tag { margin: 0 8px; white-space: nowrap; }
 .tab-multiplayer .mp-player { padding: 10px 12px 10px 16px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tab-multiplayer .mp-player.ready { box-shadow: inset 3px 0 0 var(--good); }
 .tab-multiplayer .mp-player.empty { background: var(--panel-deep); color: var(--text-3); align-items: center; justify-content: center; min-height: 82px; box-shadow: none; }
@@ -143,6 +148,10 @@
 
 /* --- 3 Your rating: the number big, the tier and the bar beside it ---------------------------------------------------- */
 .tab-multiplayer .mp-body.mp-rating { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 20px; }
+.tab-multiplayer .mp-ico { display: inline-flex; flex: none; vertical-align: middle; line-height: 0; }
+.tab-multiplayer .mp-ico svg { display: block; }
+.tab-multiplayer .mp-prow-tier .mp-ico { margin-right: 6px; }
+.tab-multiplayer .mp-ladder-row .mp-ico { margin-right: 2px; }
 .tab-multiplayer .mp-rating-n { font-size: 64px; font-weight: 700; line-height: 1; letter-spacing: -.01em; color: var(--text); font-variant-numeric: tabular-nums; }
 .tab-multiplayer .mp-rating-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .tab-multiplayer .mp-rating-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }

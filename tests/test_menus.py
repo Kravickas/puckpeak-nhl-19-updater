@@ -85,14 +85,14 @@ def test_layout_edit():
 
 
 def test_options():
-    assert menus.options() == {'chel': False, 'news': True, 'hut': False}
-    assert menus.options(served={'chel': True}) == {'chel': True, 'news': True, 'hut': False}
+    assert menus.options() == {'chel': True, 'news': True, 'hut': False}
+    assert menus.options(served={'chel': False}) == {'chel': False, 'news': True, 'hut': False}
     assert menus.options({'chel': False}, {'chel': True}) == {'chel': False, 'news': True, 'hut': False}
     assert menus.options(served={'chel': False, 'news': False}) == {'chel': False, 'news': False, 'hut': False}
     with pytest.raises(menus.MenuError):
         menus.options({'woc': True})
     assert menus.record(menus.options({'chel': True}))['hidden'] == ['ULTIMATETEAM', 'HOCKEYDRAFT']
-    assert menus.record(menus.options())['hidden'] == list(menus.DEAD)
+    assert menus.record(menus.options({'chel': False}))['hidden'] == list(menus.DEAD)
     assert menus.record(menus.options())['news'] is True
 
 
@@ -108,11 +108,11 @@ def test_edits_keep_the_news_tile_by_default():
 def test_the_hut_tile_stays_hidden_unless_the_option_is_on():
     """HUT's CardHouse is scaffolding (docs/notes/hut.md): the tile is hidden like before, `hut` brings it back."""
     files = {menus.HOMEPAGE_PATH: fake_homepage(), menus.LAYOUT_PATH: fake_layout()}
-    off = menus.edits(files.__getitem__, menus.options())[menus.HOMEPAGE_PATH]
-    on = menus.edits(files.__getitem__, menus.options({'hut': True}))[menus.HOMEPAGE_PATH]
+    off = menus.edits(files.__getitem__, menus.options({'chel': False}))[menus.HOMEPAGE_PATH]
+    on = menus.edits(files.__getitem__, menus.options({'hut': True, 'chel': False}))[menus.HOMEPAGE_PATH]
     assert b'[MODES_NAMES.ULTIMATETEAM] = true' in off and b'[MODES_NAMES.ULTIMATETEAM] = true' not in on
     assert b'[MODES_NAMES.HOCKEYDRAFT] = true' in on and b'[MODES_NAMES.EASHL] = true' in on
-    assert menus.record(menus.options({'hut': True}))['hidden'] == ['HOCKEYDRAFT', 'EASHL']
+    assert menus.record(menus.options({'hut': True, 'chel': False}))['hidden'] == ['HOCKEYDRAFT', 'EASHL']
     assert menus.record(menus.options({'hut': True, 'chel': True}))['hidden'] == ['HOCKEYDRAFT']
 
 
@@ -150,7 +150,7 @@ def fake_files(end=True):
 
 def test_launch_off_changes_nothing_and_serves_no_hub():
     files = fake_files()
-    off = menus.edits(files.__getitem__, menus.options())
+    off = menus.edits(files.__getitem__, menus.options({'chel': False}))
     assert sorted(off) == sorted(menus.PATHS)
     assert b'OvertimeAutoplay' not in off[menus.HOMEPAGE_PATH]
     assert off[menus.HOMEPAGE_PATH] == menus.edit_homepage(files[menus.HOMEPAGE_PATH], news=True)
@@ -241,6 +241,27 @@ def test_a_shootout_launch_jumps_into_the_shootout_hub():
     assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'mode': 'versus'})[menus.HUB_PATH] ==         menus.edits(files.__getitem__, menus.options(), {'until': UNTIL})[menus.HUB_PATH]
     with pytest.raises(menus.MenuError, match='unknown game mode'):
         menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'mode': 'hut'})
+
+
+def test_a_chel_launch_serves_the_tile_with_the_switch_off_and_no_hook():
+    """A CHEL lobby launch (0.90.0): the World of Chel tile whatever the player's own switch, no hub hook, no rules."""
+    files = {**fake_files()}
+    off = menus.options({'chel': False})
+    on = menus.edits(files.__getitem__, off, {'until': UNTIL, 'mode': 'chel'})
+    assert set(on) == {menus.HOMEPAGE_PATH, menus.LAYOUT_PATH}
+    assert b'[MODES_NAMES.EASHL] = true' not in on[menus.HOMEPAGE_PATH]
+    assert b'[MODES_NAMES.EASHL] = true' in menus.edits(files.__getitem__, off)[menus.HOMEPAGE_PATH]
+    assert on[menus.HOMEPAGE_PATH] == menus.edits(files.__getitem__, menus.options({'chel': True}))[menus.HOMEPAGE_PATH]
+    assert 'rules' not in menus.record(off, {'until': UNTIL, 'mode': 'chel', 'rules': {'skilllevel': 4}})
+
+
+@pytest.mark.game
+def test_a_chel_launch_on_the_games_own_files(game_dir):
+    read = lambda path: gamefiles.read_latest(game_dir, path)[0]
+    on = menus.edits(read, menus.options({'chel': False}), {'until': UNTIL, 'mode': 'chel'})
+    assert b'[MODES_NAMES.EASHL] = true' not in on[menus.HOMEPAGE_PATH]
+    assert on[menus.HOMEPAGE_PATH] == menus.edits(read, menus.options({'chel': True}))[menus.HOMEPAGE_PATH]
+    assert {tag for tag, _a, _b in changes(read(menus.HOMEPAGE_PATH), on[menus.HOMEPAGE_PATH])} <= {'insert', 'replace'}
 
 
 def test_shootout_launch_rules_serve_the_shootout_file_only():

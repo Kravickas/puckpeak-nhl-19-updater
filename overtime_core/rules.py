@@ -19,6 +19,21 @@ VERSUS, SHOOTOUT, THREES = 'versus', 'shootout', 'threes'
 MODES = (VERSUS, SHOOTOUT, THREES)
 NAMES = 'versus, shootout or threes'   # for the texts that name the choices
 
+# World of Chel (0.90.0): NHL_GameType (a WoC search's SA_GAMEATTRIBUTE_GAMEMODE) -> the mode its matches are booked
+# under. Only 12 (drop-in 6s, scenario online_eashl_dropin) is lab-verified; the rest follow the game's own resort_*
+# matchmaking files (docs/notes/woc.md mode table). These are not lobby modes: MODES stays the Quick list.
+CHEL_DROPIN, CHEL_DROPIN3, CHEL_GM3ON3 = 'chel_dropin', 'chel_dropin3', 'chel_gm3on3'
+CHEL_CLUB, CHEL_CLUB3, CHEL_PLAYOFFS, CHEL_PLAYOFFS3 = 'chel_club', 'chel_club3', 'chel_playoffs', 'chel_playoffs3'
+CHEL_ONES, CHEL_PROAM = 'chel_ones', 'chel_proam'
+# Online Team Play (6v6, 2-12 humans): not World of Chel, but it runs on the same N-player session. Its game type 23 is
+# Online Versus's too, so only its scenario name (online_playnow_casual_otp) tells it apart (game_manager.chel_mode).
+# GUESSED: v1.60 has no menu route into it (docs/notes/threes-otp.md 1.4).
+CHEL_OTP = 'chel_otp'
+CHEL_GAME_TYPES = {'12': CHEL_DROPIN, '202': CHEL_DROPIN3, '54': CHEL_GM3ON3, '5': CHEL_CLUB, '200': CHEL_CLUB3,
+                   '10': CHEL_PLAYOFFS, '206': CHEL_PLAYOFFS3, '52': CHEL_ONES, '60': CHEL_PROAM, '62': CHEL_PROAM}
+CHEL_MODES = tuple(dict.fromkeys(CHEL_GAME_TYPES.values())) + (CHEL_OTP,)
+CHEL_UNRATED = (CHEL_PROAM,)   # against the AI only: logged, never rated (owner 2026-11-11)
+
 
 class RulesError(ValueError):
     pass

@@ -10,6 +10,12 @@ import { OnlineLines } from './setup.js';
 
 export const tip = 'Make a lobby, give your friend the code, and both press Ready: the game starts by itself.';
 
+// a rank's icon (rankicons.js, a global: rankIcon(tier, size) gives an SVG string); nothing when there is no tier
+function TierIcon({ tier, size = 18 }) {
+  const svg = tier && typeof rankIcon === 'function' ? rankIcon(tier, size) : '';
+  return svg ? html`<span class="mp-ico" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: svg }}></span>` : null;
+}
+
 const STATE_CHIP = {
   open: { tone: 'info', text: 'waiting for a friend' },
   full: { tone: 'info', text: 'full: press Ready' },
@@ -255,6 +261,12 @@ function HowTo() {
 function Pick({ s, go }) {
   const [code, setCode] = useState('');
   const [pub, setPub] = useState(true);   // public by default (owner, 2026-11-06)
+  const [kind, setKind] = useState('quick');   // 0.90.0: a quick pair, or a CHEL (World of Chel) party
+  const chelModes = s.chel_modes || [];
+  const [chelMode, setChelMode] = useState(chelModes.length ? chelModes[0].mode : 'chel_dropin');
+  const [split, setSplit] = useState(false);
+  const canSplit = !!(chelModes.find((m) => m.mode === chelMode) || {}).split;
+  const create = () => (kind === 'chel' ? call('mp_create_chel', chelMode, pub, split && canSplit) : call('mp_create', pub));
   const idle = !s.busy;
   const patch = s.checks.find((c) => c.key === 'patch');
   const join = () => { if (code) call('mp_join', code); };
@@ -269,9 +281,16 @@ function Pick({ s, go }) {
     <div class="mp-tiles">
       <div class="mp-tile host">
         <div class="mp-tile-t caps">Host a lobby</div>
-        <div class="mp-tile-d">You get a short code to send to a friend, or your lobby shows in the public list.</div>
+        <div class="mp-tile-d">You get a short code to send to friends, or your lobby shows in the public list.</div>
+        ${chelModes.length > 0 && html`<${Segmented} options=${KIND_OPTIONS} value=${kind} onChange=${setKind}/>`}
+        ${kind === 'chel' && html`<div class="mp-chel-pick">
+          <${Select} value=${chelMode} options=${chelModes.map((m) => ({ value: m.mode, label: m.name }))} onChange=${setChelMode}/>
+          ${canSplit && html`<${Toggle} on=${split} onChange=${setSplit}>Split into Home and Away (play each other)<//>`}
+          <div class="mp-tile-d">${canSplit && split ? 'Your lobby plays itself; the CPU fills the empty spots.'
+            : 'Your lobby plays together against another lobby or players searching alone; the CPU fills the rest.'}</div>
+        </div>`}
         <${Toggle} on=${pub} onChange=${setPub}>Show it in the public list<//>
-        <${Button} kind="gold" big block disabled=${!idle} onClick=${() => call('mp_create', pub)}>Create lobby<//>
+        <${Button} kind="gold" big block disabled=${!idle} onClick=${create}>${kind === 'chel' ? 'Create CHEL lobby' : 'Create lobby'}<//>
       </div>
       <div class="mp-tile join">
         <div class="mp-tile-t caps">Join a friend</div>
@@ -286,7 +305,9 @@ function Pick({ s, go }) {
         <${Button} small kind="ghost" disabled=${!idle} onClick=${() => call('mp_refresh')}>Refresh<//></div>
       ${s.lobbies.length
         ? html`<div class="mp-list">${s.lobbies.map((l) => html`<div class="mp-lobby-row" key=${l.code}>
-            <span class="who">${l.host}</span><span class="age">${l.age}</span>
+            <span class="who">${l.host}</span>
+            <${Tag} tone=${l.kind === 'chel' ? 'accent' : 'info'}>${l.kind === 'chel' ? 'CHEL' : 'Quick'} · ${l.game}<//>
+            <span class="age">${l.players}/${l.cap}${l.split ? ' · Home/Away' : ''} · ${l.age}</span>
             <${Button} small disabled=${!idle} onClick=${() => call('mp_join', l.code)}>Join<//></div>`)}</div>`
         : html`<div class="mp-public-empty"><div><div class="mp-public-t">No public lobbies right now</div>
             <div class="mp-public-d">Make one, or ask a friend for a code.</div></div></div>`}
@@ -312,6 +333,55 @@ function Player({ p, launching }) {
       ${game}
     </div>
   </div>`;
+}
+
+// 0.90.0 CHEL lobbies: a World of Chel party of 1 up to the mode's cap, open or split into Home and Away
+const KIND_OPTIONS = [
+  { value: 'quick', label: 'QUICK' },
+  { value: 'chel', label: 'CHEL' },
+];
+const SIDE_NAMES = ['Home', 'Away'];
+const CHEL_MODE_NAMES = {
+  chel_dropin: 'Drop-in 6s', chel_dropin3: 'Drop-in 3s', chel_gm3on3: 'Drop-in 3-on-3', chel_ones: 'Ones',
+  chel_proam: 'Pro-Am', chel_club: 'Club 6s', chel_club3: 'Club 3s', chel_playoffs: 'Club playoffs 6s',
+  chel_playoffs3: 'Club playoffs 3s', chel_otp: 'Online Team Play',
+};
+
+function ChelPlayers({ l, launching }) {
+  const room = Math.max(0, l.cap - l.players.length);
+  if (!l.split) {
+    return html`<div class="mp-players">
+      ${l.players.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching}/>`)}
+      ${room > 0 && !launching && html`<div class="mp-player empty">Room for ${room} more</div>`}
+    </div>`;
+  }
+  const pick = l.side_pick;
+  return html`<div class="mp-sides">${[0, 1].map((side) => {
+    const on = l.players.filter((p) => p.side === side);
+    return html`<div key=${side} class="mp-players mp-chel-side">
+      <div class="mp-row"><span class="mp-lbl caps">${SIDE_NAMES[side]}</span><span class="sp"></span>
+        ${pick && pick.edit && pick.mine !== side && on.length < l.cap / 2
+          && html`<${Button} small kind="ghost" onClick=${() => call('mp_side', side)}>Move here<//>`}</div>
+      ${on.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching}/>`)}
+      ${!on.length && html`<div class="mp-player empty">Nobody yet</div>`}
+    </div>`;
+  })}</div>`;
+}
+
+// the CHEL lobby's mode (the host picks it before Ready); World of Chel takes its other settings in the game
+function ChelCard({ l, modes }) {
+  const options = (modes || []).map((m) => ({ value: m.mode, label: m.name }));
+  return html`<${Card} n=${3} title="World of Chel" aside=${html`<${Tag} tone="accent">${l.game}<//>`}>
+    <div class="mp-body mp-rules-body">
+      <div class="mp-rule mp-mode-pick"><span class="mp-rule-label caps">Mode</span>
+        ${l.mode_pick && l.mode_pick.edit && options.length
+          ? html`<${Select} value=${l.chel_mode} options=${options} onChange=${(v) => call('mp_set_mode', v)}/>`
+          : html`<span class="mp-rule-value">${l.game}</span>`}</div>
+      <div class="mp-note">${l.split ? 'Home plays Away; the CPU fills the empty spots.'
+        : 'Your lobby plays on one side, against another lobby or players searching alone. With nobody to play, the CPU plays you (not rated).'}
+        A game counts in the shared rating when each side has a player.</div>
+    </div>
+  </${Card}>`;
 }
 
 const HOTKEY_HINT = 'Ctrl+Shift+F1 to F6 sends a phrase while you play';
@@ -345,28 +415,32 @@ function Lobby({ s }) {
   const launching = l.state === 'launching' || l.state === 'matched';
   const chip = STATE_CHIP[l.state] || { tone: 'info', text: l.state };
   const differ = l.waiting && /ROSTERCRC/.test(l.waiting);
-  return html`<${Card} n=${2} title=${launching ? `Lobby ${l.code}` : 'Lobby'} className="mp-stage"
+  const chel = l.kind === 'chel';
+  const canReady = l.state === 'full' || (chel && l.state === 'open');   // a CHEL party may be one player
+  return html`<${Card} n=${2} title=${(launching ? `Lobby ${l.code}` : 'Lobby') + (chel ? ` · CHEL ${l.game}` : '')} className="mp-stage"
       aside=${html`<${Tag} tone=${chip.tone}>${chip.text}<//>${l.waiting && html` <${Tag} tone="caution">${l.waiting}<//>`}`}>
     <div class="mp-body">
       ${!launching && html`<div class="mp-code"><span class="mp-code-big">${l.code}</span>
         <${Button} small onClick=${() => copy(l.code)}>Copy<//><span class="sp"></span></div>`}
-      <div class="mp-players">
+      ${chel ? html`<${ChelPlayers} l=${l} launching=${launching}/>` : html`<div class="mp-players">
         ${l.players.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching}/>`)}
         ${l.players.length < 2 && html`<div class="mp-player empty">Waiting for a friend</div>`}
-      </div>
+      </div>`}
       ${differ && html`<div class="mp-note warn">You and ${l.partner || 'your friend'} are not on the same roster: press Update
         on both PCs, then launch again.</div>`}
       ${!launching && html`<div class="mp-row">
-        ${l.state === 'open' && html`<${Button} kind="gold" big disabled>Waiting for a friend<//>`}
-        ${l.state === 'full' && !l.me_ready && html`<${Button} kind="gold" big disabled=${!!s.busy}
+        ${l.state === 'open' && !chel && html`<${Button} kind="gold" big disabled>Waiting for a friend<//>`}
+        ${canReady && !l.me_ready && html`<${Button} kind="gold" big disabled=${!!s.busy}
           onClick=${() => call('mp_ready', true)}>${s.prep ? 'Getting ready...' : 'Ready'}<//>`}
-        ${l.state === 'full' && l.me_ready && html`<${Button} kind="gold" big disabled>Waiting for ${l.partner}<//>
+        ${canReady && l.me_ready && html`<${Button} kind="gold" big disabled>${chel ? (l.split ? 'Waiting for both sides' : 'Waiting for the lobby') : `Waiting for ${l.partner}`}<//>
           <${Button} small kind="ghost" onClick=${() => call('mp_ready', false)}>Not ready<//>`}
         <span class="sp"></span>
         <${Button} small kind="ghost" onClick=${() => call('mp_leave')}>Leave<//>
       </div>`}
       ${s.prep && html`<div class="mp-note">${s.prep}</div>`}
-      ${!launching && l.state === 'open' && html`<div class="mp-note">Give your friend the code. Both press Ready, then the game starts by itself.</div>`}
+      ${!launching && l.state === 'open' && !chel && html`<div class="mp-note">Give your friend the code. Both press Ready, then the game starts by itself.</div>`}
+      ${!launching && chel && html`<div class="mp-note">Give your friends the code (up to ${l.cap} players). Everyone presses Ready,
+        NHL 19 starts with the World of Chel tile: open it, pick ${l.game} and press Play. The server seats your lobby together.</div>`}
       ${launching && html`<div class="mp-row"><span class="sp"></span><${Button} small kind="ghost" onClick=${() => call('mp_leave')}>Leave<//></div>`}
       ${l.players.length > 1 && l.chat && html`<${Chat} chat=${l.chat} hud=${s.you.hud}/>`}
     </div>
@@ -469,8 +543,20 @@ function Side({ p }) {
 
 const signed = (n) => (n > 0 ? '+' : '') + n;
 
+// a team match (World of Chel): each side is its players' names, my side first
+const teamSide = (x) => ({ name: x.names.join(', '), won: x.won, you: x.you, score: x.score, team: null });
+
+// Ones (2-4 players, each for himself): my side against the rest, each with his goals; the score is mine against the best
+const restSide = (rest) => ({
+  name: rest.map((x) => `${x.names.join(', ')}${x.score != null ? ` (${x.score})` : ''}`).join(' · '),
+  won: rest.some((x) => x.won), you: false, team: null,
+  score: rest.every((x) => x.score != null) ? Math.max(...rest.map((x) => x.score)) : null,
+});
+
 function MatchRow({ m }) {
-  const [a, b] = m.players;
+  const [a, b] = m.team && m.sides && m.sides.length === 2 ? m.sides.map(teamSide)
+    : m.team && m.sides && m.sides.length > 2 ? [teamSide(m.sides[0]), restSide(m.sides.slice(1))] : m.players;
+  const chelName = m.mode && m.mode.startsWith('chel_') ? ` · CHEL ${(CHEL_MODE_NAMES[m.mode] || '')}` : '';
   const shown = a.score != null && b.score != null;
   const score = shown ? `${a.score}–${b.score}` : (a.score != null ? `${a.score}–${b.score}?` : '–');
   // three parts (mockup): the first player with the match's state, the score, the second player with the buttons
@@ -479,7 +565,7 @@ function MatchRow({ m }) {
       <${Side} p=${a}/>
       <div class="mp-match-sub">
         <${Tag} tone=${STATUS_TONE[m.tone] || 'info'}>${m.text}<//>
-        <span class="mp-ago">${m.ago}${m.mode === 'shootout' ? ' · Shootout' : m.mode === 'threes' ? ' · Threes' : ''}${m.rules && m.rules !== 'Default rules' ? ` · ${m.rules}` : ''}</span>
+        <span class="mp-ago">${m.ago}${m.mode === 'shootout' ? ' · Shootout' : m.mode === 'threes' ? ' · Threes' : chelName}${m.rules && m.rules !== 'Default rules' ? ` · ${m.rules}` : ''}</span>
         ${m.delta != null && html`<span class=${cls('mp-delta', m.delta > 0 && 'plus', m.delta < 0 && 'minus')}>${signed(m.delta)}</span>`}
       </div>
     </div>
@@ -498,7 +584,7 @@ function MatchRow({ m }) {
 function PlayerRow({ p }) {
   return html`<button type="button" class=${cls('mp-prow', p.you && 'you')} onClick=${() => call('mp_history_player', p.pid)}>
     <span class="mp-prow-name">${p.name}${p.you && html`<span class="you caps">you</span>`}</span>
-    <span class="mp-prow-tier">${p.rank != null ? p.tier : p.rating != null ? 'Placing' : ''}</span>
+    <span class="mp-prow-tier"><${TierIcon} tier=${p.rank != null ? p.tier : p.rating != null ? 'Unranked' : null} size=${16}/>${p.rank != null ? p.tier : p.rating != null ? 'Placing' : ''}</span>
     <span class="mp-prow-n mp-rk">${p.rank != null ? '#' + p.rank : p.rating != null ? '\u2026' : ''}</span>
     <span class="mp-prow-n mp-rt" title=${p.tier || ''}>${p.rating != null ? p.rating : ''}</span>
     <span class="mp-prow-n">${p.w}</span><span class="mp-prow-n">${p.l}</span><span class="mp-prow-n">${p.played}</span>
@@ -522,6 +608,7 @@ function RatingCard({ r }) {
       <div class="mp-rating-n">${r.rating}</div>
       <div class="mp-rating-side">
         <div class="mp-rating-top">
+          <${TierIcon} tier=${r.ranked ? r.tier : 'Unranked'} size=${26}/>
           <${Tag} tone=${r.ranked ? 'good' : 'info'}>${r.ranked ? r.tier : `Placing ${placed}/5`}<//>
           ${r.change != null && html`<span class=${cls('mp-delta', r.change > 0 && 'plus', r.change < 0 && 'minus')}>${signed(r.change)} last game</span>`}
           <span class="mp-rating-rec">Record ${r.record}</span>
@@ -600,7 +687,7 @@ function History({ h }) {
           : h.loaded && html`<div class="mp-empty">Nobody has a confirmed match yet.</div>`}`}
         ${view === 'players' && h.ladder.length > 0 && html`<div class="caps mp-sub">Ranks (a rank shows after 5 rated games)</div>
           <div class="mp-ladder">${h.ladder.map((t) => html`<div key=${t.name} class=${cls('mp-ladder-row', t.you && 'you')}>
-            <b>${t.name}</b><span class="mp-note">${t.min ? t.min + '+' : 'under 1000'}</span><span class="mp-note mp-ladder-b">${t.blurb}</span></div>`)}</div>`}
+            <${TierIcon} tier=${t.name} size=${22}/><b>${t.name}</b><span class="mp-note">${t.min ? t.min + '+' : 'under 1000'}</span><span class="mp-note mp-ladder-b">${t.blurb}</span></div>`)}</div>`}
       </div>
     </div>
   </${Card}>`;
@@ -719,13 +806,14 @@ export default function Multiplayer({ go }) {
     <div class="mp-col mp-col-lobby">
       ${s.lobby
         ? html`<${Lobby} s=${s}/>`
-        : html`<${Card} n=${2} title="Lobby" aside="Play one friend at a time" className="mp-card-fill mp-stage">
+        : html`<${Card} n=${2} title="Lobby" aside="Quick: one friend · CHEL: World of Chel with friends" className="mp-card-fill mp-stage">
             ${s.you.ext ? html`<${Pick} s=${s} go=${go}/>`
               : html`<div class="mp-body mp-fill"><div class="mp-empty">Sign in to ShadNet first (left): a lobby is tied to your game's own sign-in.</div>
                   <div class="mp-spacer"></div><${HowTo}/></div>`}
           </${Card}>`}
       ${s.lobby && s.lobby.rules && html`<${Rules} rules=${s.lobby.rules} host=${s.lobby.host} hostName=${s.lobby.host_name}
           roster=${s.lobby.roster_mode} mode=${s.lobby.mode} modePick=${s.lobby.mode_pick}/>`}
+      ${s.lobby && s.lobby.kind === 'chel' && html`<${ChelCard} l=${s.lobby} modes=${s.chel_modes}/>`}
       ${s.game && html`<${Game} game=${s.game}/>`}
     </div>
     ${h && html`<div class="mp-col mp-col-side">

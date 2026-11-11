@@ -66,12 +66,15 @@ def test_math_class_puts_intel_with_the_key_on_the_trusted_build_with_amd():
 
 def test_both_kravickas_builds_are_trusted_and_an_intel_pc_on_either_meets_amd():
     """0.82.0 moves Boost and lobbies to 749170d; an Intel player still on b23fb67 (own Boost copy) keeps the AMD class,
-    so the two builds' tags differ only by the exe (the server's pin sets which one lobbies play)."""
-    assert sorted(onlinetag.TRUSTED_EXES.values()) == ['Kravickas NHL19-Build 749170d', 'Kravickas NHL19-Build b23fb67']
+    so the builds' tags differ only by the exe (the server's pin sets which one lobbies play). 0.90.0 adds Overtime's
+    smooth build on 749170d (same CPU math)."""
+    assert sorted(onlinetag.TRUSTED_EXES.values()) == ['Kravickas NHL19-Build 749170d', 'Kravickas NHL19-Build b23fb67',
+                                                      'Overtime smooth c97b8b51 (Kravickas 749170d)']
     for sha in onlinetag.TRUSTED_EXES:
         assert len(sha) == 64 and sha == sha.lower()
         assert onlinetag.math_class(sha, 'intel', True) == 'amd' and onlinetag.math_class(sha, 'intel', False) != 'amd'
-    new, old = sorted(onlinetag.TRUSTED_EXES, key=onlinetag.TRUSTED_EXES.get)
+    new, old, smooth = sorted(onlinetag.TRUSTED_EXES, key=onlinetag.TRUSTED_EXES.get)
+    assert onlinetag.compute('NHL19_1.60', 'f' * 20, smooth, 'amd') != onlinetag.compute('NHL19_1.60', 'f' * 20, new, 'amd')
     assert onlinetag.compute('NHL19_1.60', 'f' * 20, new, 'amd') != onlinetag.compute('NHL19_1.60', 'f' * 20, old, 'amd')
 
 

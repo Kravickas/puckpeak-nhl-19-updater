@@ -69,11 +69,22 @@ class FakeService:
                  **kw}
         return lobby
 
-    def create(self, name, ext, public=False, roster_crc=None):
+    def create(self, name, ext, public=False, roster_crc=None, **kw):
         self._go('create', name, ext, public)
-        self.lobby = self.view(public=public)
+        self.create_kw = kw
+        if kw.get('kind') == 'chel':        # a CHEL lobby as the 0.90 server shows it
+            self.lobby = self.view(public=public, kind='chel', mode=kw.get('mode'), cap=12, split=bool(kw.get('split')),
+                                   rules={}, rules_summary='World of Chel')
+            self.lobby['players'][0]['side'] = 0
+        else:
+            self.lobby = self.view(public=public)
         self.you = 0
         return {'token': 'secret-token', 'you': 0, 'lobby': self.lobby}
+
+    def side(self, code, token, side):
+        self._go('side', code, token, side)
+        self.lobby['players'][self.you]['side'] = side
+        return {**self.lobby, 'you': self.you}
 
     def join(self, code, name, ext, roster_crc=None):
         self._go('join', code, name, ext)
@@ -370,7 +381,8 @@ def test_an_unreachable_service_is_told_and_recovers(mp):
 def test_the_server_row_follows_the_public_list_ask(mp):
     mp._lobbies()
     assert {r['key']: r['tone'] for r in mp.view()['checks']}['server'] == 'good'
-    assert mp.view()['lobbies'] == [{'code': 'AB123', 'host': 'Bo', 'players': 1, 'age': '2 min'}]
+    assert mp.view()['lobbies'] == [{'code': 'AB123', 'host': 'Bo', 'players': 1, 'age': '2 min', 'kind': 'quick',
+                                     'game': 'Versus', 'cap': 2, 'split': False}]
     mp.service.fail = LC.LobbyDown('x')
     mp._lobbies()
     row = [r for r in mp.view()['checks'] if r['key'] == 'server'][0]
@@ -1402,3 +1414,81 @@ def test_quick_phrase_hotkeys_send_nothing_while_chat_is_off(mp):
     mp.show_hud = True
     mp._hotkey(0)
     assert sent == ['mp-say']
+
+
+# --- CHEL lobbies (0.90.0) ----------------------------------------------------------------------------------------
+def start_chel(mp, split=True):
+    mp.set_name('iksperial')
+    mp.set_ext('16349')
+    assert mp.create_chel(RU.CHEL_DROPIN, True, split) == {'ok': True}
+
+
+def test_create_chel_sends_the_kind_mode_and_split(mp):
+    start_chel(mp)
+    assert mp.service.calls[0] == ('create', 'iksperial', 16349, True)
+    assert mp.service.create_kw == {'mode': RU.CHEL_DROPIN, 'kind': 'chel', 'split': True}
+    lv = mp.view()['lobby']
+    assert lv['kind'] == 'chel' and lv['chel_mode'] == RU.CHEL_DROPIN and lv['split'] is True and lv['cap'] == 12
+    assert lv['rules'] is None and lv['side_pick'] == {'edit': True, 'mine': 0}
+    assert {m['mode'] for m in mp.view()['chel_modes']} == set(MC.CHEL_PICK)
+
+
+def test_create_chel_refuses_other_modes_and_unsplits_ones(mp):
+    mp.set_name('iksperial')
+    mp.set_ext('16349')
+    assert 'World of Chel' in mp.create_chel(RU.VERSUS)['error']
+    assert mp.create_chel(RU.CHEL_ONES, True, True) == {'ok': True}
+    assert mp.service.create_kw['split'] is False
+
+
+def test_a_server_before_0_90_says_it_has_no_chel_lobbies(mp):
+    """The live 0.83.0 server answers a CHEL create with 422 'the game mode is versus, shootout or threes' (owner
+    2026-11-11): the app says the server needs the update, not that the mode is wrong."""
+    mp.set_name('iksperial')
+    mp.set_ext('16349')
+    def old(*a, **kw):
+        raise MC.LC.LobbyRefused(422, 'the game mode is versus, shootout or threes')
+    mp.service.create = old
+    err = mp.create_chel(RU.CHEL_DROPIN)['error']
+    assert '0.90.0' in err and 'Quick lobbies work' in err
+
+
+def test_set_side_moves_me_and_refuses_junk(mp):
+    start_chel(mp)
+    assert mp.set_side(2) == {'ok': False}
+    assert mp.set_side(1) == {'ok': True}
+    assert mp.service.calls[-1] == ('side', 'K7M2Q', 'secret-token', 1)
+    assert mp.view()['lobby']['side_pick']['mine'] == 1
+
+
+def test_a_chel_lobby_takes_only_chel_modes(mp):
+    start_chel(mp)
+    assert 'World of Chel' in mp.set_mode(RU.SHOOTOUT)['error']
+
+
+def test_a_chel_launch_serves_the_tile_and_never_presses_ready(mp, monkeypatch):
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    start_chel(mp)
+    mp._launch_job()
+    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS, 'mode': 'chel'})
+    assert [e for e in rig.events if e[0] == 'press'] == [('press', 'n'), ('press', 'n')]     # the title only
+    assert rig.events[-1] == ('hook', None)
+    assert mp.view()['game']['game'] == 'Drop-in 6s'
+
+
+# --- team rows in the history (0.90.0) ----------------------------------------------------------------------------
+def test_a_team_match_row_puts_my_side_first():
+    from overtime_core import history as H
+    from overtime_roster.app import history_view as HV
+    m = {'id': 7, 'started': 0, 'mode': RU.CHEL_DROPIN, 'sides': 2,
+         'players': [{'pid': 1, 'name': 'A', 'side': 0}, {'pid': 2, 'name': 'B', 'side': 0},
+                     {'pid': 3, 'name': 'C', 'side': 1}],
+         'claims': {1: {'for': 3, 'against': 2, 'source': 'game'}, 3: {'for': 2, 'against': 3, 'source': 'game'}}}
+    m['result'] = H.resolve(m)
+    assert m['result']['status'] == H.CONFIRMED
+    row = HV.match_row(m, 3, 60)
+    assert row['team'] is True and row['entry'] is None and row['mine'] is True
+    assert row['sides'][0] == {'names': ['C'], 'score': 2, 'won': False, 'you': True}
+    assert row['sides'][1]['names'] == ['A', 'B'] and row['sides'][1]['won'] is True
+    assert row['against'] == 'A, B'

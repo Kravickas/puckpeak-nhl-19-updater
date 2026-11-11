@@ -1,6 +1,8 @@
 """Easing and timeline helpers for the in-game overlay. Pure functions of time: no Windows, no drawing (unit-tested)."""
 import math
 
+from overtime_core.rating import TIERS, UNRANKED
+
 
 def clamp(x, lo=0.0, hi=1.0):
     return lo if x < lo else hi if x > hi else x
@@ -103,6 +105,15 @@ class Result:
     def lift(self, now):
         """Pixels (at 1080p) the card still has to rise."""
         return 40 * (1 - out_cubic(span(self.t(now), 0, self.ENTER)))
+
+    def icon_tier(self, now):
+        """The tier the card's icon shows: a rank-up shows the tier below it until the flash, then the new one."""
+        up = self.d.get('rank_up')
+        if up and self.t(now) < self.FLASH_AT:
+            names = [name for name, _low, _blurb in TIERS]
+            i = names.index(up) if up in names else 0
+            return TIERS[i - 1][0] if i > 0 else UNRANKED
+        return self.d.get('tier') or UNRANKED
 
     def rating(self, now):
         k = out_cubic(span(self.t(now), self.COUNT_AT, self.COUNT_END))

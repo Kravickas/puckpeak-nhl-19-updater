@@ -71,7 +71,7 @@ def _highlights(rows, matches, rated, now, hidden):
     for m in matches:
         res = H.resolve(m)
         d = rated['deltas'].get(m['id'])
-        if res['status'] != H.CONFIRMED or d is None or m['started'] < now - WEEK:
+        if res['status'] != H.CONFIRMED or d is None or m['started'] < now - WEEK or H.is_team(m):
             continue
         win = res['winner']
         if d[win]['weight'] > 0 and d[win]['expected'] < UPSET_BELOW and (best is None or d[win]['expected'] < best[0]):
@@ -102,9 +102,20 @@ def recent(matches, rated, hidden, limit=10):
         sides = []
         for p in m['players']:
             pid, name = shown(p['pid'], p['name'], hidden)
-            sides.append({'pid': pid, 'name': name, 'team': res['teams'][p['pid']], 'score': res['scores'][p['pid']],
-                          'delta': round(d[p['pid']]['delta']) if p['pid'] in d else 0, 'won': res['winner'] == p['pid']})
-        out.append({'id': m['id'], 'started': m['started'], 'sides': sides})
+            row = {'pid': pid, 'name': name, 'team': res['teams'][p['pid']], 'score': res['scores'].get(p['pid']),
+                   'delta': round(d[p['pid']]['delta']) if p['pid'] in d else 0, 'won': H.won(res, p['pid'])}
+            if H.is_team(m):   # every human, with the side the result put them on (a/b order kept for pairs)
+                row.update(side=res['side_of'][p['pid']], left=bool(p.get('left')))
+            sides.append(row)
+        item = {'id': m['id'], 'started': m['started'], 'sides': sides}
+        if H.is_team(m):
+            item.update(mode=m.get('mode'), team=True,
+                        score=[s['score'] for s in sorted(res['sides'], key=lambda s: s['side'])])
+            # the first player of each side leads, so a page that reads sides[0] and sides[1] still shows the two sides
+            leads = [next(r for r in sides if r['side'] == s['side'] and not r['left']) for s in
+                     sorted(res['sides'], key=lambda s: s['side'])]
+            item['sides'] = leads + [r for r in sides if all(r is not x for x in leads)]
+        out.append(item)
         if len(out) >= limit:
             break
     return out

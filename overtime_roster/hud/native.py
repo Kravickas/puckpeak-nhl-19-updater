@@ -22,6 +22,10 @@ class RectF(ctypes.Structure):
     _fields_ = [('x', ctypes.c_float), ('y', ctypes.c_float), ('w', ctypes.c_float), ('h', ctypes.c_float)]
 
 
+class PointF(ctypes.Structure):
+    _fields_ = [('X', ctypes.c_float), ('Y', ctypes.c_float)]
+
+
 class _StartupInput(ctypes.Structure):
     _fields_ = [('version', ctypes.c_uint32), ('callback', ctypes.c_void_p), ('suppress_thread', ctypes.c_int),
                 ('suppress_bg', ctypes.c_int)]
@@ -80,7 +84,7 @@ def _load():
         ('GdipFillRectangle', i, (_P, _P, f, f, f, f)), ('GdipFillEllipse', i, (_P, _P, f, f, f, f)),
         ('GdipCreatePath', i, (i, _P)), ('GdipDeletePath', i, (_P,)),
         ('GdipAddPathArc', i, (_P, f, f, f, f, f, f)), ('GdipClosePathFigure', i, (_P,)),
-        ('GdipFillPath', i, (_P, _P, _P)),
+        ('GdipFillPath', i, (_P, _P, _P)), ('GdipFillPolygon', i, (_P, _P, _P, i, i)),
         ('GdipCreatePen1', i, (u, f, i, _P)), ('GdipDeletePen', i, (_P,)),
         ('GdipDrawEllipse', i, (_P, _P, f, f, f, f)), ('GdipDrawLine', i, (_P, _P, f, f, f, f)),
         ('GdipDrawPath', i, (_P, _P, _P)),
@@ -182,6 +186,15 @@ class Gfx:
     def fill_ellipse(self, x, y, w, h, color):
         _gp.GdipSetSolidFillColor(self._brush, color)
         _gp.GdipFillEllipse(self.g, self._brush, x, y, w, h)
+
+    def fill_polygon(self, points, color):
+        """A filled polygon (alternate, i.e. even-odd, fill: a hole bridged into the outline stays open).
+        `points`: [(x, y), ...] in the current transform's units."""
+        if len(points) < 3:
+            return
+        arr = (PointF * len(points))(*[PointF(float(x), float(y)) for x, y in points])
+        _gp.GdipSetSolidFillColor(self._brush, color)
+        _gp.GdipFillPolygon(self.g, self._brush, ctypes.byref(arr), len(points), 0)
 
     def _round_path(self, x, y, w, h, r):
         path = ctypes.c_void_p()

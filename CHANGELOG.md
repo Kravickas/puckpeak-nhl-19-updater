@@ -2,6 +2,40 @@
 
 What changed in each version, for players.
 
+## 0.90.0 (2026-11-11)
+
+### Added
+
+- **World of Chel online.** The World of Chel tile is back: the hub, your CHEL player and customization (every item
+  unlocked; level and XP are shown but lock nothing), drop-in 6s, 3s and 3-on-3, clubs, club seasons, Ones and Pro-Am
+  run on the Overtime servers. Some modes are still being tested with real players; see the known issues below.
+- **CHEL lobbies.** Create a Quick lobby (two players, as before) or a CHEL lobby for 1 to 12 players. The host picks
+  the mode, and drop-in lobbies can split into Home and Away. The lobby list shows which kind each lobby is. In NHL 19,
+  open World of Chel, pick the lobby's mode and press Play.
+- **Every human game counts.** World of Chel games between people are rated in the same rank as Versus, Shootout and
+  Threes. Games against the CPU only, and Pro-Am, are logged but not rated.
+- **Rank icons.** Each rank has its own icon in the leaderboard, the ranks list, next to your rating and in the
+  after-game pop-up.
+- **Smoother emulator.** Lobby matches and Boost now use an Overtime build of shadPS4: Kravickas's NHL19-Build
+  749170d plus earlier frame flips, steadier frame pacing and higher thread priority. On a test PC at unlocked vblank
+  (average / 1% low / 0.1% low fps): 77 / 46 / 44 before, 94 / 71 / 66 now. The CPU math is unchanged, so Intel and AMD
+  PCs still play in step. GPL source: https://github.com/MatusRiedl/shadPS4/tree/overtime-ship-1 (tag
+  `overtime-ship-1`). Players on 0.90.0 meet players on the same emulator build only, so update together.
+
+### Changed
+
+- **"Keep the World of Chel tile" is on by default**, also for existing patches (re-patch once).
+- Creating a CHEL lobby on a server that is not updated yet now says the server needs the update (Quick lobbies still
+  work), instead of "the game mode is versus, shootout or threes".
+- The app no longer says an older Kravickas build is "newer" when the server runs an Overtime build on top of it.
+
+### Known issues
+
+- Ones: PLAY NOW does not find a game yet. Pro-Am: the challenge list is empty. Club games: the dressing room fails
+  before the search. Club Members: the screen does not load.
+- A new profile fails the World of Chel player check until NHL 19 is restarted once after creating the CHEL player.
+- Class and trait names show as "Class 13" and "Trait 6".
+
 ## 0.83.0 (2026-11-10)
 
 ### Added

@@ -2,8 +2,14 @@
 
 Pure drawing on a `native.Gfx` driven by the state objects of `anim` (so each frame is a function of time).
 """
+import logging
+
+from overtime_core import rankicons
+
 from . import anim
 from .native import argb, hexcolor, with_alpha
+
+log = logging.getLogger(__name__)
 
 ORANGE = hexcolor('#ff8a1f')
 PANEL = hexcolor('#101015', 236)
@@ -60,6 +66,20 @@ def draw_chat(gfx, lines, now, s):
         gfx.text(text, dx + 16 * s + who_w, y + 9 * s, text_f, with_alpha(WHITE, k))
 
 
+def draw_icon(gfx, tier, right, top, box, pulse=0.0):
+    """The rank icon in a box x box square whose top-right corner is (right, top): the tier's polygons
+    (overtime_core.rankicons, the same shapes as the web pages), centred and grown a little while `pulse` (a rank-up
+    flash) runs. A failure here never stops the card."""
+    try:
+        size = box * (1 + 0.12 * pulse)
+        x = right - box / 2 - size / 2
+        y = top + box / 2 - size / 2
+        for fill, pts in rankicons.pixels(tier, x, y, size):
+            gfx.fill_polygon(pts, hexcolor(fill))
+    except Exception:    # noqa: BLE001 - the overlay must keep drawing
+        log.debug('rank icon not drawn', exc_info=True)
+
+
 def draw_result(gfx, res, now, s):
     gfx.clear()
     d = res.d
@@ -78,6 +98,7 @@ def draw_result(gfx, res, now, s):
     sub = d.get('sub', '')
     if sub:
         gfx.text(sub.upper(), x0 + gfx.measure(d.get('title', 'FINAL').upper() + '   ', title_f)[0], y0 + 24 * s, title_f, WHITE)
+    draw_icon(gfx, res.icon_tier(now), ox + w - 34 * s, y0 + 28 * s, 92 * s, flash)     # the icon, top right
 
     rating = int(round(res.rating(now)))
     num = str(rating)

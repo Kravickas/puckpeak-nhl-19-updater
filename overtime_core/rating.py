@@ -68,6 +68,12 @@ def rate(matches, season_start=0.0):
             state.setdefault(p['pid'], _blank(p['name']))['name'] = p['name']
         if res['status'] != H.CONFIRMED:
             continue
+        if H.is_team(m) and m.get('mode') == H.ONES:
+            _rate_ones(m, res, state, deltas, timeline, pair_times)
+            continue
+        if H.is_team(m):
+            _rate_team(m, res, state, deltas, timeline, pair_times)
+            continue
         a, b = (p['pid'] for p in m['players'])
         sa, sb = res['scores'][a], res['scores'][b]
         pair = tuple(sorted((a, b)))
@@ -94,3 +100,86 @@ def rate(matches, season_start=0.0):
             timeline.setdefault(me, []).append((m['started'], m['id'], row['rating']))
         deltas[m['id']] = got
     return {'ratings': state, 'deltas': deltas, 'timeline': timeline}
+
+
+def _rate_team(m, res, state, deltas, timeline, pair_times):
+    """A confirmed two-sided team match (0.90.0): each side's chance is `expected` of the two sides' average ratings, and
+    each player still in at the end moves by his own K (his game count, as 1v1) times the margin and the damping. The
+    damping is keyed on the opposing pairs (every player against every opponent), sharing the 1v1 history: the weight is
+    the smallest over those pairs, so swapping one teammate does not dodge it. Players who left are not rated."""
+    sides = res['sides']
+    if len(sides) != 2 or not all(s['pids'] for s in sides):
+        return
+    x, y = sides
+    pairs = [tuple(sorted((p, q))) for p in x['pids'] for q in y['pids']]
+    weight = 1.0
+    for pair in pairs:
+        seen = [t for t in pair_times.get(pair, []) if m['started'] - t < PAIR_WINDOW]
+        weight = min(weight, PAIR_WEIGHTS[min(len(seen), len(PAIR_WEIGHTS) - 1)])
+    for pair in pairs:
+        pair_times[pair] = [t for t in pair_times.get(pair, []) if m['started'] - t < PAIR_WINDOW] + [m['started']]
+    avg = [sum(state[p]['rating'] for p in s['pids']) / len(s['pids']) for s in sides]
+    mult = margin(abs(x['score'] - y['score']))
+    got = {}
+    for s, mine, theirs in ((x, avg[0], avg[1]), (y, avg[1], avg[0])):
+        exp = expected(mine, theirs)
+        for p in s['pids']:
+            row = state[p]
+            k = K_NEW if row['games'] < K_GAMES else K_SETTLED
+            delta = k * mult * weight * ((1.0 if s['won'] else 0.0) - exp)
+            got[p] = {'before': row['rating'], 'after': row['rating'] + delta, 'delta': delta, 'expected': exp,
+                      'weight': weight}
+    for s in sides:
+        for p in s['pids']:
+            row = state[p]
+            row['rating'] = got[p]['after']
+            row['peak'] = max(row['peak'], row['rating'])
+            row['w' if s['won'] else 'l'] += 1
+            row['games'] += 1 if weight > 0 else 0
+            row['streak'] = (max(row['streak'], 0) + 1) if s['won'] else (min(row['streak'], 0) - 1)
+            row['last'] = m['started']
+            timeline.setdefault(p, []).append((m['started'], m['id'], row['rating']))
+    deltas[m['id']] = got
+
+
+def _rate_ones(m, res, state, deltas, timeline, pair_times):
+    """A confirmed Ones game (0.90.0 M8, GUESSED): every pair of players is a 1v1 between them, worth K/(n-1) each so a
+    game moves a player about as much as one 1v1 (n players). The better place scores 1 (a shared place 0.5) against
+    `expected`, times the margin of their goal difference and the pair's own damping. The winners (most goals) get a win,
+    the rest a loss."""
+    goals = res['scores']
+    pids = [p for p in goals if goals[p] is not None]
+    if len(pids) < 2:
+        return
+    n = len(pids)
+    before = {p: state[p]['rating'] for p in pids}
+    change = {p: 0.0 for p in pids}
+    weights = {p: [] for p in pids}
+    for i, p in enumerate(pids):
+        for q in pids[i + 1:]:
+            pair = tuple(sorted((p, q)))
+            seen = [t for t in pair_times.get(pair, []) if m['started'] - t < PAIR_WINDOW]
+            weight = PAIR_WEIGHTS[min(len(seen), len(PAIR_WEIGHTS) - 1)]
+            pair_times[pair] = seen + [m['started']]
+            s_p = 1.0 if goals[p] > goals[q] else 0.0 if goals[p] < goals[q] else 0.5
+            mult = margin(abs(goals[p] - goals[q]))
+            for me, other, score in ((p, q, s_p), (q, p, 1.0 - s_p)):
+                k = K_NEW if state[me]['games'] < K_GAMES else K_SETTLED
+                change[me] += k / (n - 1) * mult * weight * (score - expected(before[me], before[other]))
+                weights[me].append(weight)
+    got = {}
+    for p in pids:
+        row = state[p]
+        weight = max(weights[p])
+        won = p in res['winners']
+        got[p] = {'before': before[p], 'after': before[p] + change[p], 'delta': change[p],
+                  'expected': sum(expected(before[p], before[q]) for q in pids if q != p) / (n - 1), 'weight': weight,
+                  'place': res.get('places', {}).get(p)}
+        row['rating'] = got[p]['after']
+        row['peak'] = max(row['peak'], row['rating'])
+        row['w' if won else 'l'] += 1
+        row['games'] += 1 if weight > 0 else 0
+        row['streak'] = (max(row['streak'], 0) + 1) if won else (min(row['streak'], 0) - 1)
+        row['last'] = m['started']
+        timeline.setdefault(p, []).append((m['started'], m['id'], row['rating']))
+    deltas[m['id']] = got

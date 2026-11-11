@@ -29,10 +29,14 @@ def ago(seconds):
 
 def _side(p, r, you):
     return {'pid': p['pid'], 'name': p['name'], 'you': p['pid'] == you, 'team': r['teams'].get(p['pid']),
-            'score': r['scores'].get(p['pid']), 'won': r['winner'] == p['pid']}
+            'score': r['scores'].get(p['pid']), 'won': H.won(r, p['pid'])}
 
 
 def _status(r, names, you):
+    if r.get('side_of') is not None:   # a team match (World of Chel): no one waits on one player
+        if r['status'] == H.WAITING:
+            return 'info', 'Waiting for the other side'
+        return STATUS.get(r['status'], ('info', 'No result yet'))
     if r['status'] == H.WAITING:
         who = r['waiting_for']
         if who == you:
@@ -49,6 +53,8 @@ def match_row(m, you, now):
     """One match of the Recent matches list, me first when I played in it. `entry` is what the "Enter result" form
     starts with (my own claim, else the mirror of the partner's), None when I may not enter one (not mine, or confirmed)."""
     r = m['result']
+    if H.is_team(m):
+        return team_row(m, you, now)
     mine = next((p for p in m['players'] if p['pid'] == you), None)
     other = next((p for p in m['players'] if p is not mine), None) if mine else None
     order = [mine, other] if mine else m['players']
@@ -64,6 +70,29 @@ def match_row(m, you, now):
     return {'id': m['id'], 'ago': ago(now - m['started']), 'mode': m.get('mode') or 'versus', 'rules': m.get('rules') or '', 'status': r['status'],
             'tone': tone, 'text': text, 'mine': bool(mine), 'players': [_side(p, r, you) for p in order], 'entry': entry,
             'delta': (m.get('deltas') or {}).get(you) if mine and r['status'] == H.CONFIRMED else None}
+
+
+def team_row(m, you, now):
+    """A team match (World of Chel, 0.90.0) in the Recent matches list: `players` my side first (each side's leader
+    first), `sides` [{names, score, won, you}] the two sides, my side first; no result form (the game reports these)."""
+    r = m['result']
+    side_of = r.get('side_of') or {p['pid']: p.get('side', 0) for p in m['players']}
+    mine = side_of.get(you) if any(p['pid'] == you for p in m['players']) else None
+    order = sorted({side_of[p['pid']] for p in m['players']}, key=lambda s: (s != mine, s))
+    names = {p['pid']: p['name'] for p in m['players']}
+    tone, text = _status(r, names, you)
+    sides = []
+    for s in order:
+        on = [p for p in m['players'] if side_of[p['pid']] == s]
+        score = next((x['score'] for x in r.get('sides') or [] if x['side'] == s), None)
+        sides.append({'names': [p['name'] + (' (left)' if p.get('left') else '') for p in on], 'score': score,
+                      'won': any(x['side'] == s and x['won'] for x in r.get('sides') or []), 'you': s == mine})
+    players = [p for s in order for p in m['players'] if side_of[p['pid']] == s]
+    return {'id': m['id'], 'ago': ago(now - m['started']), 'mode': m.get('mode') or 'chel_dropin',
+            'rules': m.get('rules') or '', 'status': r['status'], 'tone': tone, 'text': text, 'mine': mine is not None,
+            'team': True, 'sides': sides, 'players': [_side(p, r, you) for p in players], 'entry': None,
+            'against': ', '.join(n for x in sides if not x['you'] for n in x['names']),
+            'delta': (m.get('deltas') or {}).get(you) if mine is not None and r['status'] == H.CONFIRMED else None}
 
 
 def player_row(row, you):
@@ -120,7 +149,8 @@ def banner_for(matches, seen):
         return None
     won = next((p['won'] for p in row['players'] if p['you']), False)
     change = f" ({row['delta']:+d})" if row.get('delta') is not None else ''
-    return {'match': row['id'], 'text': ('You won' if won else 'You lost') + f" against {row['players'][1]['name']}{change}"}
+    against = row['against'] if row.get('team') else row['players'][1]['name']
+    return {'match': row['id'], 'text': ('You won' if won else 'You lost') + f" against {against}{change}"}
 
 
 def _band(rating):
@@ -138,9 +168,8 @@ def result_card(raw):
     if m is None or delta is None or not isinstance(r, dict):
         return None
     res = m['result']
-    other = next(p['pid'] for p in m['players'] if p['pid'] != you)
-    sf, sa = res['scores'].get(you), res['scores'].get(other)
-    won = res['winner'] == you
+    sf, sa = res['scores'].get(you), H.goals_against(m, res, you)
+    won = H.won(res, you)
     now = r['rating']
     before = now - delta
     ranked = r.get('rank') is not None
