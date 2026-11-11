@@ -2,6 +2,14 @@
 
 What changed in each version, for players.
 
+## 0.90.1 (2026-11-11)
+
+### Changed
+
+- **Lobbies are Quick only for now.** CHEL lobbies are not ready yet, so the app no longer offers them: Host a lobby
+  makes a Quick lobby (two players), the public list shows Quick lobbies only, and a CHEL lobby code says CHEL lobbies
+  are not available yet. World of Chel itself is unchanged.
+
 ## 0.90.0 (2026-11-11)
 
 ### Added

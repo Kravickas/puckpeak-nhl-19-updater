@@ -93,10 +93,11 @@ class LobbyClient:
                                                   **({'mode': mode} if mode else {}),
                                                   **({'kind': kind, 'split': bool(split)} if kind == 'chel' else {})})
 
-    def join(self, code, name, ext, roster_crc=None):
-        # kinds: this app joins CHEL lobbies too (a server refuses them to apps that do not say so)
+    def join(self, code, name, ext, roster_crc=None, chel=True):
+        # kinds: this app joins CHEL lobbies too (a server refuses them to apps that do not say so); chel=False leaves
+        # them out (0.90.1: CHEL lobbies hidden in the app)
         return self._call('POST', f'/api/lobby/{_code(code)}/join',
-                          {'name': name, 'ext': ext, 'kinds': ['chel'],
+                          {'name': name, 'ext': ext, **({'kinds': ['chel']} if chel else {}),
                            **({'roster_crc': roster_crc} if roster_crc else {})})
 
     def side(self, code, token, side):

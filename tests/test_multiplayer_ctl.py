@@ -86,8 +86,9 @@ class FakeService:
         self.lobby['players'][self.you]['side'] = side
         return {**self.lobby, 'you': self.you}
 
-    def join(self, code, name, ext, roster_crc=None):
+    def join(self, code, name, ext, roster_crc=None, chel=True):
         self._go('join', code, name, ext)
+        self.join_chel = chel
         self.lobby = self.view()
         self.lobby['players'].insert(0, {'name': 'Bo', 'ready': False, 'launch': False, 'roster': 'unknown', 'stage': 'lobby'})
         self.you = 1
@@ -1417,12 +1418,40 @@ def test_quick_phrase_hotkeys_send_nothing_while_chat_is_off(mp):
 
 
 # --- CHEL lobbies (0.90.0) ----------------------------------------------------------------------------------------
+@pytest.fixture
+def chel_on(monkeypatch):
+    monkeypatch.setattr(MC, 'CHEL_LOBBIES', True)       # 0.90.1 hides CHEL lobbies; these tests keep the code alive
+
+
+def test_chel_lobbies_are_hidden_for_now(mp):
+    """0.90.1 hotfix: no CHEL host option, no CHEL rows in the public list, no joining one by code."""
+    assert MC.CHEL_LOBBIES is False
+    mp.set_name('iksperial')
+    mp.set_ext('16349')
+    assert 'not available' in mp.create_chel(RU.CHEL_DROPIN)['error'] and mp.service.calls == []
+    mp.lobbies = [{'code': 'AAAAA', 'host': 'a', 'kind': 'chel', 'mode': RU.CHEL_DROPIN},
+                  {'code': 'BBBBB', 'host': 'b', 'mode': RU.VERSUS}]
+    v = mp.view()
+    assert v['chel_modes'] == [] and [r['code'] for r in v['lobbies']] == ['BBBBB']
+    assert mp.join('K7M2Q') == {'ok': True} and mp.service.join_chel is False
+
+
+def test_joining_a_chel_lobby_by_code_says_not_yet(mp):
+    mp.set_name('iksperial')
+    mp.set_ext('16349')
+    def refuse(*a, **k):
+        raise LC.LobbyRefused(409, 'this is a World of Chel lobby: update Overtime Roster to join it')
+    mp.service.join = refuse
+    assert mp.join('K7M2Q')['error'] == MC.NO_CHEL_JOIN
+
+
 def start_chel(mp, split=True):
     mp.set_name('iksperial')
     mp.set_ext('16349')
     assert mp.create_chel(RU.CHEL_DROPIN, True, split) == {'ok': True}
 
 
+@pytest.mark.usefixtures('chel_on')
 def test_create_chel_sends_the_kind_mode_and_split(mp):
     start_chel(mp)
     assert mp.service.calls[0] == ('create', 'iksperial', 16349, True)
@@ -1433,6 +1462,7 @@ def test_create_chel_sends_the_kind_mode_and_split(mp):
     assert {m['mode'] for m in mp.view()['chel_modes']} == set(MC.CHEL_PICK)
 
 
+@pytest.mark.usefixtures('chel_on')
 def test_create_chel_refuses_other_modes_and_unsplits_ones(mp):
     mp.set_name('iksperial')
     mp.set_ext('16349')
@@ -1441,6 +1471,7 @@ def test_create_chel_refuses_other_modes_and_unsplits_ones(mp):
     assert mp.service.create_kw['split'] is False
 
 
+@pytest.mark.usefixtures('chel_on')
 def test_a_server_before_0_90_says_it_has_no_chel_lobbies(mp):
     """The live 0.83.0 server answers a CHEL create with 422 'the game mode is versus, shootout or threes' (owner
     2026-11-11): the app says the server needs the update, not that the mode is wrong."""
@@ -1453,6 +1484,7 @@ def test_a_server_before_0_90_says_it_has_no_chel_lobbies(mp):
     assert '0.90.0' in err and 'Quick lobbies work' in err
 
 
+@pytest.mark.usefixtures('chel_on')
 def test_set_side_moves_me_and_refuses_junk(mp):
     start_chel(mp)
     assert mp.set_side(2) == {'ok': False}
@@ -1461,11 +1493,13 @@ def test_set_side_moves_me_and_refuses_junk(mp):
     assert mp.view()['lobby']['side_pick']['mine'] == 1
 
 
+@pytest.mark.usefixtures('chel_on')
 def test_a_chel_lobby_takes_only_chel_modes(mp):
     start_chel(mp)
     assert 'World of Chel' in mp.set_mode(RU.SHOOTOUT)['error']
 
 
+@pytest.mark.usefixtures('chel_on')
 def test_a_chel_launch_serves_the_tile_and_never_presses_ready(mp, monkeypatch):
     good_checks(mp)
     rig = Rig(mp, monkeypatch)

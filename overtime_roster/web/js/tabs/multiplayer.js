@@ -806,7 +806,7 @@ export default function Multiplayer({ go }) {
     <div class="mp-col mp-col-lobby">
       ${s.lobby
         ? html`<${Lobby} s=${s}/>`
-        : html`<${Card} n=${2} title="Lobby" aside="Quick: one friend · CHEL: World of Chel with friends" className="mp-card-fill mp-stage">
+        : html`<${Card} n=${2} title="Lobby" aside=${(s.chel_modes || []).length ? 'Quick: one friend · CHEL: World of Chel with friends' : 'Quick: play one friend'} className="mp-card-fill mp-stage">
             ${s.you.ext ? html`<${Pick} s=${s} go=${go}/>`
               : html`<div class="mp-body mp-fill"><div class="mp-empty">Sign in to ShadNet first (left): a lobby is tied to your game's own sign-in.</div>
                   <div class="mp-spacer"></div><${HowTo}/></div>`}

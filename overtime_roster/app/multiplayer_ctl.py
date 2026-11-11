@@ -86,6 +86,10 @@ CHEL_NAMES = {RU.CHEL_DROPIN: 'Drop-in 6s', RU.CHEL_DROPIN3: 'Drop-in 3s', RU.CH
               RU.CHEL_ONES: 'Ones', RU.CHEL_PROAM: 'Pro-Am', RU.CHEL_CLUB: 'Club 6s', RU.CHEL_CLUB3: 'Club 3s',
               RU.CHEL_PLAYOFFS: 'Club playoffs 6s', RU.CHEL_PLAYOFFS3: 'Club playoffs 3s',
               RU.CHEL_OTP: 'Online Team Play'}
+# 0.90.1 hotfix: CHEL lobbies are not supported yet, so the app hides them (no CHEL host option, no CHEL rows in the
+# public list, no joining one by code). The code stays for later: set True to bring them back.
+CHEL_LOBBIES = False
+NO_CHEL_JOIN = 'That is a World of Chel lobby. CHEL lobbies are not available yet: join or host a Quick lobby.'
 CHEL_PICK = (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3, RU.CHEL_ONES, RU.CHEL_PROAM)
 CHEL_SPLIT = (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3)      # the modes with Home and Away
 OLD_SERVER_CHEL = ('This server has no CHEL lobbies yet: it needs the 0.90.0 server update. '
@@ -459,6 +463,8 @@ class MultiplayerCtl(Part):
     def create_chel(self, mode=RU.CHEL_DROPIN, public=True, split=False):
         """A CHEL lobby (0.90.0): a World of Chel party of 1 or more in `mode`; `split` into Home and Away (the members
         play each other, the CPU fills the rest), else the party plays another party or solo players."""
+        if not CHEL_LOBBIES:
+            return self._fail('CHEL lobbies are not available yet. Host a Quick lobby.')
         if mode not in CHEL_PICK:
             return self._fail('Pick a World of Chel mode.')
         def make(ext, name):
@@ -501,7 +507,14 @@ class MultiplayerCtl(Part):
             code = LC._code(code)
         except LC.LobbyRefused as err:
             return self._fail(err.text)
-        return self._enter('join', lambda ext, name: self.client().join(code, name, ext))
+        def enter(ext, name):
+            try:
+                return self.client().join(code, name, ext, chel=CHEL_LOBBIES)
+            except LC.LobbyRefused as err:
+                if not CHEL_LOBBIES and err.status == 409 and 'World of Chel' in (err.text or ''):
+                    raise LC.LobbyRefused(409, NO_CHEL_JOIN) from None   # the server's words ask for an app update
+                raise
+        return self._enter('join', enter)
 
     def _enter(self, what, call):
         ext, _from = self.ext()
@@ -1628,8 +1641,10 @@ class MultiplayerCtl(Part):
                              'age': _age(r.get('age')), 'kind': 'chel' if r.get('kind') == 'chel' else 'quick',
                              'game': ALL_NAMES.get(r.get('mode')) or GAME_NAMES[RU.VERSUS],
                              'cap': r.get('cap') if isinstance(r.get('cap'), int) else 2,
-                             'split': bool(r.get('split'))} for r in self.lobbies],
-                'chel_modes': [{'mode': m, 'name': CHEL_NAMES[m], 'split': m in CHEL_SPLIT} for m in CHEL_PICK],
+                             'split': bool(r.get('split'))} for r in self.lobbies
+                            if CHEL_LOBBIES or r.get('kind') != 'chel'],
+                'chel_modes': [{'mode': m, 'name': CHEL_NAMES[m], 'split': m in CHEL_SPLIT} for m in CHEL_PICK]
+                if CHEL_LOBBIES else [],
                 'game': self._game_view(lobby),
                 'history': self._history_view(),
                 'reports': {'on': self.reports, 'asked': self.reports_asked, 'busy': self.report['busy'],
