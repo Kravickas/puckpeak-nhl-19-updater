@@ -396,6 +396,8 @@ select.field option { background: var(--panel); color: var(--text-soft); }
 .helpbar .status.info { color: var(--text); }
 .helpbar .status.tip { color: var(--text-2); font-weight: 400; }
 .helpbar .pct { width: 38px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.helpbar .amount { flex: none; white-space: nowrap; color: var(--text-2); font-size: 14px; font-weight: 600;
+  font-variant-numeric: tabular-nums; }
 .helpbar .keys { display: flex; align-items: center; gap: 16px; }
 .helpbar .key { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; letter-spacing: .06em; cursor: pointer; color: var(--text-soft); }
 .helpbar .key:hover { color: #fff; }

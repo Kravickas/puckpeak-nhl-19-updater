@@ -37,7 +37,7 @@ class FakeCtl:
         self.patch_want = {'text': True, 'names': False, 'league': False, 'roster': False}
         self.said = []
 
-    def say(self, text, tone='info', progress=None):
+    def say(self, text, tone='info', progress=None, amount=None):
         self.said.append((text, tone))
 
     def changed(self, *names):

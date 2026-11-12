@@ -335,8 +335,11 @@ def run_job(setup, busy, work, said, stopped, then=None, error=False, rescan=Tru
     ctl.changed('patch', 'setup', 'app')
     title = busy.rstrip('. ')
 
-    def step(text, share=-1):
-        ctl.say(f'{title}: {text}', 'info', share)
+    def step(text, share=-1, amount=None):
+        if amount:
+            ctl.say(f'{title}: {text}', 'info', share, amount=amount)
+        else:
+            ctl.say(f'{title}: {text}', 'info', share)
 
     def body():
         try:
@@ -519,7 +522,7 @@ def one_click(setup, then=None):
 
     def work(step):
         speed = patchmeter.load(cache)
-        meter = box['meter'] = patchmeter.Meter(step, speed['speeds'])
+        meter = box['meter'] = patchmeter.Meter(step, speed['speeds'], amount=patchmeter.patched_text)
         box['last'] = speed['last']
         plan_patch(meter, speed['last'], on, cache, setup)
         meter.start()
@@ -649,14 +652,15 @@ def plan_patch(meter, last, on, cache, setup):
     if on['roster']:
         meter.plan('roster', _roster_kind(setup), 1, f'making the {SEASON_LABEL} default roster...')
     if on['art']:
-        meter.plan('clubart', 'clubart', last.get('clubart', 0), 'making the club logos of the roster you play...')
+        meter.plan('clubart', 'clubart', last.get('clubart', 0), 'making the club logos of the roster you play...',
+                   writes=True)
         for fam in KIT_FAMILIES:
             meter.plan(f'kits:{fam}', 'kits', last.get(f'kits:{fam}', 0),
-                       'making the jerseys on this PC...' if fam == 'pants' else '')
+                       'making the jerseys on this PC...' if fam == 'pants' else '', writes=True)
         meter.plan('packs', 'check', last.get('packs', 0), 'checking the art packs...')
     meter.plan('build', 'time:build', 1, 'writing the patch files...')
-    meter.plan('copy', 'copy', last.get('copy', 0), 'writing the patch files...')
-    meter.plan('write', 'write', last.get('write', 0), 'writing the updated team art...')
+    meter.plan('copy', 'copy', last.get('copy', 0), 'writing the patch files...', writes=True)
+    meter.plan('write', 'write', last.get('write', 0), 'writing the updated team art...', writes=True)
     meter.plan('verify', 'verify', last.get('verify', 0), 'reading the written team art back...')
     meter.plan('install', 'time:install', 1, 'pointing NHL 19 at the Overtime server...')
     meter.plan('look', 'time:look', 1, 'checking the patch files...')
@@ -670,11 +674,12 @@ def scan_patch(meter, last, on, game_dir, cache, log):
     meter.begin('scan')
     index = patch._game_index(game_dir) if on['art'] or 'copy' not in last else None
     jobs = patch.kit_jobs(on, game_dir, cache, log=log, index=index) if on['art'] else []
-    work = {f'kits:{j.family}': j.work for j in jobs}
+    work = {f'kits:{j.family}': j for j in jobs}
     for fam in KIT_FAMILIES:
         key = f'kits:{fam}'
-        if work.get(key):
-            meter.resize(key, work[key])
+        if key in work and work[key].work:
+            meter.resize(key, work[key].work)
+            meter.written_bytes(key, work[key].bytes)
         else:
             meter.skip(key)     # off, kept as it is, or nothing to make
     if on['art']:
@@ -714,7 +719,7 @@ def learn_patch(meter, last, cache, log=None):
     if log:
         rows = meter.report()
         total = sum(took for *_r, took in rows)
-        log(f'Patch took {total:.1f} s: ' + ', '.join(f'{key} {took:.1f} s (planned {plan:.1f})'
+        log(f'Patch took {total:.1f} s, {patchmeter.patched_text(meter.written()).lower()}: ' + ', '.join(f'{key} {took:.1f} s (planned {plan:.1f})'
                                                       for key, _kind, _units, plan, took in rows if took >= 0.05))
     speeds, units = meter.learned(last)
     patchmeter.save(cache, speeds, units)

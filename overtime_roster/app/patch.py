@@ -320,16 +320,17 @@ def local_kits(cache_dir, family):
     return path if os.path.isfile(path) else None
 
 
-KitJob = collections.namedtuple('KitJob', 'family out served source work index')
+KitJob = collections.namedtuple('KitJob', 'family out served source work index bytes')
 
 
 def kit_jobs(want, game_dir, cache_dir, log=None, index=None):
     """The jersey families make_kits would make now, after its removals: the textures of a family switched off, or
     whose layer pack is not here, leave the cache (the clubs' take about 3 GB; switched on again, the next Patch makes
     them again from the layer pack kept on this PC), and 0.30's whole packs (OLD_ALT_PACKS) too. [KitJob]: each family
-    with its source open, its work (kitcompose.work: 0 when its pack is kept) and the game's index it was weighed on
-    (gamefiles.winning_index, read here without `index`), the NHL kits' pants first with `kits`. A family whose layer
-    pack does not open is logged and left out. Never raises."""
+    with its source open, its work (kitcompose.work: 0 when its pack is kept), the game's index it was weighed on
+    (gamefiles.winning_index, read here without `index`) and the bytes of the textures it makes (the game's files' sizes:
+    a made texture keeps its file's size and format; 0 when kept), the NHL kits' pants first with `kits`. A family whose
+    layer pack does not open is logged and left out. Never raises."""
     say = log or (lambda m: None)
     if not cache_dir or cache_dir not in art_places(cache_dir):
         return []
@@ -362,7 +363,10 @@ def kit_jobs(want, game_dir, cache_dir, log=None, index=None):
         out = os.path.join(cache_dir, local)
         try:
             src = source()
-            jobs.append(KitJob(fam, out, served, src, kitcompose.work(src, game_dir, out, index), index))
+            work = kitcompose.work(src, game_dir, out, index)
+            where, sizes = index or ({}, {})
+            size = sum(sizes.get(p, 0) for p in src.files if p in where) if work else 0
+            jobs.append(KitJob(fam, out, served, src, work, index, size))
         except Exception as err:  # noqa: BLE001 - a jersey never stops a patch
             say(f'jerseys ({fam}): not made ({err})')
     return jobs

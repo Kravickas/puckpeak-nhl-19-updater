@@ -13,6 +13,9 @@ What changed in each version, for players.
   out larger or smaller than measured never makes the bar jump back or ahead, only go slower or faster. Each step's
   speed is measured while it runs, and kept after the Patch (`patch_speed.json` in the cache), so the next Patch
   starts with this PC's speeds. The log says how long each step took against its plan.
+- **What Patch has written so far, beside the %:** "[Patched 10.3 GB]" on the Help bar, counted live as the jerseys
+  and club logos are made and the patch files are copied and written (reading them back is not counted). The log
+  says the total at the end.
 - **A faster first Patch:**
   - The texture encoder makes BC7 textures about 20 % faster (the jerseys' slowest kind), byte for byte the same
     textures: the same numbers in the same order, fewer copies of them. Jerseys made before stay as they are.

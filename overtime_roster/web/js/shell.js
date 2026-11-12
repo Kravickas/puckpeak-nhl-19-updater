@@ -67,7 +67,8 @@ export function TabBar({ tabs, tab, onTab }) {
 }
 
 // progress, the status (its own slice, pushed first: it never waits for the others), the keys.
-// status: {text, tone, busy, progress: 0..1 | < 0 (running, no end known) | null}; tip: shown when the status is empty
+// status: {text, tone, busy, progress: 0..1 | < 0 (running, no end known) | null, amount: a short count beside the % (Patch:
+// "Patched 10.3 GB", counted as it writes) or none}; tip: shown when the status is empty
 export function HelpBar({ status, tip, enter, detailsOpen, onDetails, onEnter }) {
   const s = status || {};
   const p = s.progress;
@@ -78,6 +79,7 @@ export function HelpBar({ status, tip, enter, detailsOpen, onDetails, onEnter })
   return html`<footer class="helpbar">
     <${ProgressBar} value=${value} active=${!!s.busy && !indeterminate} indeterminate=${indeterminate}/>
     <span class="pct">${has && !indeterminate ? Math.round(value * 100) + '%' : ''}</span>
+    ${s.amount && html`<span class="amount">[${s.amount}]</span>`}
     <span class=${cls('status', s.text ? s.tone : 'tip')} title=${text}>${text}</span>
     <span class="keys">
       ${enter && html`<span class="key" title="✕ or Enter" onClick=${onEnter}><${Keycap} k="✕"/><span class="or">/</span><${Keycap} k="Enter"/>${enter}</span>`}

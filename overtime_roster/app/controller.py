@@ -211,8 +211,12 @@ class Controller:
         """Push every slice again (a roster opened, an update applied)."""
         self.host.changed(*registry.slices(), *OLD_SLICES)
 
-    def say(self, text, tone='info', progress=None):
+    def say(self, text, tone='info', progress=None, amount=None):
+        """The Help bar's line: `progress` 0..1 (< 0: running, no end known), `amount` a short count beside the % (Patch:
+        "Patched 10.3 GB"), only while given."""
         self.status = {'text': text, 'tone': tone, 'progress': progress}
+        if amount:
+            self.status['amount'] = amount
         self.changed('status')
 
     def remember(self, **kv):

@@ -143,6 +143,40 @@ def test_an_odd_patch_never_throws_a_speed_far_off():
     assert m.learned()[0]['a'] == pytest.approx(0.5 + 50)       # at most 100 times the old speed, then half and half
 
 
+def test_the_bytes_patched_count_as_the_writing_steps_go():
+    clock, said = Clock(), []
+    m = PM.Meter(lambda text, share, amount: said.append(amount), {'a': 1.0, 'b': 1.0, 'kits': 1.0}, clock=clock,
+                 amount=PM.patched_text)
+    m.plan('check', 'a', 100)                               # reads only: not counted
+    m.plan('kits:nhl', 'kits', 50, writes=True)             # weighed units
+    m.written_bytes('kits:nhl', 3 << 30)                    # its textures: 3 GB
+    m.plan('copy', 'b', 2 << 20, writes=True)               # bytes
+    m.begin('check')
+    m.tick('check', 100)
+    assert m.written() == 0 and said[-1] == 'Patched 0 MB'
+    m.begin('kits:nhl')
+    clock.t += 1
+    m.share_of('kits:nhl', 0.5)
+    assert m.written() == 1.5 * 2**30 and said[-1] == 'Patched 1.5 GB'
+    m.share_of('kits:nhl', 1.0)
+    m.begin('copy')
+    clock.t += 1
+    m.tick('copy', 1 << 20)
+    assert said[-1] == 'Patched 3.0 GB' and m.written() == (3 << 30) + (1 << 20)
+    assert PM.patched_text(850 * 2**20) == 'Patched 850 MB' and PM.patched_text(int(10.34 * 2**30)) == 'Patched 10.3 GB'
+
+
+def test_the_help_bar_line_carries_the_count_only_while_given():
+    from overtime_roster.app import controller
+    c = controller.Controller.__new__(controller.Controller)
+    c.changed = lambda *names: None
+    c.say('Patching NHL 19: writing...', 'info', 0.4, amount='Patched 1.2 GB')
+    assert c.status == {'text': 'Patching NHL 19: writing...', 'tone': 'info', 'progress': 0.4,
+                        'amount': 'Patched 1.2 GB'}
+    c.say('Patched.', 'good')
+    assert c.status == {'text': 'Patched.', 'tone': 'good', 'progress': None}
+
+
 # --- overlay: unchanged archives are kept, bytes reported ------------------------------------------------------------
 def test_an_art_archive_with_the_same_content_is_kept_not_written_again(game, tmp_path, monkeypatch):  # noqa: F811
     looks = pack(tmp_path, 'looks', {LOGO: gnf('utah'), NEW_LOGO: gnf('seattle'), KIT: gnf('utah kit')})
@@ -327,7 +361,7 @@ def test_patch_says_a_share_that_only_grows_and_keeps_its_speeds(sc, monkeypatch
     shares = []
     real = sc.ctl.say
 
-    def say(text, tone='info', progress=None):
+    def say(text, tone='info', progress=None, amount=None):
         if progress is not None and progress >= 0:
             shares.append(progress)
         real(text, tone, progress)
@@ -345,7 +379,8 @@ def test_a_patch_that_stops_stops_its_bar(sc, monkeypatch):  # noqa: F811
     from overtime_roster.app import gamesetup
     shares = []
     real = sc.ctl.say
-    sc.ctl.say = lambda text, tone='info', progress=None: (shares.append((text, progress)), real(text, tone, progress))
+    sc.ctl.say = lambda text, tone='info', progress=None, amount=None: (shares.append((text, progress)),
+                                                                        real(text, tone, progress))
     monkeypatch.setattr(gamesetup, 'install', lambda emu, xml: (_ for _ in ()).throw(OSError('disk full')))
     sc.setup_refresh()
     sc.setup_patch()

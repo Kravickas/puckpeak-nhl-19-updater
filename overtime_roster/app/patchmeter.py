@@ -88,6 +88,11 @@ def save(cache_dir, speeds, last):
         pass
 
 
+def patched_text(n):
+    """The Help bar's count beside the %: "Patched 850 MB", "Patched 10.3 GB" (2^30 bytes, as the app's other sizes)."""
+    return f'Patched {n / 2**30:.1f} GB' if n >= 2**30 else f'Patched {int(n / MB)} MB'
+
+
 def _creep(x):
     """The share of a step without units after `x` of its expected time: x up to CREEP_KNEE, then nearer and nearer
     to 1 (as fast at the knee, then slower as 1 / x: a step that takes ten times its time still moves; never 1)."""
@@ -98,11 +103,12 @@ def _creep(x):
 
 
 class _Phase:
-    __slots__ = ('key', 'kind', 'units', 'done', 'state', 't0', 't1', 'text')
+    __slots__ = ('key', 'kind', 'units', 'done', 'state', 't0', 't1', 'text', 'per_unit')
 
-    def __init__(self, key, kind, units, text):
+    def __init__(self, key, kind, units, text, writes=False):
         self.key, self.kind, self.units, self.text = key, kind, max(0.0, float(units)), text
         self.done, self.state, self.t0, self.t1 = 0.0, 'todo', None, None
+        self.per_unit = 1.0 if writes else None     # bytes the patch writes per unit done (None: it writes none)
 
     @property
     def timed(self):
@@ -112,8 +118,10 @@ class _Phase:
 class Meter:
     """The plan of one Patch and the share done. `say(text, share)` shows it (run_job's step); `speeds`: load()'s."""
 
-    def __init__(self, say, speeds=None, clock=time.monotonic, interval=0.2):
-        self._say, self._clock, self._interval = say, clock, interval
+    def __init__(self, say, speeds=None, clock=time.monotonic, interval=0.2, amount=None):
+        """`amount(bytes)`: the text of the bytes the patch has written so far (patched_text), said beside the share:
+        say(text, share, amount); without it say(text, share)."""
+        self._say, self._clock, self._interval, self._amount = say, clock, interval, amount
         self.speeds = dict(speeds or default_speeds())
         self._known = dict(self.speeds)     # the speeds Patch started with: learned() blends into these
         self._fixed = {}                    # kind: when its speed was last set from the step running (once a second)
@@ -122,16 +130,31 @@ class Meter:
         self._anchor = (0.0, 0.0, None)     # (share shown, work credited, work left) when the plan last changed
         self._shown = 0.0
         self._text = ''
-        self._pushed = (None, None, 0.0)    # (text, share, when) last said
+        self._pushed = (None, None, 0.0, None)  # (text, share, when, amount) last said
         self._stop = threading.Event()
         self._thread = None
         self.finished = False
 
     # --- the plan ---------------------------------------------------------------------------------------------------
-    def plan(self, key, kind, units=1.0, text=''):
-        """Add the step `key` (or replace its plan): `units` of `kind` (time:* kinds: 1)."""
+    def plan(self, key, kind, units=1.0, text='', writes=False):
+        """Add the step `key` (or replace its plan): `units` of `kind` (time:* kinds: 1). `writes`: what the step does
+        is written by the patch, a byte a unit (else written_bytes), and counts in the bytes patched."""
         with self._lock:
-            self._change(lambda: self._phases.__setitem__(key, _Phase(key, kind, units, text)))
+            self._change(lambda: self._phases.__setitem__(key, _Phase(key, kind, units, text, writes)))
+
+    def written_bytes(self, key, total):
+        """The bytes a step whose units are not bytes (a jersey family: weighed texture bytes) writes when all is done:
+        each unit done counts its share of them."""
+        with self._lock:
+            ph = self._phases.get(key)
+            if ph is not None and ph.per_unit is not None:
+                ph.per_unit = total / ph.units if ph.units else 0.0
+
+    def written(self):
+        """The bytes the patch has written so far (the steps planned with `writes`)."""
+        with self._lock:
+            return sum(min(ph.done, ph.units) * ph.per_unit for ph in self._phases.values()
+                       if ph.per_unit is not None)
 
     def resize(self, key, units):
         """The step's real size, known now."""
@@ -301,13 +324,18 @@ class Meter:
         with self._lock:
             now = self._clock()
             share = self._current(now)
-            text, last, when = self._pushed
-            if not force and text == self._text and last is not None and \
-                    (share - last < 0.001 or now - when < self._interval / 4):
+            amount = self._amount(self.written()) if self._amount else None
+            text, last, when, said = self._pushed
+            if not force and text == self._text and last is not None and now - when < self._interval / 4:
                 return
-            self._pushed = (self._text, share, now)
+            if not force and text == self._text and last is not None and share - last < 0.001 and amount == said:
+                return
+            self._pushed = (self._text, share, now, amount)
             out = self._text
-        self._say(out, share)
+        if self._amount:
+            self._say(out, share, amount)
+        else:
+            self._say(out, share)
 
     def start(self):
         """Push the share every interval while Patch runs (steps without units move by time alone)."""
