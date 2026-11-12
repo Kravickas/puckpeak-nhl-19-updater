@@ -2,6 +2,36 @@
 
 What changed in each version, for players.
 
+## Unreleased
+
+### Changed
+
+- **Patch's progress bar follows the time.** It used to jump between fixed points (2, 50, 60, 62, 65, 85, 92 %) and
+  stand still for minutes at 62 % and 65 % while the jerseys were made and the art was written. Now Patch first
+  measures its work (the textures to make, the bytes to check, copy, write and read back), turns it into time with
+  this PC's speed for each kind of work, and the bar moves by that: 1 % is about 1 % of the time. A step that turns
+  out larger or smaller than measured never makes the bar jump back or ahead, only go slower or faster. Each step's
+  speed is measured while it runs, and kept after the Patch (`patch_speed.json` in the cache), so the next Patch
+  starts with this PC's speeds. The log says how long each step took against its plan.
+- **A faster first Patch:**
+  - The texture encoder makes BC7 textures about 20 % faster (the jerseys' slowest kind), byte for byte the same
+    textures: the same numbers in the same order, fewer copies of them. Jerseys made before stay as they are.
+  - The club logos are made on every core (processes, as the jerseys): on threads they used two or three.
+  - A pack downloaded by the app and found to be the published file (its sha256) is not unpacked again at the first
+    Patch to check it; each texture is still checked against its sha256 as it is written into the game's archives.
+  - A pack that is checked in full (one from the exe or the repository, or the 3D jerseys against the game the first
+    time) is checked on every core.
+  - Jerseys and club logos made at Patch are not unpacked again right after: they were checked as they were made.
+  - The game's archives are listed once per Patch for the club logos and every jersey family.
+- **A Patch with the art unchanged no longer writes it again.** Patch wrote every art archive again and read it all
+  back on every press (over 15 GB with every pack on). An archive is kept when its content is the one the last Patch
+  wrote (the same textures by sha256 in the same order, the same game archive under a copy), it is still as it was
+  written (size and time, else its sha256) and its table still lists every texture at its size. The first Patch after
+  updating writes everything once.
+- **The 3D jerseys pack is checked against the game once**, not on every Patch: its deltas are laid on the game's
+  files and checked in full the first time, then recorded with the game's archives (names, sizes, times). While
+  neither changes, each texture is still checked against its sha256 as it is written.
+
 ## 0.90.2 (2026-11-11)
 
 ### Added

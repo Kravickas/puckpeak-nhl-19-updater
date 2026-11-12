@@ -12,11 +12,12 @@ import os
 import threading
 import time
 
-from overtime_core import gamefiles, nhlcom, overlay, rosterupdate, tdb, teams as T, textpack, xmlpatch
+from overtime_core import (eb, gamefiles, kitcompose, nhlcom, overlay, rosterupdate, tdb, teams as T, textpack,
+                           xmlpatch)
 
 from .. import VERSION
-from . import (crosscpu, gamesetup, jobs, launch, matchsetup, onlinetag, packdownload, patch, paths, savegame,
-               selfupdate, update)
+from . import (crosscpu, gamesetup, jobs, launch, matchsetup, onlinetag, packdownload, patch, patchmeter, paths,
+               savegame, selfupdate, update)
 from .packdownload import PackError
 from .registry import Part
 from .shell import friendly_date
@@ -314,10 +315,11 @@ def keep(ctl, seen):
             part.size = seen['size']
 
 
-def run_job(setup, busy, work, said, stopped, then=None, error=False, rescan=True):
+def run_job(setup, busy, work, said, stopped, then=None, error=False, rescan=True, stop=None):
     """Run `work(step)` as the app's one job (`busy` on the Help bar; step(text, share) tells where it is), then look
     at the game again. Done: said(result) gives the Help bar's line, then `then()`. Refused: its reason (caution).
-    Failed: "<stopped>: <why>" (bad), kept as the tab's error state when `error`. Setup looks again after it."""
+    Failed: "<stopped>: <why>" (bad), kept as the tab's error state when `error`. Setup looks again after it.
+    `stop()`: called first when the job ends, however it ends (the Patch meter's ticker stops before the last line)."""
     ctl = setup.ctl
     part = _part(ctl)
     with ctl.lock:
@@ -344,6 +346,11 @@ def run_job(setup, busy, work, said, stopped, then=None, error=False, rescan=Tru
         return False, out, safe_look(setup)
 
     def end(text, tone, seen, failure=None):
+        if stop:
+            try:
+                stop()
+            except Exception as err:    # noqa: BLE001 - the job's end is said all the same
+                ctl.host.log(f'{title}: {err}')
         if text:
             ctl.say(text, tone)     # before busy goes: a poll that sees it idle reads the end
         with ctl.lock:
@@ -508,8 +515,15 @@ def one_click(setup, then=None):
         return {'error': text}
     cache = cache_dir()
     on = switches(want, packs_here(cache))
+    box = {}            # the Patch meter, once work() made it
 
     def work(step):
+        speed = patchmeter.load(cache)
+        meter = box['meter'] = patchmeter.Meter(step, speed['speeds'])
+        box['last'] = speed['last']
+        plan_patch(meter, speed['last'], on, cache, setup)
+        meter.start()
+        meter.begin('prepare')
         game = gamesetup.read_game(game_dir)
         if not game['ok']:
             raise Refused(f"NHL 19 cannot be patched: {game['problem']}.")
@@ -521,55 +535,75 @@ def one_click(setup, then=None):
         if game['title_id'] != gamesetup.TITLE_ID:     # CUSA11116 v1.60 runs CUSA11126's eboot (same sha256, 2026-11-03)
             ctl.host.log(f"NHL 19 {game['title_id']}: eboot.bin sha256 "
                          f"{gamesetup._file_sha(gamefiles.locate(game_dir, 'eboot.bin'))}")
-        lang = game_text(game_dir, log=ctl.host.log)
-        xml = setup._xml()
-        if gamesetup.load_clean() is None:
-            step('noting the clean game first...', 0.02)
-            gamesetup.save_clean(gamesetup.snapshot(game_dir))
-        layers = [k for k in DATA_LAYERS if on[k]]
-        texts = [k for k in TEXT_LAYERS if k in layers]
-        left_out = texts if lang is None else [
-            k for k in texts if lang != textpack.LANG and not overlay.layer_fits(game_dir, k, lang)]
-        layers = [k for k in layers if k not in left_out]
-        database = None
-        if on['roster']:
-            step(f'making the {SEASON_LABEL} default roster...', 0.5)
-            database = setup._default_roster()
-            layers.append('database')
-        now = overlay.status(game_dir)
-        if on['art'] and 'art' in (now.get('layers') or {}):
-            layers.append('art')  # with no pack here the served art stays (patch.art_layer)
-        clubs = None
-        if on['art'] and patch.clubart_source(cache):
-            step('making the club logos of the roster you play...', 0.6)    # as Update does after a save; unchanged: kept
-            teams, origin, where = clubart_roster(ctl, database, getattr(setup, 'default_came', None))
-            if teams is not None:
-                clubs = patch.make_clubart(teams, game_dir, cache, log=ctl.host.log)
-                if clubs is not None:
-                    clubs = dict(clubs, origin=origin, where=where)
-        if on['art']:       # the jerseys of the layer packs on this PC's game files; unchanged: kept
-            patch.make_kits(on, game_dir, cache, log=ctl.host.log, step=lambda text: step(text, 0.62))
-        art = patch.art_layer(on, layers, cache, log=ctl.host.log, game_dir=game_dir)
-        step('writing the patch files' + (' and the updated team art...' if 'art' in layers else '...'), 0.65)
+        with eb.cached_tocs():  # the game's archives are only read until overlay.apply: each table is parsed once
+            index, kit_jobs = scan_patch(meter, box['last'], on, game_dir, cache, ctl.host.log)
+            meter.begin('texts')
+            lang = game_text(game_dir, log=ctl.host.log)
+            xml = setup._xml()
+            if gamesetup.load_clean() is None:
+                meter.begin('clean')
+                gamesetup.save_clean(gamesetup.snapshot(game_dir))
+            else:
+                meter.skip('clean')
+            layers = [k for k in DATA_LAYERS if on[k]]
+            texts = [k for k in TEXT_LAYERS if k in layers]
+            left_out = texts if lang is None else [
+                k for k in texts if lang != textpack.LANG and not overlay.layer_fits(game_dir, k, lang)]
+            layers = [k for k in layers if k not in left_out]
+            database = None
+            if on['roster']:
+                meter.begin('roster')
+                database = setup._default_roster()
+                meter.rekind('roster', ROSTER_KINDS.get(getattr(setup, 'default_came', None), meter.kind('roster')))
+                layers.append('database')
+            now = overlay.status(game_dir)
+            if on['art'] and 'art' in (now.get('layers') or {}):
+                layers.append('art')  # with no pack here the served art stays (patch.art_layer)
+            clubs = None
+            if on['art'] and patch.clubart_source(cache):
+                meter.begin('clubart')  # as Update does after a save; unchanged: kept
+                teams, origin, where = clubart_roster(ctl, database, getattr(setup, 'default_came', None))
+                if teams is not None:
+                    source, todo = patch.clubart_work(teams, game_dir, cache, index)
+                    meter.resize('clubart', todo)
+                    clubs = patch.make_clubart(teams, game_dir, cache, log=ctl.host.log,
+                                               progress=lambda share: meter.share_of('clubart', share),
+                                               index=index, source=source)
+                    if clubs is not None:
+                        clubs = dict(clubs, origin=origin, where=where)
+            if on['art']:       # the jerseys of the layer packs on this PC's game files; unchanged: kept
+                patch.make_kits(on, game_dir, cache, log=ctl.host.log, step=meter.say, jobs=kit_jobs,
+                                progress=lambda fam, share: (meter.begin(f'kits:{fam}'),
+                                                             meter.share_of(f'kits:{fam}', share)))
+            if on['art']:
+                meter.begin('packs')
+                meter.resize('packs', patch.art_layer_work(on, cache, game_dir))   # the packs just made count none
+            art = patch.art_layer(on, layers, cache, log=ctl.host.log, game_dir=game_dir,
+                                  progress=lambda n: meter.tick('packs', n))
+        meter.begin('build', 'writing the patch files' + (' and the updated team art...' if 'art' in layers else '...'))
         applied = None
         if layers:
             # news is no switch: always the tile (a beta1 patch served the hub without it, and apply keeps served options)
             applied = overlay.apply(game_dir, layers, database=database, menus={'chel': on['chel'], 'news': True},
-                                    art=art, lang=lang or textpack.LANG)
+                                    art=art, lang=lang or textpack.LANG, progress=apply_meter(meter))
         elif now.get('applied'):
             overlay.undo(game_dir)  # every switch off: no data patch, the server alone
+        for key in ('copy', 'write', 'verify'):
+            if not applied:
+                meter.skip(key)
         teams32 = setup._seattle_ready(database)
         if not teams32:
             xml = xmlpatch.expansion32_off(xml)
         elif not on['league']:
             xml = xmlpatch.bap32_off(xml)  # Seattle in Be a Pro needs the league layer's Lua
-        step('pointing NHL 19 at the Overtime server...', 0.85)
+        meter.begin('install')
         manifest = gamesetup.install(emu, xml)
-        step('checking the patch files...', 0.92)
+        meter.begin('look')     # the look at the game after the work (run_job); the meter ends with said()
         return {'layers': list((applied or {}).get('layers') or []), 'targets': manifest['targets'],
                 'teams32': teams32, 'lang': lang, 'left_out': left_out, 'clubs': clubs}
 
     def said(out):
+        learn_patch(box.get('meter'), box.get('last'), cache, ctl.host.log)
         layers = ', '.join(out['layers']) or 'none'
         ctl.host.log(f"Game patched: server {out['targets']['redirector']}, layers {layers}, "
                      f"{'32 teams' if out['teams32'] else '31 teams (the roster served has no active Seattle)'}")
@@ -585,7 +619,105 @@ def one_click(setup, then=None):
         if out['teams32'] and then is None:
             offer_update(ctl)
         return text, 'good'
-    return run_job(setup, PATCHING, work, said, 'The patch stopped', then=then, error=True)
+    return run_job(setup, PATCHING, work, said, 'The patch stopped', then=then, error=True,
+                   stop=lambda: box['meter'].stop() if 'meter' in box else None)
+
+
+# --- Patch's progress (patchmeter): what each step is, measured before the long ones run -----------------------------
+ROSTER_KINDS = {'update': 'time:roster_update', 'cache': 'time:roster_quick', 'embedded': 'time:roster_quick',
+                'fresh': 'time:roster_fresh'}       # defaultdb.pick's origin of the default roster: its kind of work
+KIT_FAMILIES = ('pants', *kitcompose.FAMILIES)
+
+
+def _roster_kind(setup):
+    """How the default roster will be made (SetupController._default_roster): rebuilt from the Update tab's data
+    gathered in this session ('update'), else read (cache / the exe's)."""
+    ctl = setup.ctl
+    with ctl.lock:
+        gathered, season = getattr(ctl, 'upd_gathered', None), getattr(ctl, 'upd_season', None)
+    rebuilt = gathered is not None and getattr(gathered, 'season', None) == season
+    return 'time:roster_update' if rebuilt else 'time:roster_quick'
+
+
+def plan_patch(meter, last, on, cache, setup):
+    """Patch's steps in their order, each with what it was the last time (`last`: patchmeter.load) until it is
+    measured (scan_patch, overlay.apply's plan)."""
+    meter.plan('prepare', 'time:prepare', 1, 'checking NHL 19...')
+    meter.plan('scan', 'time:scan', 1, 'measuring the work...')
+    meter.plan('texts', 'time:texts', 1, "reading the game's text...")
+    meter.plan('clean', 'time:clean', 1, 'noting the clean game first...')
+    if on['roster']:
+        meter.plan('roster', _roster_kind(setup), 1, f'making the {SEASON_LABEL} default roster...')
+    if on['art']:
+        meter.plan('clubart', 'clubart', last.get('clubart', 0), 'making the club logos of the roster you play...')
+        for fam in KIT_FAMILIES:
+            meter.plan(f'kits:{fam}', 'kits', last.get(f'kits:{fam}', 0),
+                       'making the jerseys on this PC...' if fam == 'pants' else '')
+        meter.plan('packs', 'check', last.get('packs', 0), 'checking the art packs...')
+    meter.plan('build', 'time:build', 1, 'writing the patch files...')
+    meter.plan('copy', 'copy', last.get('copy', 0), 'writing the patch files...')
+    meter.plan('write', 'write', last.get('write', 0), 'writing the updated team art...')
+    meter.plan('verify', 'verify', last.get('verify', 0), 'reading the written team art back...')
+    meter.plan('install', 'time:install', 1, 'pointing NHL 19 at the Overtime server...')
+    meter.plan('look', 'time:look', 1, 'checking the patch files...')
+
+
+def scan_patch(meter, last, on, game_dir, cache, log):
+    """Measure the long steps before they run (the 'scan' step): the game's index (read once, handed to each step that
+    makes textures), the jersey families to make and their work (patch.kit_jobs), the art pack bytes to check, and
+    (the first time: after that, what the last Patch wrote is the better guess, an archive it kept writes nothing) the
+    archives overlay.apply copies and writes. Returns (index, kit jobs)."""
+    meter.begin('scan')
+    index = patch._game_index(game_dir) if on['art'] or 'copy' not in last else None
+    jobs = patch.kit_jobs(on, game_dir, cache, log=log, index=index) if on['art'] else []
+    work = {f'kits:{j.family}': j.work for j in jobs}
+    for fam in KIT_FAMILIES:
+        key = f'kits:{fam}'
+        if work.get(key):
+            meter.resize(key, work[key])
+        else:
+            meter.skip(key)     # off, kept as it is, or nothing to make
+    if on['art']:
+        meter.resize('packs', patch.art_layer_work(on, cache, game_dir))
+    if 'copy' not in last and index is not None:
+        layers = [k for k in DATA_LAYERS if on[k]] + (['database'] if on['roster'] else [])
+        meter.resize('copy', overlay.copy_size(game_dir, layers, where=index[0]))
+    if 'write' not in last and on['art']:
+        size = patch.art_layer_bytes(on, cache, game_dir, jobs, index[1] if index else None)
+        meter.resize('write', size)
+        meter.resize('verify', size)
+    return index, jobs
+
+
+def apply_meter(meter):
+    """overlay.apply's progress(stage, amount) on the meter: its plan sizes the copy, write and verify steps (none:
+    skipped, an archive kept as it is writes nothing), then each stage's bytes."""
+    def progress(stage, amount):
+        if stage == 'plan':
+            for key in ('copy', 'write', 'verify'):
+                if amount.get(key):
+                    meter.resize(key, amount[key])
+                else:
+                    meter.skip(key)
+            return
+        meter.begin(stage)
+        meter.tick(stage, amount)
+    return progress
+
+
+def learn_patch(meter, last, cache, log=None):
+    """After a Patch that went in: the bar full, this PC's speeds kept for the next one (patchmeter.save), and how long
+    each step took against its plan in the log (the bar's 1 % is 1 % of the time when these match)."""
+    if meter is None:
+        return
+    meter.finish()
+    if log:
+        rows = meter.report()
+        total = sum(took for *_r, took in rows)
+        log(f'Patch took {total:.1f} s: ' + ', '.join(f'{key} {took:.1f} s (planned {plan:.1f})'
+                                                      for key, _kind, _units, plan, took in rows if took >= 0.05))
+    speeds, units = meter.learned(last)
+    patchmeter.save(cache, speeds, units)
 
 
 def one_unpatch(setup):

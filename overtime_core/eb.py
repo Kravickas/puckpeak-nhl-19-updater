@@ -328,8 +328,9 @@ def _whole(e):
     return e.data.read() if hasattr(e.data, 'read') else e.data
 
 
-def _write(out, folders, entries, context=None):
-    """Write the archive through `out`.tmp (renamed at the end); returns its sha256."""
+def _write(out, folders, entries, context=None, progress=None):
+    """Write the archive through `out`.tmp (renamed at the end); returns its sha256. `progress(n)`: n more bytes
+    written."""
     h = hashlib.sha256()
     tmp = out + '.tmp'
     try:
@@ -337,6 +338,8 @@ def _write(out, folders, entries, context=None):
             for b in _stream(folders, entries, context):
                 f.write(b)
                 h.update(b)
+                if progress:
+                    progress(len(b))
         os.replace(tmp, out)
     finally:
         if os.path.exists(tmp):
@@ -372,12 +375,17 @@ def add_entry(src, out, path, data):
     return rebuild(src, out, {path: data})
 
 
-def new_archive(out, files, context=None):
+def new_archive(out, files, context=None, progress=None):
     """A new archive holding only `files` ({path: bytes}, stored raw). Returns its sha256. `context`: see _stream (the
-    files read on every core)."""
+    files read on every core). `progress(n)`: n more bytes written (archive_size() in all)."""
     if not files:
         raise ValueError('an archive needs at least one entry')
-    return _write(out, *_changed([], [], files), context)
+    return _write(out, *_changed([], [], files), context, progress)
+
+
+def archive_size(files):
+    """The bytes `new_archive` writes for `files`, from their sizes alone (nothing is read)."""
+    return _layout(*_changed([], [], files))[2]
 
 
 def archive_bytes(files):

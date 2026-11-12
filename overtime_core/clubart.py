@@ -218,25 +218,44 @@ def _made(path):
         return None
 
 
-def compose(source, teams, game_dir, out_path, log=None, today=None):
+def _prepare(source, teams, game_dir, out_path, index=None):
+    """(found, missing, where, sizes, targets, key, kept) of a compose: `index` is gamefiles.winning_index (read here
+    without one)."""
+    found, missing = matches(teams, source.clubs)
+    where, sizes = index or gamefiles.winning_index(game_dir)
+    targets = plan(found, where)
+    if not targets:
+        return found, missing, where, sizes, targets, None, False
+    key = _key(source, targets, game_dir)
+    return found, missing, where, sizes, targets, key, os.path.isfile(out_path) and _made(out_path) == key
+
+
+def work(source, teams, game_dir, out_path, index=None):
+    """The work compose() would do now: the stored bytes of the game's files it would make again, 0 when the pack as
+    it is would be kept. Reads no texture."""
+    *_, sizes, targets, _key_, kept = _prepare(source, teams, game_dir, out_path, index)
+    return 0 if kept else sum(sizes.get(p) or (1 << 20) for p in targets)
+
+
+def compose(source, teams, game_dir, out_path, log=None, today=None, progress=None, index=None):
     """Make the club art of the saved roster's team rows `teams` from `source` (a Source) on the game's own files into
     the local pack `out_path` (removed when no file is to be made). {'clubs', 'files', 'drawn', 'missing', 'kept'}:
     clubs matched, files made, centre ices drawn from a logo, club slots no club of the pack names, and whether the
-    pack as it was is kept (nothing changed since the last Update)."""
+    pack as it was is kept (nothing changed since the last Update). `progress(share)`: the share of work() done, as
+    the files are made. `index`: gamefiles.winning_index, when the caller has it."""
     say = log or (lambda m: None)
-    found, missing = matches(teams, source.clubs)
-    where = gamefiles.winning(game_dir)
-    targets = plan(found, where)
+    found, missing, where, sizes, targets, key, kept = _prepare(source, teams, game_dir, out_path, index)
     counts = {'clubs': len(found), 'files': len(targets), 'drawn': sum(1 for _c, m in targets.values() if m is None),
               'missing': missing, 'kept': False}
     if not targets:
         if os.path.isfile(out_path):
             os.remove(out_path)
         return counts
-    key = _key(source, targets, game_dir)
-    if os.path.isfile(out_path) and _made(out_path) == key:
+    if kept:
         counts['kept'] = True
         return counts
+    weights = {p: sizes.get(p) or (1 << 20) for p in targets}
+    total, done = sum(weights.values()) or 1, 0
     pictures, files = {}, {}
 
     def picture(member):
@@ -264,11 +283,16 @@ def compose(source, teams, game_dir, out_path, log=None, today=None):
                             yield p, (False, head, picture(member).copy())
                     except _ERRORS as err:
                         yield p, err
-    for p, data, err in workers.ordered(jobs(), _make, _ERRORS):
+    # in processes, as the jerseys (kitcompose): the BCn encoder is pure Python and numpy, on threads it held the GIL
+    # (a jersey patch used under 3 of 16 cores, 2026-11-10). The same _make: the same files, written here in order
+    for p, data, err in workers.ordered(jobs(), _make, _ERRORS, processes=True):
         if err is not None:
             say(f'club art: {p} not made ({err})')
         else:
             files[p] = data
+        done += weights.get(p, 0)
+        if progress:
+            progress(min(1.0, done / total))
     if not files:
         return counts
     built = (today or datetime.date.today()).isoformat()

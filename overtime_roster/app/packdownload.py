@@ -32,7 +32,8 @@ import urllib.request
 from overtime_core import art, clubart, durable, kitcompose
 
 from . import defaultdb, paths, selfupdate, sources
-from .patch import ART_ENV, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK, PEOPLE_PACK, PHOTOS_PACK
+from .patch import (ART_ENV, ART_PACKS, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK, PEOPLE_PACK,
+                    PHOTOS_PACK, mark_checked)
 
 # name -> what a player reads, and whether the patch needs it for the art (core; until v0.10.0 the one click fetched those)
 EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
@@ -524,6 +525,8 @@ def _get(name, release, cache_dir, report=None, cancelled=None, game_dir=None):
         rec[name] = entry
         if name == PHOTOS_PACK:
             rec.pop(WRONG, None)
+    if name in ART_PACKS:      # the published file (sha256 above): the first Patch need not unpack it all to check it
+        mark_checked(cache_dir, target)
     return target
 
 

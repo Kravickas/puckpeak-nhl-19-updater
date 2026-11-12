@@ -325,11 +325,13 @@ def launcher_running():
     return any('launcher' in n for n in _shadps4_processes())
 
 
-def _sha256(path):
+def _sha256(path, tick=None):
     h = hashlib.sha256()
     with open(path, 'rb') as f:
         for block in iter(lambda: f.read(1 << 20), b''):
             h.update(block)
+            if tick:
+                tick(len(block))
     return h.hexdigest()
 
 
@@ -455,12 +457,73 @@ def mode_roster_files(db, game_dir):
     return out
 
 
-def _base_copy(archive, tmp):
-    """Copy a game archive for the overlay, undoing an old in-place text pack edit if the game copy has one."""
-    shutil.copyfile(archive, tmp)
+COPY_BLOCK = 8 << 20     # bytes per read while copying a game archive with progress
+
+
+def _copy(src, dst, tick):
+    """shutil.copyfile's Windows way (readinto one buffer, write it), with tick(n) after each block."""
+    buf = bytearray(COPY_BLOCK)
+    view = memoryview(buf)
+    with open(src, 'rb') as fsrc, open(dst, 'wb') as fdst:
+        while True:
+            n = fsrc.readinto(buf)
+            if not n:
+                break
+            fdst.write(view[:n])
+            tick(n)
+
+
+def _base_copy(archive, tmp, tick=None):
+    """Copy a game archive for the overlay, undoing an old in-place text pack edit if the game copy has one.
+    `tick(n)`: n more bytes copied."""
+    if tick is None:
+        shutil.copyfile(archive, tmp)
+    else:
+        _copy(archive, tmp, tick)
     in_place = textpack._load_json(archive + LEGACY_SUFFIX)
     if in_place:
         eb.restore_entry(tmp, in_place['record'])
+
+
+# Bump when the bytes written for the same input change (eb's archive layout, _base_copy, append_entry): every
+# archive is then written again instead of kept (_content).
+LAYOUT = 1
+
+
+def _content(archive, entries, new):
+    """What an overlay archive is made of, as one sha256: the layout version, the game archive it copies (size and
+    time; a new archive: none) and each entry in the order it is written, by size and sha256. The same content makes
+    the same bytes, so an archive the last apply wrote with this content and that is still as it was written is kept
+    instead of written again (a Patch with the art unchanged used to write and read back over 15 GB). None when it
+    cannot be told without reading the files (a served art pack read back has no sha256) or the game copy carries an
+    old in-place text edit."""
+    h = hashlib.sha256()
+    if new:
+        head = [LAYOUT, 'new']
+    else:
+        if os.path.exists(archive + LEGACY_SUFFIX):
+            return None
+        st = os.stat(archive)
+        head = [LAYOUT, 'copy', st.st_size, st.st_mtime_ns]
+    h.update(json.dumps(head).encode('utf-8'))
+    for entry, data in entries.items():
+        sha = data.sha if isinstance(data, art_mod.Stored) else hashlib.sha256(data).hexdigest()
+        if not sha:
+            return None
+        h.update(f'\n{entry}\0{len(data)}\0{sha}'.encode('utf-8'))
+    return h.hexdigest()
+
+
+def _lists(path, entries):
+    """The archive at `path` holds each of `entries` at its size (its table only is read; a new art archive: nothing
+    else). False when it does not read: a file kept must at least still be the archive it was written as."""
+    try:
+        with eb.EbArchive(path) as arc:
+            if all(arc.entries.get(e.lower(), (0, -1))[1] == len(d) for e, d in entries.items()):
+                return True
+    except (OSError, ValueError, struct.error):
+        pass
+    return False
 
 
 def _current_database(game_dir, state):
@@ -624,6 +687,36 @@ def _build(game_dir, layers, pack=None, database=None, lang='eng_us', menus=None
     return edits, info
 
 
+def layer_paths(layers, lang='eng_us'):
+    """The game paths the data layers (not art) edit, as _build does without launch: what apply copies the winning
+    archive of."""
+    out = []
+    if 'text' in layers or 'names' in layers:
+        out.append(textpack.loc_paths(lang)[0])
+    if 'database' in layers:
+        out += [gamefiles.DB_PATH, gamefiles.ROSTER_PATH, *MODE_ROSTERS]
+    if 'league' in layers:
+        out += [CAPDEFS_PATH, SELECT_TEAM_PATH, LIST_PATH, BAP_FLOW_PATH, BAP_TEAM_PATH, *SALARY_SCHEMAS]
+    if 'menus' in layers:
+        out += list(menus_mod.PATHS)
+    return out
+
+
+def copy_size(game_dir, layers, lang='eng_us', where=None):
+    """The bytes apply copies for the data layers: each game archive that wins for a path they edit, once (the edited
+    entries it appends are small). `where`: gamefiles.winning (read here without it). For Patch's progress: nothing is
+    built or read but the archives' tables; a path the game lacks counts none (apply says why)."""
+    where = where if where is not None else gamefiles.winning(game_dir)
+    archives = {where[p] for p in layer_paths(layers, lang) if p in where}
+    total = 0
+    for archive in archives:
+        try:
+            total += os.path.getsize(archive)
+        except OSError:
+            pass
+    return total
+
+
 def layer_fits(game_dir, layer, lang):
     """Whether the text or names layer can be made on `lang`'s text file: every string the pack sets is there, and the
     names layer's stock texts (another English than eng_us: CUSA11116). Nothing is written."""
@@ -635,20 +728,24 @@ def layer_fits(game_dir, layer, lang):
 
 
 def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='eng_us', running=None, menus=None,
-          art=None):
+          art=None, progress=None):
     """Write the overlay for `layers` (replacing whatever an earlier apply wrote). The game folder is only read.
 
     `database` is the whole nhl_game.db for the database layer; when the layer is asked for without one, the
     database the patch already serves is kept. `menus` is the menus layer's options ({'chel': bool, 'news':
     bool}); the ones served now are kept for every option not given. `art` is the art layer's packs ([art_mod.Pack], a later one
-    wins); without them the art the patch already serves is kept. Returns the new state."""
+    wins); without them the art the patch already serves is kept. Returns the new state.
+
+    `progress(stage, amount)`: once ('plan', {'copy': bytes, 'write': bytes, 'verify': bytes}) when the layers are
+    built and it is known what will be written, then ('copy' / 'write' / 'verify', n) for n more bytes done. The
+    'verify' calls come from several threads at once."""
     if (running or emulator_running)():
         raise PatchError('shadPS4 is running: close the game first')
     with art_mod.reading():     # one handle per pack zip / archive the art is read from, not one per texture
-        return _apply(game_dir, tuple(layers), pack, database, lang, menus, art)
+        return _apply(game_dir, tuple(layers), pack, database, lang, menus, art, progress)
 
 
-def _apply(game_dir, layers, pack, database, lang, menus, art):
+def _apply(game_dir, layers, pack, database, lang, menus, art, progress=None):
     old = _load_state(game_dir)
     if 'database' in layers and database is None:
         database = _current_database(game_dir, old)
@@ -664,13 +761,32 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
     ours = dict((old or {}).get('files', {}))
     stamp = _stamp(game_dir)
     rels = {archive: _rel(game_dir, archive) for archive in edits}
+    intact = set()     # our files still as the last apply wrote them
     for rel in rels.values():  # before anything is written: whose is the file at each path?
         target = _target(game_dir, rel)
         if rel in ours:
-            if os.path.exists(target) and not _intact(target, ours[rel], stamp):
-                raise PatchError(f'{target} changed since the patch wrote it: check it and delete it by hand')
+            if os.path.exists(target):
+                if not _intact(target, ours[rel], stamp):
+                    raise PatchError(f'{target} changed since the patch wrote it: check it and delete it by hand')
+                intact.add(rel)
         elif os.path.exists(target) and not os.path.exists(target + LEGACY_SUFFIX)                 and os.path.exists(_backup(game_dir, rel)):
             raise PatchError(f'{_backup(game_dir, rel)} is in the way: check it and delete it by hand')
+    contents, kept = {}, {}
+    for archive, entries in edits.items():
+        rel = rels[archive]
+        contents[rel] = _content(archive, entries, not os.path.exists(archive))
+        rec = ours.get(rel) or {}
+        if contents[rel] and rec.get('content') == contents[rel] and rec.get('sha256') and rel in intact \
+                and _lists(_target(game_dir, rel), entries):
+            kept[rel] = dict(rec)       # the same bytes are there already: nothing to write or read back
+    def tick(stage):
+        return (lambda n: progress(stage, n)) if progress else None
+    if progress:
+        todo = [a for a in edits if rels[a] not in kept]
+        news = [a for a in todo if not os.path.exists(a)]
+        copy = sum(os.path.getsize(a) + sum(len(d) for d in edits[a].values()) for a in todo if a not in news)
+        write = sum(eb.archive_size(edits[a]) for a in news)
+        progress('plan', {'copy': copy, 'write': write, 'verify': write})
     written = {}
     tmps = []
     hashed = {}     # rel: sha256 of a new archive, taken as eb.new_archive wrote it
@@ -688,6 +804,9 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
     try:
         for archive, entries in edits.items():
             rel = rels[archive]
+            if rel in kept:
+                written[rel] = kept[rel]
+                continue
             target = _target(game_dir, rel)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             tmp = target + '.tmp'
@@ -696,15 +815,18 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
             if new:  # the art layer's own archive: only its entries
                 # hashed as it was written; each file was checked against its pack's sha256 as it was read for it.
                 # Its table is checked here (every entry, at its size); the bytes at the end (_verify_written)
-                hashed[rel] = eb.new_archive(tmp, entries, context=art_mod.reading)    # read on every core
+                hashed[rel] = eb.new_archive(tmp, entries, context=art_mod.reading,    # read on every core
+                                             progress=tick('write'))
                 with eb.EbArchive(tmp) as arc:
                     for entry, data in entries.items():
                         if arc.entries.get(entry.lower(), (0, -1))[1] != len(data):
                             raise PatchError(f'{rel}: {entry} is not in the written archive at its size')
             else:
-                _base_copy(archive, tmp)
+                _base_copy(archive, tmp, tick('copy'))
                 for entry, data in entries.items():
                     eb.append_entry(tmp, entry, data)
+                    if progress:
+                        progress('copy', len(data))
                 with eb.EbArchive(tmp) as arc:      # a few small files: read back at once
                     for entry, data in entries.items():
                         if arc.read(entry) != data:
@@ -715,6 +837,8 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
                 st = os.stat(archive)
                 written[rel] = {'source_size': st.st_size, 'source_mtime': int(st.st_mtime),
                                 'entries': sorted(entries), 'size': os.path.getsize(tmp)}
+            if contents[rel]:
+                written[rel]['content'] = contents[rel]
         art_mod.release()   # the served art read back (_current_art) is in the archives replaced below
         partial = dict((old or {}).get('layers', {}), partial=True)
         for tmp, target, rel in tmps:
@@ -748,7 +872,7 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
                 save(ours, dict(info, partial=True))
     if edits:
         state = save(written, info)
-        _verify_written(game_dir, written, hashed, ours, save, info)
+        _verify_written(game_dir, written, hashed, ours, save, info, tick('verify'))
     else:
         state = {'version': VERSION, 'applied': datetime.datetime.now().isoformat(timespec='seconds'),
                  'game_dir': os.path.abspath(game_dir), 'layers': info, 'files': written}
@@ -756,13 +880,13 @@ def _apply(game_dir, layers, pack, database, lang, menus, art):
     return state
 
 
-def _verify_written(game_dir, written, hashed, ours, save, info):
+def _verify_written(game_dir, written, hashed, ours, save, info, tick=None):
     """The end of a Patch: every new archive read back from disk whole and its sha256 compared with the one taken as it
     was written (the bytes shadPS4 will read, through the same file cache). A file that does not match is removed with
     its record, so the next Patch writes it again from the packs (they stay in the cache), and the Patch fails saying
-    so. Several files are read at once (workers.ordered)."""
+    so. Several files are read at once (workers.ordered); `tick(n)` from their threads, n more bytes read."""
     from . import workers
-    jobs = ((rel, (_target(game_dir, rel),)) for rel in sorted(hashed) if rel in written)
+    jobs = ((rel, (_target(game_dir, rel), tick)) for rel in sorted(hashed) if rel in written)
     bad = [rel for rel, sha, _err in workers.ordered(jobs, _sha256, ()) if sha != hashed[rel]]
     if not bad:
         return

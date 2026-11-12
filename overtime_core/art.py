@@ -37,7 +37,7 @@ import threading
 import zipfile
 from functools import partial
 
-from . import clubdata, durable, eb, gamefiles
+from . import clubdata, durable, eb, gamefiles, workers
 
 FORMAT = 1
 DELTA_FORMAT = 2
@@ -253,7 +253,68 @@ def _read_delta(path, name, sha, base):
     data = apply_delta(base(name), _zip_member(path, name + '.delta'))
     if _sha(data) != sha:
         raise ArtError(f'{path}: {name} does not match its checksum')
+    check_file(name, data)
     return data
+
+
+def game_key(game_dir):
+    """The game's archives as they are on disk (names, sizes, times) as one sha256: a delta pack checked in full against
+    them is recorded under it (load_pack's `checked`), so a game that changed is checked again."""
+    items = []
+    for big in gamefiles.archives(game_dir):
+        st = os.stat(big)
+        items.append([os.path.basename(big).lower(), st.st_size, st.st_mtime_ns])
+    return hashlib.sha256(json.dumps(items).encode('utf-8')).hexdigest()
+
+
+def _record_key(path, info, game_dir, checked):
+    """The key a full check of `path` is recorded under (None: not recorded): the zip as it is on disk, and for a delta
+    pack the game's archives too."""
+    if checked is None:
+        return None
+    key = _checked_key(path)
+    if info.get('deltas'):
+        key += f'|game={game_key(game_dir)}'
+    return key
+
+
+def pack_sizes(path):
+    """{game path: bytes} a pack serves, from its zip's list and pack.json (a delta's result size): nothing unpacked.
+    Raises ArtError as listing() does."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            info = json.loads(z.read(MANIFEST).decode('utf-8'))
+            sizes = {i.filename: i.file_size for i in z.infolist()}
+    except KeyError:
+        raise ArtError(f'{path}: no {MANIFEST}') from None
+    except (zipfile.BadZipFile, OSError, ValueError) as err:
+        raise ArtError(f'{path}: {err}') from err
+    out = {p: sizes.get(p, 0) for p in info.get('files') or {}}
+    out.update({p: int(rec.get('size') or 0) for p, rec in (info.get('deltas') or {}).items()})
+    return out
+
+
+def check_work(path, game_dir=None, checked=None):
+    """The bytes load_pack would unpack and check in full now (0 when its record says the zip was checked as it is):
+    for Patch's progress. Reads pack.json and the zip's list only. Raises ArtError as load_pack does."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            info = json.loads(z.read(MANIFEST).decode('utf-8'))
+            sizes = {i.filename: i.file_size for i in z.infolist()}
+    except KeyError:
+        raise ArtError(f'{path}: no {MANIFEST}') from None
+    except (zipfile.BadZipFile, OSError, ValueError) as err:
+        raise ArtError(f'{path}: {err}') from err
+    if info.get('deltas') and game_dir is None:
+        return 0
+    try:
+        key = _record_key(path, info, game_dir, checked)
+    except OSError as err:
+        raise ArtError(f'{path}: {err}') from err
+    if key is not None and checked.get(key):
+        return 0
+    return sum(sizes.get(p, 0) for p in info.get('files') or {}) + \
+        sum(int(rec.get('size') or 0) for rec in (info.get('deltas') or {}).values())
 
 
 Listing = collections.namedtuple('Listing', 'name info files sha256')
@@ -281,18 +342,16 @@ def listing(path):
     return Listing(name, meta, frozenset(shas), Pack(name, meta, dict.fromkeys(shas), path, shas).sha256)
 
 
-def load_pack(path, game_dir=None, checked=None):
+def load_pack(path, game_dir=None, checked=None, progress=None):
     """Read and check an art pack zip, keeping none of it in memory (Stored); a delta pack needs `game_dir` (its bases).
     Raises ArtError when anything is off.
 
     `checked` (a dict the caller keeps, patch.art_packs) records the zips checked in full here. A zip recorded and not
     changed since (same size and time) is not unpacked again: its files are taken from pack.json as listed (they must be
     in the zip, under game texture paths) and each is unpacked and checked once, as it is written (_read_zipped, which
-    fails the Patch with nothing applied). A delta pack is always checked in full (its bases are the game's files)."""
-    try:
-        key = _checked_key(path) if checked is not None else None
-    except OSError as err:
-        raise ArtError(f'{path}: {err}') from err
+    fails the Patch with nothing applied). A delta pack is recorded with the game's archives as they were (game_key):
+    while neither changed, its deltas are laid and checked once, as they are written (_read_delta: the result's sha256
+    proves the base was the game file the pack was made on). `progress(n)`: n more bytes checked in full."""
     try:
         with reading(), zipfile.ZipFile(path) as z:
             try:
@@ -302,8 +361,16 @@ def load_pack(path, game_dir=None, checked=None):
             if info.get('format') not in (FORMAT, DELTA_FORMAT):
                 raise ArtError(f'{path}: pack format {info.get("format")} (this app reads {FORMAT}, {DELTA_FORMAT})')
             listed = info.get('files') or {}
+            deltas = info.get('deltas') or {}
+            if deltas and game_dir is None:
+                raise ArtError(f'{path}: a delta pack is read with the game folder')
+            try:
+                key = _record_key(path, info, game_dir, checked)
+            except OSError as err:
+                raise ArtError(f'{path}: {err}') from err
             files, shas = {}, {}
-            if key is not None and checked.get(key) and not info.get('deltas'):
+            read = game_reader(game_dir, deltas) if deltas else None
+            if key is not None and checked.get(key):
                 sizes = {i.filename: i.file_size for i in z.infolist()}
                 for p, sha in listed.items():
                     if p not in sizes:
@@ -312,44 +379,79 @@ def load_pack(path, game_dir=None, checked=None):
                         raise ArtError(f'not a game texture path: {p}')
                     files[p] = Stored(sizes[p], partial(_read_zipped, path, p, sha), sha)
                     shas[p] = sha
-                listed = {}
+                for p, rec in deltas.items():
+                    if p + '.delta' not in sizes:
+                        raise ArtError(f'{path}: {p}.delta is listed but missing')
+                    if not _PATH.match(p) or '..' in p.split('/'):
+                        raise ArtError(f'{path}: not a game texture path: {p}')
+                    files[p] = Stored(int(rec['size']), partial(_read_delta, path, p, rec['sha256'], read),
+                                      rec['sha256'])
+                    shas[p] = rec['sha256']
+                listed, deltas = {}, {}
+            names = set(z.namelist()) if listed or deltas else set()
+            jobs = []
             for p, sha in listed.items():
-                try:
-                    data = z.read(p)
-                except KeyError:
-                    raise ArtError(f'{path}: {p} is listed but missing') from None
-                if _sha(data) != sha:
-                    raise ArtError(f'{path}: {p} does not match its checksum')
-                check_file(p, data)
-                files[p], shas[p] = Stored(len(data), partial(_read_zipped, path, p, sha), sha), sha
-            deltas = info.get('deltas') or {}
-            if deltas and game_dir is None:
-                raise ArtError(f'{path}: a delta pack is read with the game folder')
-            read = game_reader(game_dir, deltas) if deltas else None
+                if p not in names:
+                    raise ArtError(f'{path}: {p} is listed but missing')
+                jobs.append((p, (_check_member, path, p, sha)))
             for p, rec in deltas.items():
                 if not _PATH.match(p) or '..' in p.split('/'):
                     raise ArtError(f'{path}: not a game texture path: {p}')
-                base = read(p)
-                if _sha(base) != rec.get('base') or len(base) != rec.get('size'):
-                    raise ArtError(f"{path}: the game's {p} is not the file this pack was made on "
-                                   '(another game version, or a modded file)')
-                try:
-                    data = apply_delta(base, z.read(p + '.delta'))
-                except KeyError:
-                    raise ArtError(f'{path}: {p}.delta is listed but missing') from None
-                if _sha(data) != rec.get('sha256'):
-                    raise ArtError(f'{path}: {p} does not match its checksum')
-                check_file(p, data)
-                files[p] = Stored(len(data), partial(_read_delta, path, p, rec['sha256'], read), rec['sha256'])
-                shas[p] = rec['sha256']
-    except (zipfile.BadZipFile, OSError, ValueError) as err:
+                if p + '.delta' not in names:
+                    raise ArtError(f'{path}: {p}.delta is listed but missing')
+                jobs.append((p, (_check_delta, path, p, rec, read)))
+            # every file unpacked and checked on every core (zlib and sha256 let the other threads run), each thread
+            # with its own zip and archive handles (reading); the results in the pack's order, the first error raised
+            for p, size, err in workers.ordered(jobs, _check_one, _CHECK_ERRORS, context=reading):
+                if err is not None:
+                    raise err
+                if p in deltas:
+                    sha = deltas[p]['sha256']
+                    files[p] = Stored(size, partial(_read_delta, path, p, sha, read), sha)
+                else:
+                    sha = listed[p]
+                    files[p] = Stored(size, partial(_read_zipped, path, p, sha), sha)
+                shas[p] = sha
+                if progress:
+                    progress(size)
+    except (zipfile.BadZipFile, OSError, ValueError, KeyError, TypeError) as err:
         raise ArtError(f'{path}: {err}') from err
     if not files:
         raise ArtError(f'{path}: the pack holds no textures')
-    if key is not None and not info.get('deltas'):
+    if key is not None:
         checked[key] = True             # checked in full (or as recorded): the next Patch skips the unpacking
     meta = {k: v for k, v in info.items() if k not in ('files', 'deltas')}
     return Pack(info.get('name') or os.path.splitext(os.path.basename(path))[0], meta, files, path, shas)
+
+
+_CHECK_ERRORS = (ArtError, zipfile.BadZipFile, OSError, ValueError, KeyError, TypeError)
+
+
+def _check_one(fn, *args):
+    return fn(*args)
+
+
+def _check_member(path, p, sha):
+    """load_pack's full check of one file of a pack (on any thread): its bytes, sha256 and kind. Its size."""
+    data = _zip_member(path, p)
+    if _sha(data) != sha:
+        raise ArtError(f'{path}: {p} does not match its checksum')
+    check_file(p, data)
+    return len(data)
+
+
+def _check_delta(path, p, rec, read):
+    """load_pack's full check of one delta (on any thread): the game's file is the one the pack was made on, and the
+    delta laid on it gives the file of its sha256 and kind. Its size."""
+    base = read(p)
+    if _sha(base) != rec.get('base') or len(base) != rec.get('size'):
+        raise ArtError(f"{path}: the game's {p} is not the file this pack was made on "
+                       '(another game version, or a modded file)')
+    data = apply_delta(base, _zip_member(path, p + '.delta'))
+    if _sha(data) != rec.get('sha256'):
+        raise ArtError(f'{path}: {p} does not match its checksum')
+    check_file(p, data)
+    return len(data)
 
 
 def write_pack(path, name, files, source='', built='', bases=None, extra=None):

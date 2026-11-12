@@ -433,24 +433,57 @@ def made(path):
         return None
 
 
-def compose(source, game_dir, out_path, name, log=None, progress=None, today=None):
+# What one texture's step costs, per byte of the game's file, against making it (gnf.make: the BCn encoder). Measured
+# on one core with 2048 x 2048 textures and their mips (2026-11-12): make BC1 0.8-6.1 s, BC7 9.9-62 s (flat colour to
+# noise), cover of a BC5 normal map 0.24 s, flat 0.03 s, pants (1024 BC1) 1.6 s. Only the ratios count: they spread
+# Patch's progress over the textures by the work each one is (Patch learns its own speed per PC, patchmeter).
+STEP_WORK = {'make': 1.0, 'pants': 1.0, 'font': 1.0, 'cover': 0.05, 'flat': 0.005}
+UNKNOWN_SIZE = 1 << 20          # a texture whose stored size the index lacks counts as 1 MB
+
+
+def _plan(source, game_dir, out_path, index=None):
+    """(where, sizes, targets, key, kept) of a compose: `index` is gamefiles.winning_index (read here without one)."""
+    where, sizes = index or gamefiles.winning_index(game_dir)
+    targets = sorted(p for p in source.files if p in where)
+    if not targets:
+        return where, sizes, targets, None, False
+    key = _key(source, targets, game_dir)
+    return where, sizes, targets, key, os.path.isfile(out_path) and made(out_path) == key
+
+
+def weight(step, size):
+    """A texture's share of the work: its stored bytes times its step's STEP_WORK."""
+    return (size or UNKNOWN_SIZE) * STEP_WORK.get((step or {}).get('op'), 1.0)
+
+
+def work(source, game_dir, out_path, index=None):
+    """The work compose() would do now, in weight() units: 0 when the pack as it is would be kept or nothing is to be
+    made. Reads no texture (the archives' tables and the old pack's pack.json only)."""
+    _where, sizes, targets, _key_, kept = _plan(source, game_dir, out_path, index)
+    if kept:
+        return 0.0
+    return sum(weight(source.files[p], sizes.get(p)) for p in targets)
+
+
+def compose(source, game_dir, out_path, name, log=None, progress=None, today=None, index=None):
     """Make `source`'s textures (a Source, or Pants) on the game's own files into the art pack `out_path`, served as
     `name` (removed when the game has none of them). Written as it goes: a family's files are more than fit in memory.
     {'files', 'failed', 'missing', 'kept'}: files made, steps that failed (logged), game paths the game lacks, and
-    whether the pack as it was is kept (the same source and game as the last time). `progress(share)` as it goes."""
+    whether the pack as it was is kept (the same source and game as the last time). `progress(share)` as it goes: the
+    share of the work (weight()) done, failed textures counted, so it ends at 1. `index`: gamefiles.winning_index, when
+    the caller has it."""
     say = log or (lambda m: None)
-    where = gamefiles.winning(game_dir)
-    targets = sorted(p for p in source.files if p in where)
+    where, sizes, targets, key, kept = _plan(source, game_dir, out_path, index)
     counts = {'files': 0, 'failed': 0, 'missing': len(source.files) - len(targets), 'kept': False}
     if not targets:
         if os.path.isfile(out_path):
             os.remove(out_path)
         return counts
-    key = _key(source, targets, game_dir)
-    if os.path.isfile(out_path) and made(out_path) == key:
+    if kept:
         counts['kept'] = True
         counts['files'] = len(targets)
         return counts
+    weights = {p: weight(source.files[p], sizes.get(p)) for p in targets}
     by_arc = collections.defaultdict(list)
     for p in targets:
         by_arc[where[p]].append(p)
@@ -467,7 +500,8 @@ def compose(source, game_dir, out_path, name, log=None, progress=None, today=Non
     tmp = out_path + '.tmp'
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     try:
-        _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where, old)
+        _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where, old,
+               weights)
     finally:
         source.close()
         if old[0] is not None:
@@ -576,17 +610,23 @@ def _make(p, step, raw, pics, files, fp=None):
 
 
 def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, progress, today, where,
-           old=(None, {})):
+           old=(None, {}), weights=None):
     """The pack, its textures made on every core (workers.ordered, in processes: read and written here, in order, so
-    the pack is the one a single thread writes)."""
-    done = 0
+    the pack is the one a single thread writes). `weights` {path: weight()}: progress by the work done, else by
+    count."""
+    weights = weights or dict.fromkeys(targets, 1.0)
+    total = sum(weights.values()) or 1.0
+    done = 0.0
     inputs = {}
     jobs = _jobs(source, by_arc, picture, where, old)
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
         for p, made, err in workers.ordered(jobs, _make, _STEP_ERRORS, processes=True):
+            done += weights.get(p, 0.0)
             if err is not None:
                 say(f'jerseys: {p} not made ({err})')
                 counts['failed'] += 1
+                if progress:
+                    progress(min(1.0, done / total))
                 continue
             data, shas[p], inputs[p] = made
             if old[1].get(p) == inputs[p] and old[0] is not None:
@@ -594,9 +634,8 @@ def _write(source, by_arc, targets, picture, tmp, name, key, shas, counts, say, 
             zi = zipfile.ZipInfo(p, STAMP)
             zi.compress_type = zipfile.ZIP_DEFLATED
             z.writestr(zi, data, compresslevel=1)
-            done += 1
             if progress:
-                progress(done / len(targets))
+                progress(min(1.0, done / total))
         info = {'format': art.FORMAT, 'name': name, 'built': (today or datetime.date.today()).isoformat(),
                 'source': SOURCE, 'files': dict(sorted(shas.items())), 'made': key,
                 'inputs': dict(sorted((k, v) for k, v in inputs.items() if v)),

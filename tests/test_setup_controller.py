@@ -70,7 +70,7 @@ def sc(world, monkeypatch):  # noqa: F811
 
     calls['art'] = []
 
-    def apply(game_dir, layers, database=None, menus=None, art=None, lang=None):
+    def apply(game_dir, layers, database=None, menus=None, art=None, lang=None, progress=None):
         calls['apply'].append(layers)
         calls['menus'].append(menus)
         calls['art'].append(art)
@@ -78,7 +78,7 @@ def sc(world, monkeypatch):  # noqa: F811
     monkeypatch.setattr(overlay, 'apply', apply)
     monkeypatch.setattr(overlay, 'undo', lambda game_dir: calls['undo'].append(game_dir) or [])
     monkeypatch.setattr(overlay, 'status', lambda game_dir: {'applied': bool(calls['apply']), 'layers': {}, 'problems': []})
-    monkeypatch.setattr(patch, 'art_packs', lambda cache_dir=None, game_dir=None, kits=True, photos=True, extras=None: (list(getattr(patch, '_test_packs', [])), []))
+    monkeypatch.setattr(patch, 'art_packs', lambda cache_dir=None, game_dir=None, kits=True, photos=True, extras=None, progress=None: (list(getattr(patch, '_test_packs', [])), []))
     from overtime_roster.app import patch_ctl
     monkeypatch.setattr(patch_ctl, 'packs_here', lambda cache: list(getattr(
         patch, '_test_found', patch.ART_PACKS if getattr(patch, '_test_packs', None) else [])))

@@ -110,12 +110,20 @@ def read_latest(game_dir, path, mods=False):
 
 def winning(game_dir):
     """{game path: archive} of the game's own archives, the copy that wins (the last mounted)."""
-    where = {}
+    return winning_index(game_dir)[0]
+
+
+def winning_index(game_dir):
+    """({game path: archive}, {game path: its stored bytes there}) of the copies that win: winning() with the sizes
+    the archives' tables already hold. Patch reads it once and hands it to every step that makes textures (and to its
+    progress, which weighs a texture by its size), instead of each step listing every archive again."""
+    where, sizes = {}, {}
     for big in archives(game_dir):
         with EbArchive(big) as arc:
-            for p in arc.entries:
+            for p, (_off, size) in arc.entries.items():
                 where[p] = big
-    return where
+                sizes[p] = size
+    return where, sizes
 
 
 def default_database(game_dir, mods=False):

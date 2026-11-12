@@ -98,12 +98,19 @@ def _axis_ends(x, valid):
 def _nearest(x, pal, valid, xx=None):
     """Each pixel's nearest palette entry and each block's summed squared error over its valid pixels. `xx`: each
     pixel's |x|^2, when the caller has it (the same x is tried against many palettes)."""
-    # |x - p|^2 = |x|^2 - 2 x.p + |p|^2: one batched matrix product instead of every difference
-    d = (pal * pal).sum(2)[:, None, :] - 2 * np.matmul(x, pal.transpose(0, 2, 1))
+    # |x - p|^2 = |x|^2 - 2 x.p + |p|^2: one batched matrix product instead of every difference. In place, each number
+    # the same float32 operations as |p|^2 - 2 x.p (-(2 x.p) + |p|^2 is the same sum), and the minimum taken by a flat
+    # gather: byte-identical textures, less time (2026-11-12)
+    d = np.matmul(x, pal.transpose(0, 2, 1))
+    d *= -2
+    d += (pal * pal).sum(2)[:, None, :]
     idx = d.argmin(2)
-    best = np.take_along_axis(d, idx[..., None], 2)[..., 0] + ((x * x).sum(2) if xx is None else xx)
-    err = np.where(valid, np.maximum(best, 0), 0).sum(1)
-    return idx, err
+    n, k, p = d.shape
+    best = d.reshape(-1, p)[np.arange(n * k), idx.ravel()].reshape(n, k)
+    best += (x * x).sum(2) if xx is None else xx
+    np.maximum(best, 0, out=best)
+    np.copyto(best, 0, where=np.logical_not(valid))     # np.where(valid, ...): any non-zero is valid
+    return idx, best.sum(1)
 
 
 def _rounded(v0, v1, top, fixed=None):
@@ -429,11 +436,16 @@ def _bits(fields):
 
 
 def _weighted(weights):
+    w1 = np.asarray(weights, np.int32)[None, :, None]
+    w0 = 64 - w1
+
     def palette(d0, d1):
-        """The colours a BC7 subset decodes to (spec: ((64 - w) * e0 + w * e1 + 32) >> 6)."""
-        w = weights[None, :, None]
-        e0, e1 = d0.astype(np.int32)[:, None, :], d1.astype(np.int32)[:, None, :]
-        return (((64 - w) * e0 + w * e1 + 32) >> 6).astype(np.float32)
+        """The colours a BC7 subset decodes to (spec: ((64 - w) * e0 + w * e1 + 32) >> 6); whole numbers, in place."""
+        out = w0 * d0.astype(np.int32)[:, None, :]
+        out += w1 * d1.astype(np.int32)[:, None, :]
+        out += 32
+        out >>= 6
+        return out.astype(np.float32)
     return palette
 
 
@@ -503,19 +515,47 @@ def _partition_guess(x):
     xx = (x[:, :, :, None] * x[:, :, None, :]).reshape(n, 16, 9)
     s1, q1, c1 = np.matmul(m, x), np.matmul(m, xx).reshape(n, 64, 3, 3), m.sum(1)
     s0, q0, c0 = x.sum(1)[:, None] - s1, xx.sum(1).reshape(n, 1, 3, 3) - q1, 16 - c1
-    resid = 0
+    resid = None
     for s, q, c in ((s0, q0, c0), (s1, q1, c1)):
-        sc = q - (s[..., :, None] * s[..., None, :]) / c[None, :, None, None]
-        a, b_, c_ = sc[..., 0, 0], sc[..., 1, 1], sc[..., 2, 2]         # the 6 numbers of each 3 x 3 scatter
-        d, e, f = sc[..., 0, 1], sc[..., 0, 2], sc[..., 1, 2]
+        # the 6 numbers of each 3 x 3 scatter (q - s s^T / c), each in an array of its own: per number the same float32
+        # operations in the same order as the whole matrix of strided views, without the 3 not used and without their
+        # temporaries (byte-identical textures, 2026-11-12)
+        cc = c[None, :]
+        a, b_, c_, d, e, f = (q[..., i, j] - (s[..., i] * s[..., j]) / cc
+                              for i, j in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)))
         vx, vy, vz = np.ones_like(a), np.ones_like(a), np.ones_like(a)  # its main axis by power iteration
+        t0, t1, t2, tmp = (np.empty_like(a) for _ in range(4))
         for _ in range(4):
-            vx, vy, vz = a * vx + d * vy + e * vz, d * vx + b_ * vy + f * vz, e * vx + f * vy + c_ * vz
-            norm = np.maximum(np.sqrt(vx * vx + vy * vy + vz * vz), 1e-12)
-            vx, vy, vz = vx / norm, vy / norm, vz / norm
-        top = (vx * (a * vx + d * vy + e * vz) + vy * (d * vx + b_ * vy + f * vz) + vz * (e * vx + f * vy + c_ * vz))
-        resid = resid + a + b_ + c_ - top
+            _rows3(a, d, e, b_, f, c_, vx, vy, vz, t0, t1, t2, tmp)
+            vx, vy, vz, t0, t1, t2 = t0, t1, t2, vx, vy, vz
+            np.multiply(vx, vx, out=tmp)
+            tmp += np.multiply(vy, vy, out=t0)
+            tmp += np.multiply(vz, vz, out=t0)
+            np.sqrt(tmp, out=tmp)
+            np.maximum(tmp, 1e-12, out=tmp)
+            vx /= tmp
+            vy /= tmp
+            vz /= tmp
+        _rows3(a, d, e, b_, f, c_, vx, vy, vz, t0, t1, t2, tmp)
+        top = np.multiply(vx, t0, out=t0)
+        top += np.multiply(vy, t1, out=t1)
+        top += np.multiply(vz, t2, out=t2)
+        if resid is None:
+            resid = np.zeros_like(a)    # 0 + a, as the sum began: a -0.0 becomes +0.0 there too
+        resid += a
+        resid += b_
+        resid += c_
+        resid -= top
     return np.argsort(resid, 1, kind='stable')[:, :TOP]
+
+
+def _rows3(a, d, e, b_, f, c_, vx, vy, vz, o0, o1, o2, tmp):
+    """The symmetric 3 x 3 matrix [[a d e] [d b f] [e f c]] times (vx, vy, vz) into o0, o1, o2: each row summed left to
+    right, as `a * vx + d * vy + e * vz` does."""
+    for o, (p, q, r) in ((o0, (a, d, e)), (o1, (d, b_, f)), (o2, (e, f, c_))):
+        np.multiply(p, vx, out=o)
+        o += np.multiply(q, vy, out=tmp)
+        o += np.multiply(r, vz, out=tmp)
 
 
 def _partition_guess_any(x):

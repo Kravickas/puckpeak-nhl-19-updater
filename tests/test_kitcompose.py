@@ -293,13 +293,19 @@ def test_patch_makes_the_families_switched_on_and_serves_them_after_the_kits(pla
     art.write_pack(str(places / patch.LOOKS32_PACK), 'looks32', {JERSEY.replace('three', 'one'): template(64, 64)})
     (places / K.source_pack('nhl')).write_bytes(open(world['pack'], 'rb').read())
     assert K.source_pack('nhl') in patch.art_found(str(places))
-    said, steps = [], []
+    said, steps, shares = [], [], []
     want = {'art': True, 'kits': True, 'alts_nhl': True, 'alts_intl': True}     # no national team pack here
-    made = patch.make_kits(want, world['game'], str(places), log=said.append, step=steps.append)
+    made = patch.make_kits(want, world['game'], str(places), log=said.append, step=steps.append,
+                           progress=lambda fam, share: shares.append((fam, share)))
     assert set(made) == {'pants', 'nhl'} and made['nhl']['files'] == 4 and made['pants']['files'] == 1
     assert said == ['jerseys (pants): made 1 textures', 'jerseys (nhl): made 4 textures']
-    assert steps == [f'making the jerseys on this PC: NHL alternate jerseys, {n} %...'
-                     for n in (0, 25, 50, 75, 100)]  # the pants are quick: not said
+    # said every 5 % of the family's work (its textures weighed by size and step, kitcompose.weight), from 0 to 100
+    pcts = [int(t.rsplit(', ', 1)[1].split(' ')[0]) for t in steps]
+    assert all(t.startswith('making the jerseys on this PC: NHL alternate jerseys, ') for t in steps)
+    assert pcts[0] == 0 and pcts[-1] == 100 and pcts == sorted(set(pcts))      # the pants are quick: not said
+    for fam in ('pants', 'nhl'):
+        got = [x for f, x in shares if f == fam]
+        assert got[0] == 0.0 and got[-1] == pytest.approx(1.0) and got == sorted(got)
     layers = []
     packs = patch.art_layer(want, layers, str(places), game_dir=world['game'])
     assert [p.name for p in packs] == ['looks32', K.PANTS_KIT, 'alts-nhl'] and layers == ['art']
