@@ -39,7 +39,7 @@ class Outcome:
     after: list = field(default_factory=list)  # what failed after a good save (the roster IS saved): red lines
 
 
-RUNNING = ('shadPS4 is running, and the game holds its saves while it runs. Close it, then save again. '
+RUNNING = ('NHL 19 is running, and the game holds its saves while it runs. Close it, then save again. '
            'Nothing was written.')
 
 

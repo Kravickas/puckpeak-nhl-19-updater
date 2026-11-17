@@ -466,13 +466,15 @@ def make_clubart(teams, game_dir, cache_dir, log=None, progress=None, index=None
     return counts
 
 
-def served_portraits(game_dir, cache_dir=None):
+def served_portraits(game_dir, cache_dir=None, serving=None):
     """(game paths of the player photos the applied patch serves, the people packs' `people`): what Update needs to give
     a saved roster its photos (art.player_portraits, art.portrait_flags). Nothing without the patch's art. The photos
     drawn on this PC count only as the patch served them (the same pack, by its sha256: Update draws new ones after this
-    is read, and they count once Patch has put them in), and never for a person the people pack has."""
+    is read, and they count once Patch has put them in), and never for a person the people pack has. `serving`: True /
+    False when the Patch about to run decides it instead of the patch in the game (the Patch tab's one press: Update
+    first, then Patch with the photos switch as it is now)."""
     records = ((overlay.status(game_dir).get('layers') or {}).get('art') or {}).get('packs') or ()
-    served = {p.get('name') for p in records}
+    served = {p.get('name') for p in records}       # the packs' own names ('photos'), not their file names
     files, people = set(), []
     for name in (PHOTOS_PACK, PEOPLE_PACK):
         path = next((p for p in (os.path.join(f, name) for f in art_places(cache_dir)) if os.path.isfile(p)), None)
@@ -480,7 +482,7 @@ def served_portraits(game_dir, cache_dir=None):
             pack = art.listing(path) if path else None
         except art.ArtError:
             pack = None
-        if pack is not None and pack.name in served:
+        if pack is not None and (pack.name in served if serving is None else serving):
             files |= set(pack.files)
             people += pack.info.get('people') or []
     local = local_people(cache_dir)
@@ -488,8 +490,8 @@ def served_portraits(game_dir, cache_dir=None):
         pack = art.listing(local) if local else None
     except art.ArtError:
         pack = None
-    if pack is not None and {'name': pack.name, 'sha256': pack.sha256} in \
-            [{'name': p.get('name'), 'sha256': p.get('sha256')} for p in records]:
+    if pack is not None and (serving if serving is not None else {'name': pack.name, 'sha256': pack.sha256} in
+                             [{'name': p.get('name'), 'sha256': p.get('sha256')} for p in records]):
         have = {tuple(r[:4]) for r in people}
         files |= set(pack.files)
         people += [r for r in pack.info.get('people') or [] if tuple(r[:4]) not in have]

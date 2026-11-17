@@ -47,7 +47,7 @@ export function EditsWindow() {
           <span class="chip">${e.tab}</span>${e.code && html`<span class="chip accent">${e.code}</span>`}
           <span class="main">${e.label}</span></div>`)}</div>`}
     <h3 class="edits-kept-title">Kept for every update (${s.kept_count || 0})</h3>
-    <p>Player edits you saved on the Roster tab. The Update tab puts them back after each update (its My edits switch).</p>
+    <p>Player edits you saved on the Roster tab. The roster update on the Patch tab puts them back after each update (its My edits switch).</p>
     ${kept.length === 0 ? html`<${Empty} small>None yet. Save a player edit (card, face & type, equipment) and it is kept here.<//>`
       : html`<div class="edits-list kept">${kept.map((e) => html`<div key=${e.key} class="item">
           ${e.team && html`<span class="chip accent">${e.team}</span>`}

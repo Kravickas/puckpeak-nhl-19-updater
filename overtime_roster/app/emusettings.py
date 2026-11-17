@@ -331,6 +331,20 @@ def log_sync(user_dir):
     return f['default']
 
 
+NULL_GPU_ID = 'GPU.null_gpu'
+
+
+def null_gpu(user_dir):
+    """Whether NHL 19 starts with no picture (NULL GPU): the game file's, else config.json's, else off. 0.97.0: a CHEL
+    launch on such a PC readies up and searches by itself in the dressing room (nobody can see the screen)."""
+    f = BY_ID[NULL_GPU_ID]
+    for path in (gamesetup.custom_config_path(user_dir), os.path.join(user_dir, 'config.json')):
+        value = _value_in(_load(path), f)
+        if value is not None:
+            return value is True
+    return False
+
+
 def view(user_dir, resolution=1080):
     """What the Game settings view shows: the tabs, every field with its value (game file, else config.json, else the
     emulator's default) and whether the game file sets it, the locks, and whether a save would be refused now."""

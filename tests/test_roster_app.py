@@ -351,7 +351,7 @@ def test_save_refused_while_shadps4_runs(session, game, tmp_path, monkeypatch):
     monkeypatch.setattr(install.overlay, 'emulator_running', lambda: True)
     out = install.run(session, game, install.TARGET_SAVE, 'Held', str(saves), str(tmp_path / 'home' / 'exports'),
                       log=lambda *a: None)
-    assert not out.ok and 'shadPS4 is running' in out.lines[0] and 'Nothing was written' in out.lines[0]
+    assert not out.ok and 'NHL 19 is running' in out.lines[0] and 'Nothing was written' in out.lines[0]
     assert sorted(os.listdir(saves)) == ['Profile0'] and not (tmp_path / 'home').exists()
     # an export touches no save: it goes on while the game runs
     assert install.run(session, game, install.TARGET_EXPORT, 'Export', '', str(tmp_path / 'x'), log=lambda *a: None).ok

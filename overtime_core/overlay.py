@@ -854,7 +854,7 @@ def apply(game_dir, layers=('text', 'names'), pack=None, database=None, lang='en
     built and it is known what will be written, then ('copy' / 'write' / 'verify', n) for n more bytes done. The
     'verify' calls come from several threads at once."""
     if (running or emulator_running)():
-        raise PatchError('shadPS4 is running: close the game first')
+        raise PatchError('NHL 19 is running: close the game first')
     with art_mod.reading():     # one handle per pack zip / archive the art is read from, not one per texture
         return _apply(game_dir, tuple(layers), pack, database, lang, menus, art, progress)
 
@@ -1070,7 +1070,7 @@ def set_menus(game_dir, launch=None, running=None):
     (league) are carried over from the overlay's own copy. A hook that is left on (a crash, the game started outside
     the app) does nothing once its time has passed, and any full apply puts the stock menus back. Returns the state."""
     if (running or emulator_running)():
-        raise PatchError('shadPS4 is running: close the game first')
+        raise PatchError('NHL 19 is running: close the game first')
     old = _load_state(game_dir)
     if not old or 'menus' not in old.get('layers', {}):
         raise PatchError('the menus layer is not applied: apply the patch first')
@@ -1123,7 +1123,7 @@ def set_menus(game_dir, launch=None, running=None):
 def undo(game_dir, running=None):
     """Remove every overlay file the patch wrote. Returns the paths removed."""
     if (running or emulator_running)():
-        raise PatchError('shadPS4 is running: close the game first')
+        raise PatchError('NHL 19 is running: close the game first')
     done = []
     state = _load_state(game_dir) or {}
     stamp = _stamp(game_dir)

@@ -81,6 +81,11 @@ class FakeService:
         self.you = 0
         return {'token': 'secret-token', 'you': 0, 'lobby': self.lobby}
 
+    def start(self, code, token, seconds):
+        self._go('start', code, token, seconds)
+        self.lobby['deadline_in'] = seconds or None
+        return {**self.lobby, 'you': self.you}
+
     def side(self, code, token, side):
         self._go('side', code, token, side)
         self.lobby['players'][self.you]['side'] = side
@@ -414,6 +419,31 @@ def test_leaving_shows_the_public_list_again(mp):
     assert [r['code'] for r in mp.view()['lobbies']] == ['AB123'] and mp.ctl.pushed[-1] == 'multiplayer'
 
 
+def test_the_lobby_closes_when_the_game_it_played_closes(mp):
+    # owner 2026-11-15: a played lobby can't restart or pick a game, so it closes and says to make a new one
+    start_lobby(mp)
+    mp._close_after_game()                                # no match reached yet: the lobby stays
+    assert mp.view()['lobby'] is not None and mp.view()['closed'] == ''
+    mp.service.lobby['players'][0]['stage'] = 'matched'
+    mp.poll_once()
+    mp._close_after_game()
+    v = mp.view()
+    assert v['lobby'] is None and v['closed'] == MC.CLOSED_AFTER_GAME and mp.token is None
+    assert ('leave', 'K7M2Q', 'secret-token') in mp.service.calls
+    assert mp.dismiss_closed() == {'ok': True} and mp.view()['closed'] == ''
+
+
+def test_a_new_lobby_clears_the_closed_note(mp):
+    start_lobby(mp)
+    mp.service.lobby['players'][0]['stage'] = 'matched'
+    mp.poll_once()
+    mp._close_after_game()
+    assert mp.view()['closed']
+    assert mp.create(public=True) == {'ok': True} and mp.view()['closed'] == ''
+    mp._close_after_game()                                # the new lobby has not played: it stays
+    assert mp.view()['lobby'] is not None
+
+
 def test_ready_first_makes_the_game_fit_for_online_with_no_click(mp, monkeypatch):
     # owner 2026-11-08: the Kravickas build and the bare-minimum patch go in by themselves before the lobby is told
     start_lobby(mp)
@@ -598,13 +628,59 @@ def test_an_unpatched_game_is_not_started(mp, monkeypatch):
     assert mp.view()['game']['again'] is True
 
 
+def test_the_game_closing_after_the_match_closes_the_lobby(mp, monkeypatch):
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    start_lobby(mp)
+    mp.service.lobby['players'][0]['stage'] = 'matched'
+    mp.poll_once()                                        # the match was on while the game ran
+    mp._launch_job()
+    assert kinds(rig)[-1] == 'hook' and mp.view()['lobby'] is None and mp.view()['closed'] == MC.CLOSED_AFTER_GAME
+    assert mp.service.calls[-1] == ('leave', 'K7M2Q', 'secret-token')
+
+
+def test_a_game_closed_before_the_match_keeps_the_lobby(mp, monkeypatch):
+    good_checks(mp)
+    Rig(mp, monkeypatch)
+    start_lobby(mp)
+    mp._launch_job()
+    assert mp.view()['lobby'] is not None and mp.view()['closed'] == ''
+
+
 def test_a_running_game_is_a_rematch_with_no_hook(mp, monkeypatch):
     good_checks(mp)
     rig = Rig(mp, monkeypatch, seq=(True, True, False))
     start_lobby(mp)
+    mp.hooked = mp._hook_key()          # the game this lobby started (Next round)
     mp._launch_job()
     assert 'hook' not in kinds(rig) and 'started' not in kinds(rig)
-    assert mp.game['phase'] == 'ended'
+    assert mp.game['phase'] == 'ended' and mp.hooked is None
+
+
+def test_a_game_open_before_the_lobby_restarts_with_the_hook(mp, monkeypatch):
+    # 0.96.0 (owner test 2026-11-14): NHL 19 open already (by hand, or from another lobby or mode) never had this
+    # lobby's hook, so Ready restarts it hooked instead of leaving the player to walk by hand
+    good_checks(mp)
+    for before in (None, ('OTHER', 'quick', RU.VERSUS)):
+        rig = Rig(mp, monkeypatch, seq=(True, False, False, True, True, False))
+        mp.stop_emulator = lambda: rig.events.append(('stop',)) or 'stopped'
+        mp.code = None
+        start_lobby(mp)
+        mp.hooked = before
+        mp._launch_job()
+        assert kinds(rig)[:3] == ['stop', 'hook', 'started'] and kinds(rig)[-1] == 'hook'
+        assert mp.hooked is None
+
+
+def test_the_game_this_lobby_started_is_marked_while_it_runs(mp, monkeypatch):
+    good_checks(mp)
+    seen = []
+    rig = Rig(mp, monkeypatch)
+    start_lobby(mp)
+    real = mp._watch
+    mp._watch = lambda emu, hooked: seen.append(mp.hooked) or real(emu, hooked)
+    mp._launch_job()
+    assert seen == [mp._hook_key()] and mp.hooked is None and 'started' in kinds(rig)
 
 
 def test_a_hook_that_cannot_come_off_while_the_game_runs_waits_for_it(mp, monkeypatch):
@@ -614,7 +690,7 @@ def test_a_hook_that_cannot_come_off_while_the_game_runs_waits_for_it(mp, monkey
     def set_menus(game_dir, opts, running=None):
         tries.append(opts)
         if len(tries) == 1:
-            raise overlay.PatchError('shadPS4 is running: close the game first')
+            raise overlay.PatchError('NHL 19 is running: close the game first')
     monkeypatch.setattr(overlay, 'set_menus', set_menus)
     mp._unhook('game')
     assert tries == [None, None] and ('sleep', MC.WATCH_POLL) in rig.events
@@ -876,6 +952,7 @@ def test_a_running_game_keeps_its_rules_and_the_card_says_so(mp, monkeypatch):
     good_checks(mp)
     rig = Rig(mp, monkeypatch, seq=(True, True, False))
     start_lobby(mp)
+    mp.hooked = mp._hook_key()
     mp.set_rule('periodlength', 15)
     notes = []
     real = mp._phase
@@ -1041,7 +1118,7 @@ def test_a_shootout_launch_hooks_the_shootout_hub_and_bakes_its_rules(mp, monkey
 
 
 # --- 0.80: the match-only setup (docs/plans/mellow-crunching-hippo.md) ---------------------------------------------
-from overtime_roster.app import matchsetup, onlineemu, onlinetag  # noqa: E402
+from overtime_roster.app import boost, matchsetup, onlinetag  # noqa: E402
 
 
 def test_the_host_announces_its_recipe_and_caps_the_guest_its_caps(mp):
@@ -1068,15 +1145,14 @@ def match_lobby(mp, emu_sha=None):
 
 
 class MatchRig(Rig):
-    """Rig plus fakes for the online copy, the match setup and the restart."""
+    """Rig plus fakes for the lobby build (Overtime Native v2 here), the match setup and the restart."""
 
     def __init__(self, mp, monkeypatch, seq=(False, True, True, False), stop='closed', tag=None):
         super().__init__(mp, monkeypatch, seq)
         self.stop, self.tag = stop, tag
         mp.stop_emulator = lambda: self.events.append(('stop',)) or self.stop
-        monkeypatch.setattr(onlineemu, 'start_dir', lambda emu: 'D:/emu')
-        monkeypatch.setattr(onlineemu, 'ensure', lambda cache, want=None, progress=None:
-                            (self.events.append(('ensure', want)) or 'C:/online/shadPS4.exe', 'f' * 64))
+        mp.ctl.setup.online_boost = lambda note=None: self.events.append(('boost',)) or 'already'
+        monkeypatch.setattr(boost, 'here', lambda build: 'C:/boost/native2/shadPS4.exe' if build == boost.DEFAULT else '')
         monkeypatch.setattr(matchsetup, 'apply', self.apply)
         monkeypatch.setattr(matchsetup, 'restore', lambda running=None, log=None, only=None:
                             self.events.append(('restore',)) or 'done')
@@ -1093,13 +1169,14 @@ class MatchRig(Rig):
         return types.SimpleNamespace(pid=1)
 
 
-def test_a_match_launch_sets_up_starts_the_online_copy_and_puts_everything_back(mp, monkeypatch):
+def test_a_match_launch_sets_up_starts_the_lobby_build_and_puts_everything_back(mp, monkeypatch):
+    # owner 2026-11-16: every lobby plays on Overtime Native v2, whatever the server pins (it is not read)
     rig = MatchRig(mp, monkeypatch)
-    match_lobby(mp)
+    match_lobby(mp, emu_sha='a' * 64)
     mp._launch_job()
-    assert kinds(rig) == ['ensure', 'apply', 'hook', 'started', 'press', 'press', 'hook', 'restore']
+    assert kinds(rig) == ['boost', 'apply', 'hook', 'started', 'press', 'press', 'hook', 'restore']
     assert ('apply', '0123456789abcdef') in rig.events
-    assert ('started', 'C:/match/overtime-match.xml', 'C:/online/shadPS4.exe') in rig.events
+    assert ('started', 'C:/match/overtime-match.xml', 'C:/boost/native2/shadPS4.exe') in rig.events
     assert not xmlpatch.parse(rig.own_text)[0] is None and mp.game['phase'] == 'ended'
 
 
@@ -1115,7 +1192,7 @@ def test_a_game_running_with_another_setup_is_restarted(mp, monkeypatch):
     rig = MatchRig(mp, monkeypatch, seq=(True, False, True, True, False))
     match_lobby(mp)
     mp._launch_job()
-    assert kinds(rig)[:3] == ['stop', 'ensure', 'apply'] and 'started' in kinds(rig)
+    assert kinds(rig)[:3] == ['stop', 'boost', 'apply'] and 'started' in kinds(rig)
 
 
 def test_a_game_that_does_not_close_fails_the_start_and_nothing_is_set_up(mp, monkeypatch):
@@ -1130,8 +1207,17 @@ def test_a_game_that_does_not_close_fails_the_start_and_nothing_is_set_up(mp, mo
 def test_a_game_running_with_this_matchs_setup_is_a_rematch(mp, monkeypatch):
     rig = MatchRig(mp, monkeypatch, seq=(True, True, False), tag='0123456789abcdef')
     match_lobby(mp)
+    mp.hooked = mp._hook_key()
     mp._launch_job()
     assert kinds(rig) == ['restore'] and mp.game['phase'] == 'ended'
+
+
+def test_a_game_with_this_setup_from_another_lobby_is_restarted(mp, monkeypatch):
+    rig = MatchRig(mp, monkeypatch, seq=(True, False, True, True, False), tag='0123456789abcdef')
+    match_lobby(mp)
+    mp.hooked = ('OTHER', 'chel', RU.CHEL_ONES)
+    mp._launch_job()
+    assert kinds(rig)[0] == 'stop' and 'started' in kinds(rig)
 
 
 def test_a_failed_setup_still_puts_things_back(mp, monkeypatch):
@@ -1147,20 +1233,20 @@ def test_a_failed_setup_still_puts_things_back(mp, monkeypatch):
     assert mp.game['phase'] == 'failed' and 'in the way' in mp.game['note']
 
 
-def test_ready_in_a_match_lobby_gets_the_copy_and_sends_the_match_fingerprint(mp, monkeypatch):
+def test_ready_in_a_match_lobby_switches_to_the_lobby_build_and_sends_the_match_fingerprint(mp, monkeypatch):
     MatchRig(mp, monkeypatch)
     match_lobby(mp, emu_sha='a' * 64)
     boosted = []
     mp.ctl.setup.online_boost = lambda note: boosted.append(1) or 'on'
     assert mp.ready(True) == {'ok': True}
-    assert boosted == [] and mp.service.caps == MC.caps()
+    assert boosted == [1] and mp.service.caps == MC.caps()
     own = mp._own_text()
     assert mp.service.patch == xmlpatch.netplay_fingerprint(matchsetup.match_xml(mp.service.recipe, own))
     assert mp.service.patch == xmlpatch.netplay_fingerprint(mp.ctl.setup._xml())   # the same as the host's
 
 
 def test_ready_sends_the_tag_the_match_start_will_write(mp, monkeypatch):
-    """game.online at Ready is onlinetag's value for the match patch on the online copy (the lobby refuses another)."""
+    """game.online at Ready is onlinetag's value for the match patch on the lobby build (the lobby refuses another)."""
     MatchRig(mp, monkeypatch)
     match_lobby(mp, emu_sha='a' * 64)
     seen = []
@@ -1171,7 +1257,7 @@ def test_ready_sends_the_tag_the_match_start_will_write(mp, monkeypatch):
                 'key': True, 'vendor': 'amd', 'foreign': None}
     monkeypatch.setattr(onlinetag, 'match_inputs', inputs)
     assert mp.ready(True) == {'ok': True}
-    assert seen == [(mp.ctl.game_dir, 'C:/online/shadPS4.exe', mp.service.patch)]
+    assert seen == [(mp.ctl.game_dir, 'C:/boost/native2/shadPS4.exe', mp.service.patch)]
     assert mp.service.game['online'] == onlinetag.compute('NHL19_1.60', 'f', 's', 'amd')
     # a refusal says what here keeps this game apart, beside the lobby's general advice
     monkeypatch.setattr(onlinetag, 'why', lambda inp: 'Online you meet only players with the same setup: X.')
@@ -1180,15 +1266,12 @@ def test_ready_sends_the_tag_the_match_start_will_write(mp, monkeypatch):
                                        'the same setup: X)')
 
 
-def test_ready_says_why_when_the_online_copy_cannot_be_had(mp, monkeypatch):
+def test_ready_says_why_when_the_lobby_build_cannot_be_had_and_the_lobby_compares(mp, monkeypatch):
     MatchRig(mp, monkeypatch)
     match_lobby(mp)
-
-    def no(cache, want=None, progress=None):
-        raise onlineemu.OnlineEmuError('The lobby plays with another shadPS4 build than this app has: update the app.')
-    monkeypatch.setattr(onlineemu, 'ensure', no)
-    assert 'update the app' in mp.ready(True)['error']
-    assert not any(c[0] == 'ready' for c in mp.service.calls)
+    mp.ctl.setup.online_boost = lambda note=None: 'none published'
+    assert mp.ready(True) == {'ok': True}
+    assert 'not on the Overtime server' in mp.prep_why and mp.service.calls[-1][0] == 'ready'
 
 
 def test_a_match_launch_shows_the_setup_step_first(mp, monkeypatch):
@@ -1423,9 +1506,13 @@ def chel_on(monkeypatch):
     monkeypatch.setattr(MC, 'CHEL_LOBBIES', True)       # 0.90.1 hides CHEL lobbies; these tests keep the code alive
 
 
-def test_chel_lobbies_are_hidden_for_now(mp):
-    """0.90.1 hotfix: no CHEL host option, no CHEL rows in the public list, no joining one by code."""
-    assert MC.CHEL_LOBBIES is False
+def test_chel_lobbies_are_on_in_0_96():
+    assert MC.CHEL_LOBBIES is True
+
+
+def test_chel_lobbies_can_be_hidden_again(mp, monkeypatch):
+    """The 0.90.1 switch still works: no CHEL host option, no CHEL rows in the public list, no joining one by code."""
+    monkeypatch.setattr(MC, 'CHEL_LOBBIES', False)
     mp.set_name('iksperial')
     mp.set_ext('16349')
     assert 'not available' in mp.create_chel(RU.CHEL_DROPIN)['error'] and mp.service.calls == []
@@ -1436,7 +1523,8 @@ def test_chel_lobbies_are_hidden_for_now(mp):
     assert mp.join('K7M2Q') == {'ok': True} and mp.service.join_chel is False
 
 
-def test_joining_a_chel_lobby_by_code_says_not_yet(mp):
+def test_joining_a_chel_lobby_by_code_says_not_yet_when_hidden(mp, monkeypatch):
+    monkeypatch.setattr(MC, 'CHEL_LOBBIES', False)
     mp.set_name('iksperial')
     mp.set_ext('16349')
     def refuse(*a, **k):
@@ -1460,15 +1548,17 @@ def test_create_chel_sends_the_kind_mode_and_split(mp):
     assert lv['kind'] == 'chel' and lv['chel_mode'] == RU.CHEL_DROPIN and lv['split'] is True and lv['cap'] == 12
     assert lv['rules'] is None and lv['side_pick'] == {'edit': True, 'mine': 0}
     assert {m['mode'] for m in mp.view()['chel_modes']} == set(MC.CHEL_PICK)
+    assert RU.CHEL_PROAM not in MC.CHEL_PICK                                 # Pro-Am stays locked in the game
 
 
 @pytest.mark.usefixtures('chel_on')
-def test_create_chel_refuses_other_modes_and_unsplits_ones(mp):
+def test_create_chel_refuses_other_modes_and_ones(mp):
+    """0.97.0 (owner 2026-11-16): Ones fails on the hub and its tile is hidden, so a CHEL lobby picks a Drop-in only."""
     mp.set_name('iksperial')
     mp.set_ext('16349')
     assert 'World of Chel' in mp.create_chel(RU.VERSUS)['error']
-    assert mp.create_chel(RU.CHEL_ONES, True, True) == {'ok': True}
-    assert mp.service.create_kw['split'] is False
+    assert 'World of Chel' in mp.create_chel(RU.CHEL_ONES, True, True)['error']
+    assert MC.CHEL_PICK == (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3) and set(MC.CHEL_PICK) <= set(MC.CHEL_SPLIT)
 
 
 @pytest.mark.usefixtures('chel_on')
@@ -1494,6 +1584,17 @@ def test_set_side_moves_me_and_refuses_junk(mp):
 
 
 @pytest.mark.usefixtures('chel_on')
+def test_a_0_97_server_lets_an_unsplit_drop_in_lobby_pick_sides(mp):
+    start_chel(mp, split=False)
+    lv = mp.view()['lobby']
+    assert lv['picks'] is False and lv['side_pick'] is None          # an older server: no picks
+    mp.service.lobby['picks'] = True
+    assert mp.set_side(1) == {'ok': True}
+    lv = mp.view()['lobby']
+    assert lv['picks'] is True and lv['split'] is False and lv['side_pick'] == {'edit': True, 'mine': 1}
+
+
+@pytest.mark.usefixtures('chel_on')
 def test_a_chel_lobby_takes_only_chel_modes(mp):
     start_chel(mp)
     assert 'World of Chel' in mp.set_mode(RU.SHOOTOUT)['error']
@@ -1505,7 +1606,7 @@ def test_a_chel_launch_serves_the_tile_and_never_presses_ready(mp, monkeypatch):
     rig = Rig(mp, monkeypatch)
     start_chel(mp)
     mp._launch_job()
-    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS, 'mode': 'chel'})
+    assert rig.events[0] == ('hook', {'until': 1000 + MC.HOOK_SECONDS, 'mode': 'chel', 'chel': 'chel_dropin'})
     assert [e for e in rig.events if e[0] == 'press'] == [('press', 'n'), ('press', 'n')]     # the title only
     assert rig.events[-1] == ('hook', None)
     assert mp.view()['game']['game'] == 'Drop-in 6s'
@@ -1579,3 +1680,86 @@ def test_the_open_play_watch_starts_only_with_the_readout_on(mp, monkeypatch):
     mp.watch_open_link(Proc(1))
     mp.watch_open_link(Proc(1))
     assert started == ['mp-link']                                              # one at a time
+
+
+# --- 0.96.0: the host's countdown, the bench ------------------------------------------------------------------------
+def countdown_lobby(mp):
+    start_chel(mp, split=False)
+    mp.service.lobby.update(countdowns=[60, 120, 180, 300], deadline_in=None)
+    mp.poll_once()
+
+
+def test_the_host_starts_and_cancels_the_countdown(mp):
+    countdown_lobby(mp)
+    lv = mp.view()['lobby']
+    assert lv['countdown'] == {'left': None, 'lengths': [60, 120, 180, 300], 'edit': True}
+    assert lv['path'] == ['World of Chel', 'Play', 'EASHL', 'Drop-in 6s'] and lv['bench'] is False and lv['wrong_mode'] is False
+    assert mp.start_countdown(180) == {'ok': True}
+    assert mp.service.calls[-1] == ('start', 'K7M2Q', 'secret-token', 180)
+    assert mp.view()['lobby']['countdown']['left'] == 180
+    assert mp.start_countdown(45) == {'ok': False}            # not a length the server takes
+    assert mp.start_countdown(0) == {'ok': True} and mp.service.calls[-1][-1] == 0
+    assert MC.MultiplayerCtl.CALLS['mp_start'] == 'start_countdown'
+
+
+def test_an_old_server_says_it_has_no_countdown(mp):
+    countdown_lobby(mp)
+    def refuse(*a, **k):
+        raise LC.LobbyRefused(404, 'not found')
+    mp.service.start = refuse
+    assert mp.start_countdown(60)['error'] == MC.OLD_SERVER_COUNTDOWN
+
+
+def test_a_benched_player_does_not_start_the_game(mp, monkeypatch):
+    countdown_lobby(mp)
+    started = []
+    monkeypatch.setattr(mp, '_start_job', lambda: started.append(1))
+    mp.service.lobby.update(state='launching')
+    mp.service.lobby['players'][0].update(bench=True, launch=False)
+    mp.poll_once()
+    assert started == [] and mp.view()['lobby']['bench'] is True
+    assert 'next match' in mp.launch_now()['error']
+    mp.service.lobby['players'][0].update(bench=False, launch=True)
+    mp.poll_once()
+    assert started == [1]
+
+
+def test_a_wrong_mode_note_turns_into_the_banner(mp):
+    countdown_lobby(mp)
+    mp.service.lobby['waiting'] = 'Bo searched Drop-in Threes, but this lobby plays Drop-in 6s: back out'
+    mp.poll_once()
+    assert mp.view()['lobby']['wrong_mode'] is True
+
+
+def test_next_round_with_the_game_on_does_not_start_it_again_later(mp, monkeypatch):
+    countdown_lobby(mp)
+    started = []
+    monkeypatch.setattr(mp, '_start_job', lambda: started.append(1))
+
+    class Alive:
+        alive = True
+
+        def is_alive(self):
+            return self.alive
+    mp.job = Alive()                                   # NHL 19 is on from the last round
+    mp.service.lobby.update(state='launching')         # the next round launches
+    mp.poll_once()
+    assert started == [] and mp.launched_for == ('K7M2Q', 'secret-token')
+    mp.job.alive = False                               # the player closes NHL 19 after the round
+    mp.poll_once()
+    assert started == []                               # not started once more by itself
+
+
+def test_screen_texts_name_the_mode_and_flag_wrong_mode_and_stalls():
+    from overtime_roster.app import multiplayer_ctl as M
+    assert M._screen_view(None) is None and M._screen_view({'id': 'bogus'}) is None
+    v = M._screen_view({'id': 'position', 'mode': 51, 'for': 5}, 'chel_dropin3')
+    assert v == {'text': 'Drop-in 3s dressing room, position taken', 'tone': 'info', 'for': 5}
+    v = M._screen_view({'id': 'searching', 'mode': 53, 'for': 5}, 'chel_gm3on3')
+    assert v['tone'] == 'bad' and 'wrong mode' in v['text'] and 'Drop-in Threes' in v['text']
+    assert M._screen_view({'id': 'ones', 'mode': None, 'for': 1}, 'chel_gm3on3')['tone'] == 'bad'
+    assert M._screen_view({'id': 'ones', 'mode': None, 'for': 1}, 'chel_ones')['tone'] == 'info'
+    v = M._screen_view({'id': 'chel', 'mode': None, 'for': 120}, 'chel_dropin3')
+    assert v['tone'] == 'caution' and 'stuck?' in v['text'] and '2 min' in v['text']
+    assert M._screen_view({'id': 'searching', 'mode': 51, 'for': 300}, 'chel_dropin3')['tone'] == 'good'
+    assert M._screen_view({'id': 'closed', 'mode': None, 'for': 0})['text'] == 'game closed'

@@ -27,6 +27,6 @@ def host_roster(game_dir, schema, open_db=None):
         return blob, crc, 'open'
     raw = served_database(game_dir)
     if raw is None:
-        raise HostRosterError('Open your roster in Overtime Roster (or press Patch on the Game patch tab) first.')
+        raise HostRosterError('Open your roster in Overtime Roster (or press Patch on the Patch tab) first.')
     blob, crc = h2h.build(tdb.Database.parse(raw, schema), schema, initial)
     return blob, crc, 'patch'

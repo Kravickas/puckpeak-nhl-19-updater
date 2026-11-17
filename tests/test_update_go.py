@@ -341,7 +341,7 @@ def test_check_first_is_used_again(app):
     open_roster(c, fakes, 'RosterCustom0')
     assert c.calls['update_check']() is None
     r = view(host)['result']
-    assert r['kind'] == 'plan' and r['title'] == 'What Go would change' and not c.busy
+    assert r['kind'] == 'plan' and r['title'] == 'What the update would change' and not c.busy
     assert r['lines'][4]['text'] == '3 free agents would retire.'
     assert fakes.ran == [] and c.session.history == []          # Check first changes nothing
     c.calls['update_go']()

@@ -3,8 +3,8 @@
    history. Each column scrolls on its own; narrower windows put column 3 under the other two, then everything in one. */
 
 .tab-multiplayer .mp { flex: 1; min-height: 0; display: grid; gap: 12px; overflow: hidden auto;
-  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr) minmax(440px, 560px); grid-template-rows: minmax(0, 1fr); }
-.tab-multiplayer .mp.no-side { grid-template-columns: minmax(320px, 390px) minmax(0, 1fr); }
+  grid-template-columns: minmax(270px, 320px) minmax(0, 1fr) minmax(460px, 680px); grid-template-rows: minmax(0, 1fr); }
+.tab-multiplayer .mp.no-side { grid-template-columns: minmax(270px, 320px) minmax(0, 1fr); }
 .tab-multiplayer .mp-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow: hidden auto; }
 .tab-multiplayer .mp-col > .card { flex: none; }
 .tab-multiplayer .mp-col > .card.mp-card-fill { flex: 1 0 auto; }
@@ -91,7 +91,6 @@
 .tab-multiplayer .mp-tile-d { font-size: 13.5px; color: var(--text-2); min-height: 38px; }
 .tab-multiplayer .mp-tile .btn.block { margin-top: auto; }
 .tab-multiplayer .mp-tile .switch-label { color: var(--text); font-weight: 600; }
-.tab-multiplayer .mp-code-in { height: 44px; font-size: 22px; font-weight: 700; letter-spacing: .35em; text-transform: uppercase; text-align: center; }
 .tab-multiplayer .mp-tile .btn.plain:disabled { color: var(--text-3); }
 .tab-multiplayer .mp-public { flex: 1 0 auto; min-height: 150px; display: flex; flex-direction: column; gap: 8px; }
 .tab-multiplayer .mp-public-empty { flex: 1; display: grid; place-items: center; padding: 16px; text-align: center; background: var(--panel-deep);
@@ -103,29 +102,39 @@
 .tab-multiplayer .mp-lobby-row:hover { background: var(--tile-hi); box-shadow: inset 3px 0 0 var(--accent); }
 .tab-multiplayer .mp-lobby-row .who { flex: 1; min-width: 0; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-multiplayer .mp-lobby-row .age { font-size: 12px; color: var(--text-3); }
-.tab-multiplayer .mp-howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-.tab-multiplayer .mp-howto-step { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+.tab-multiplayer .mp-howto { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tab-multiplayer .mp-howto-step { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .tab-multiplayer .mp-howto-step b { color: var(--text); }
-.tab-multiplayer .mp-howto-d { color: var(--text-3); }
 .tab-multiplayer .mp-ftag { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 22px;
   background: var(--metal); color: var(--metal-ink); font-size: 12px; font-weight: 700; }
 .tab-multiplayer .mp-empty { padding: 14px; font-size: 13px; color: var(--text-3); text-align: center; background: var(--panel-deep); }
-.tab-multiplayer .mp-code { display: flex; align-items: center; gap: 12px; }
-.tab-multiplayer .mp-code-big { font: 700 34px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); letter-spacing: .22em; color: var(--text); }
 
 /* --- players: two cards with their marks ----------------------------------------------------------------------------- */
 .tab-multiplayer .mp-players { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 /* 0.90.0 CHEL lobbies: Home and Away columns, each a stack of player cards */
 .tab-multiplayer .mp-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .tab-multiplayer .mp-chel-side { grid-template-columns: 1fr; align-content: start; }
-.tab-multiplayer .mp-chel-pick { display: flex; flex-direction: column; gap: 8px; }
+/* both sides line up: one header height (with or without the switch button), every tile as tall as a player's */
+.tab-multiplayer .mp-side-head { display: flex; align-items: center; gap: 0; min-height: 30px; }
+.tab-multiplayer .mp-side-head .sp { flex: 1; }
+.tab-multiplayer .mp-chel-side .mp-player { min-height: 70px; justify-content: center; }
+.tab-multiplayer .mp-side-n { margin-left: 8px; font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.tab-multiplayer .mp-chel-pick { display: flex; flex-direction: column; gap: 8px; min-width: 180px; }
+.tab-multiplayer .mp-host .mp-tile-d { min-height: 0; }
+.tab-multiplayer .mp-host-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.tab-multiplayer .mp-host-row > .btn { margin-left: auto; min-width: 220px; }
 .tab-multiplayer .mp-lobby-row .tag { margin: 0 8px; white-space: nowrap; }
 .tab-multiplayer .mp-player { padding: 10px 12px 10px 16px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tab-multiplayer .mp-player.ready { box-shadow: inset 3px 0 0 var(--good); }
-.tab-multiplayer .mp-player.empty { background: var(--panel-deep); color: var(--text-3); align-items: center; justify-content: center; min-height: 82px; box-shadow: none; }
+.tab-multiplayer .mp-player.empty { background: var(--panel-deep); color: var(--text-3); align-items: center; justify-content: center; min-height: 70px;
+  box-shadow: inset 0 0 0 1px var(--line-hi); font-size: 13px; letter-spacing: .12em; }
 .tab-multiplayer .mp-player-name { font-size: 17px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-multiplayer .mp-player-name .you { margin-left: 6px; font-size: 11px; color: var(--accent); letter-spacing: .1em; }
 .tab-multiplayer .mp-marks { display: flex; flex-wrap: wrap; gap: 5px; }
+.tab-multiplayer .mp-screen { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.tab-multiplayer .mp-screen.tone-good { color: var(--good); }
+.tab-multiplayer .mp-screen.tone-caution { color: var(--caution); }
+.tab-multiplayer .mp-screen.tone-bad { color: var(--bad); }
 
 /* --- Match rules: compact tiles, three to a row (the roster is the first); a changed rule is marked -------------------- */
 .tab-multiplayer .mp-rules-body { gap: 8px; }
@@ -242,7 +251,7 @@
 .mp-review .mp-note { font-size: 12.5px; color: var(--text-2); }
 .tab-multiplayer .mp-prow-tier { flex: none; width: 128px; font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-multiplayer .mp-ladder { display: flex; flex-direction: column; gap: 3px; }
-.tab-multiplayer .mp-ladder-row { display: flex; align-items: baseline; gap: 12px; padding: 5px 10px 5px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); }
+.tab-multiplayer .mp-ladder-row { display: flex; align-items: center; gap: 12px; padding: 5px 10px 5px 14px; background: var(--tile); box-shadow: inset 3px 0 0 var(--text-off); }
 .tab-multiplayer .mp-ladder-row.you { box-shadow: inset 3px 0 0 var(--accent); background: var(--tile-hi); }
 .tab-multiplayer .mp-ladder-row b { flex: none; width: 140px; }
 .tab-multiplayer .mp-ladder-row .mp-note { flex: none; width: 72px; }
@@ -352,7 +361,7 @@
 
 /* narrower windows: column 3 goes under the other two (rating and history side by side), then one column */
 @media (max-width: 1480px) {
-  .tab-multiplayer .mp, .tab-multiplayer .mp.no-side { grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); grid-template-rows: none; }
+  .tab-multiplayer .mp, .tab-multiplayer .mp.no-side { grid-template-columns: minmax(270px, 320px) minmax(0, 1fr); grid-template-rows: none; }
   .tab-multiplayer .mp-col { overflow: visible; min-height: auto; }   /* rows as tall as their cards: the page scrolls */
   .tab-multiplayer .mp-col-side { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); align-items: start; }
   .tab-multiplayer .mp-col-side > .card.mp-card-fill { min-height: 0; }
@@ -363,3 +372,13 @@
   .tab-multiplayer .mp-rules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tab-multiplayer .mp-col-side { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* 0.96.0 CHEL lobby: the host's countdown and the game's path to the mode */
+.tab-multiplayer .mp-countdown { display: flex; align-items: center; gap: 12px; }
+.tab-multiplayer .mp-countdown .sp { flex: 1; }
+.tab-multiplayer .mp-countdown-big { font-size: 28px; font-weight: 800; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.tab-multiplayer .mp-countdown-d { font-size: 13.5px; color: var(--text-soft); }
+.tab-multiplayer .mp-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 0; font-size: 15px; font-weight: 700; color: var(--text); }
+.tab-multiplayer .mp-path-t { font-size: 12px; color: var(--text-soft); margin-right: 4px; }
+.tab-multiplayer .mp-path-step.pick { color: var(--caution); font-size: 17px; }
+.tab-multiplayer .mp-path-arrow { color: var(--text-soft); }

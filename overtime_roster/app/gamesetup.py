@@ -99,7 +99,7 @@ def _write(path, data):
 
 def _refuse_while_running(running=None):
     if (running or overlay.emulator_running)():
-        raise SetupError('shadPS4 is running. Close the game first, then try again.')
+        raise SetupError('NHL 19 is running. Close the game first, then try again.')
 
 
 # ---- finding things ---------------------------------------------------------------------------------------------

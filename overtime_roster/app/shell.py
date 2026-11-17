@@ -15,7 +15,7 @@ from . import paths
 from .registry import Part
 
 TEAM_TABS = ('roster', 'lines', 'strategy', 'jerseys', 'calendar', 'office')
-TAB_LABELS = {'setup': 'Setup', 'patch': 'Game patch', 'update': 'Update', 'roster': 'Roster', 'lines': 'Lines',
+TAB_LABELS = {'setup': 'Setup', 'patch': 'Patch', 'update': 'Patch', 'roster': 'Roster', 'lines': 'Lines',
               'strategy': 'Strategy', 'jerseys': 'Jerseys & gear', 'calendar': 'Calendar', 'office': 'Front office',
               'multiplayer': 'Multiplayer'}
 OPEN_KINDS = ('.txt', '.log', '.html', '.htm', '.csv', '.json', '.md')  # files open_path may open (never a program)

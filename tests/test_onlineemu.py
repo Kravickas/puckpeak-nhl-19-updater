@@ -99,7 +99,7 @@ def test_the_pack_follows_the_servers_pin(monkeypatch):
     table = {packdownload.EMULATOR_PACK: Rel('a' * 64), packdownload.NIGHTLY_PACK: Rel('B' * 64)}
     assert onlineemu.pack_for('b' * 64, table) == packdownload.NIGHTLY_PACK
     assert onlineemu.pack_for('a' * 64, table) == packdownload.EMULATOR_PACK
-    assert onlineemu.pack_for('c' * 64, table) == onlineemu.PACK == packdownload.NIGHTLY_PACK
+    assert onlineemu.pack_for('c' * 64, table) == onlineemu.PACK == packdownload.NATIVE2_PACK   # v2: the default
     assert onlineemu.pack_for(None, table) == onlineemu.PACK
     assert onlineemu.pack_for('b' * 64, {}) == onlineemu.PACK
 

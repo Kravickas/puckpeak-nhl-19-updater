@@ -73,7 +73,7 @@ def last_boot(emu):
 
 def item(setup, running=None):
     """The Game patch card's Cross-CPU line: {'tone', 'text', 'title'}, or None when shadPS4 is not set up. A last
-    start without the fix is red only while that game is still open (`running`, default: a shadPS4 is running); once it
+    start without the fix is red only while that game is still open (`running`, default: a NHL 19 is running); once it
     is closed, Play sets the patch and the key up again, so it is a caution that names what went wrong."""
     emu = setup.known_emulator()
     if not emu:

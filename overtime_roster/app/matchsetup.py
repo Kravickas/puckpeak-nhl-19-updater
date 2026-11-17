@@ -306,7 +306,7 @@ def apply(game_dir, user_dir, r, own_text, add_layers=None, running=None, log=la
 
 def _apply(game_dir, user_dir, r, own_text, add_layers, running, log, tag):
     if (running or overlay.emulator_running)():
-        raise MatchSetupError('shadPS4 is running: close the game first')
+        raise MatchSetupError('NHL 19 is running: close the game first')
     check(r)
     if active():
         restore(running=running, log=log)

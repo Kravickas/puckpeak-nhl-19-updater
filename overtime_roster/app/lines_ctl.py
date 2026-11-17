@@ -52,7 +52,7 @@ LETTERS_RULE = ('Pick C, A or none for each player. A new C takes the C from the
 APPLIED = 'Applied. Save the roster to keep these lines in it.'
 FREE_AGENTS = 'Free agents have no lines. Pick a team in the list.'
 NO_LINES = 'This team has no lines in the roster. Pick another team in the list.'
-SEATTLE_CUSTOM = ("This roster keeps Seattle's players in the game's custom team only. Run the update on the Update "
+SEATTLE_CUSTOM = ("This roster keeps Seattle's players in the game's custom team only. Run the roster update on the Patch "
                   'tab to change their lines here.')
 SHORT = 'This team has too few players for lines ({}). A team needs 2 goalies and 18 skaters.'
 NO_TEAM = 'Pick a team in the list first.'

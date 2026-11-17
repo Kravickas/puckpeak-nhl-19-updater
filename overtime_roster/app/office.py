@@ -43,8 +43,8 @@ SIGN = ('Sign him with this club: cap hit, years and one-way or two-way. Save wr
         'puts him in a line. A roster update rebuilds the free agents, so sign after updating.')
 PICK_FIRST = 'Click a player with a contract first.'
 CAP_MIN = 0.1                                   # $M: a deal's lowest cap hit here
-NOTE = 'Real dollars, as the game shows them with Game patch on. The cap counts the NHL roster.'
-NOTE_STOCK = "Real dollars against NHL 19's own cap: Game patch is off. The cap counts the NHL roster."
+NOTE = 'Real dollars, as the game shows them with the patch on. The cap counts the NHL roster.'
+NOTE_STOCK = "Real dollars against NHL 19's own cap: the patch is off. The cap counts the NHL roster."
 UNREAD = "This roster's contracts could not be read. Open the roster again in Setup."
 
 

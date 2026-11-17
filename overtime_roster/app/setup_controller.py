@@ -39,7 +39,7 @@ LOGIN_ROOM = min(room for _addr, room, _v in xmlpatch.FEATURES['nucleus'].lines)
 PLAY_WATCH_SECONDS = 180
 FIREWALL_WAIT = 40          # seconds Let it through... waits for the rule (Windows asks first: UAC)
 GAME_PORT = 'UDP 3659'      # the port NHL 19's online games use (docs/notes/beta-plan.md)
-LABELS = {'emulator': 'shadPS4', 'game': 'NHL 19', 'shadnet': 'ShadNet', 'network': 'Network'}
+LABELS = {'emulator': 'Renderer', 'game': 'NHL 19', 'shadnet': 'ShadNet', 'network': 'Network'}
 STEPS = ('Looking at shadPS4...', 'Looking at NHL 19...', 'Asking ShadNet...', 'Asking the Overtime server...')
 # the picture packs: name -> (title, core: the one click fetches it)
 PACKS = {name: (p['title'], p['core']) for name, p in packdownload.PACKS.items()}
@@ -72,7 +72,7 @@ def patch_cache():
 # Find game's picker: the launcher, the emulator, the game itself or its PKG (pkginstall)
 FIND_KINDS = 'shadPS4 or NHL 19 (*.exe;eboot.bin;*.pkg)'
 # Setup's Folders list, in its order: key -> label
-FOLDERS = {'emulator': 'shadPS4', 'game': 'NHL 19', 'data': 'shadPS4 data', 'saves': 'Saves',
+FOLDERS = {'emulator': 'Renderer', 'game': 'NHL 19', 'data': 'Renderer data', 'saves': 'Saves',
            'cache': 'Downloads and cache'}
 
 
@@ -148,6 +148,7 @@ UNLOCK_MOVE = 'fps9999:'    # defaults_done entry: this data folder's 60 / 120 -
 LOGSYNC_MOVE = 'logsync0:'  # defaults_done entry: this data folder's Log "Write at once" on -> off move is done
 REBUILD = '0.92.0'      # setup pref 'rebuild': the 0.92.0 defaults (boost.DEFAULT build, Apply everywhere on) were put in once
 DMEM_MOVE = 'dmem0:'     # defaults_done entry: this data folder's first-default DMem 3500 -> 0 at 1080p / 720p is done
+V2_MOVE = 'v2_moved'     # setup pref: a player on Overtime Native v1 (the old default) was put on v2 once (2026-11-16)
 
 
 class SetupController(Part):
@@ -198,6 +199,8 @@ class SetupController(Part):
         # sha256 of the pack in place}}
         rebuilt = prefs.get('rebuild') == REBUILD
         self.build = boost.name_of(prefs.get('build')) if rebuilt else boost.DEFAULT
+        if self.build == boost.NIGHTLY and not prefs.get(V2_MOVE):     # v1, the default before v2: on v2 once
+            self.build = boost.NATIVE2
         old = prefs.get('boost') or {}
         sha = {b: s for b, s in (old.get('sha') or {}).items() if b in boost.BUILDS and isinstance(s, str)}
         if isinstance(old.get('sha256'), str):      # apps before 0.90.2: the Kravickas build's
@@ -224,7 +227,7 @@ class SetupController(Part):
         self.ctl.remember(setup={'emulator': self.emulator, 'skipped': self.skipped, 'boost': self.boost,
                                  'build': self.build, 'defaults_done': list(self.defaults_done),
                                  'resolution': self.resolution, 'replays60': self.replays60, 'rebuild': REBUILD,
-                                 'display': gamesetup.display_mode(),
+                                 V2_MOVE: True, 'display': gamesetup.display_mode(),
                                  'custom': dict(self.custom),
                                  'server': {k: v for k, v in self.server.items() if v != SERVER.get(k)}})
 
@@ -1278,8 +1281,8 @@ class SetupController(Part):
 
     def setup_boost(self, on=True):
         """The pre-0.90.2 name (Boost on/off), kept for old pages: on = Kravickas (what Boost was), off = the other
-        build (Overtime Native)."""
-        return self.setup_build(boost.KRAVICKAS if on else boost.NIGHTLY)
+        build (Overtime Native v2 from 2026-11-16)."""
+        return self.setup_build(boost.KRAVICKAS if on else boost.DEFAULT)
 
     def setup_build(self, name):
         """Overtime Native / Kravickas on the Boost performance card: remembered (it stays until another click), and
@@ -1343,8 +1346,8 @@ class SetupController(Part):
         self._use_build(build, exe)
 
     def online_boost(self, note=None):
-        """Before an online Ready in a lobby without a match plan (multiplayer_ctl): NHL 19 on the published lobby
-        build (boost.DEFAULT, Overtime Native from 0.92.0; Kravickas before), switched on or brought up to date with no
+        """Before every online Ready in a lobby (multiplayer_ctl): NHL 19 on the published lobby build (boost.DEFAULT:
+        Overtime Native v2 from 2026-11-16, v1 from 0.92.0, Kravickas before), switched on or brought up to date with no
         click (owner 2026-11-08: "we just handle all things for him"). Lockstep play needs the same shadPS4 on both
         PCs. The build chosen on the card stays chosen: the next Play starts it again. Waits for the download. Returns
         what it did: 'on', 'already', or why not ('none published', a refusal); the lobby compares what is there either
@@ -2134,7 +2137,7 @@ class SetupController(Part):
         build = f.get('build')
         if f.get('running'):
             return tile('emulator', 'Running', 'caution',
-                        'shadPS4 is running. Close it before you save or delete a roster.')
+                        'NHL 19 is running. Close it before you save or delete a roster.')
         if build is None:
             return tile('emulator', 'Found', 'good', 'Found shadPS4. It does not say which version it is.')
         return tile('emulator', build['version'], 'good',
@@ -2213,7 +2216,7 @@ class SetupController(Part):
         # first, so Windows lets the replies in without a rule. The rule stays optional, for a direct link.
         if not roster_open:
             return {'tone': 'good', 'text': 'Ready. Now pick the roster you work on.', 'get': False}
-        return {'tone': 'good', 'text': 'Everything is ready. Go to Update or patch the game.', 'get': False}
+        return {'tone': 'good', 'text': 'Everything is ready. Go to Patch.', 'get': False}
 
     @staticmethod
     def _firewall(emulator, allows):

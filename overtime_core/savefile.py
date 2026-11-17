@@ -87,6 +87,12 @@ def pack(data):
     return b'\x01' + lz4f.encode(data) + struct.pack('<I', len(data))
 
 
+def pack_game(data):
+    """Pack the way the game's own saves are: compressed 64 KB LZ4 blocks (frame FLG 0x64, BD 0x40), then the size.
+    `pack` writes stored blocks with a 4 MB block size (valid, but not what the game writes)."""
+    return b'\x01' + lz4f.encode_compressed(data, block_max=64 << 10) + struct.pack('<I', len(data))
+
+
 def read_folder(path):
     import os
     with open(os.path.join(path, 'INDEX'), 'rb') as fi, open(os.path.join(path, 'DATA'), 'rb') as fd:

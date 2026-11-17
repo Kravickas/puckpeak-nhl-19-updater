@@ -266,7 +266,7 @@ def details(todo, report, names):
         out.append(('2018 NHL contracts ended', '-', f"{n27['cleared']} player(s)"))
         if n27.get('money'):
             out.append(("Contracts in NHL 19's own money", '-',
-                        f"x{n27['money']:.3f}: the 2026-27 salary cap is off in Game patch, so the game plays the "
+                        f"x{n27['money']:.3f}: the 2026-27 salary cap is off in Patch, so the game plays the "
                         f"2018-19 cap of $79.5M"))
     if 'expansion' in n27:
         out.append(('Contracts one season longer (expansion career)', '-', f"{n27['expansion']} deal(s)"))

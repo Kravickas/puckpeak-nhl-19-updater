@@ -5,7 +5,7 @@
 import { html, cls, useState, useEffect, useRef } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, PathText, Checkbox, Info, Modal, Segmented, Switch, Tag } from '../ui.js';
+import { Card, Button, PathText, Checkbox, Info, Modal, Segmented, Select, Switch, Tag } from '../ui.js';
 import { GameSettings, Controllers, Keyboard, GEAR_ICON, PAD_ICON, KEYS_ICON } from './emusettings.js';
 
 export const tip = 'Find NHL 19 and pick the roster you work on. Everything else follows them.';
@@ -40,20 +40,20 @@ function LinkRow() {
 // --- 1 Where is NHL 19? ---------------------------------------------------------------------------------------------------
 const WHERE_INFO = [
   { head: 'What to pick', items: ['Press Find game and pick NHL 19\'s eboot.bin, or its PKG files to install the game.',
-    'No shadPS4 on this PC? None needed: Overtime gets the build chosen under Boost performance by itself.',
-    'Have shadPS4 already? Pick shadPS4QtLauncher.exe or shadPS4.exe and it is used (with QtLauncher, the version selected in it).',
-    'The program finds the rest from there: NHL 19, the emulator and your roster saves.'] },
+    'Nothing else to install: Overtime gets the renderer chosen under Boost performance by itself.',
+    'Using your own renderer (shadPS4)? Folders, Renderer, Change... picks shadPS4QtLauncher.exe or shadPS4.exe.',
+    'The program finds and handles the rest by itself: the renderer and your roster saves.'] },
   { head: 'Installing from PKG', items: ['Pick the game PKG first, then the update 1.60 PKG. One at a time.',
     'The game goes into a new folder next to its PKG, the update into a new folder beside the game. Nothing is overwritten.',
     'It needs free space on that drive about the size of the PKG.',
     'The PKG tool is shadPS4Plus\'s pkg_extractor (GPL-2.0), downloaded from its GitHub page the first time: github.com/AzaharPlus/shadPS4Plus.'] },
-  { head: 'Folders', items: ['Open it for the checks (below) and where shadPS4, NHL 19, shadPS4\'s data and your saves are.',
-    'Change... picks one yourself (a portable shadPS4, another drive). The program never changes a folder you set.',
+  { head: 'Folders', items: ['Open it for the checks (below) and where the renderer, NHL 19, the renderer\'s data and your saves are.',
+    'Change... picks one yourself (your own shadPS4, another drive). The program never changes a folder you set.',
     'Auto lets the program find it again.',
     'Downloads and cache: the packs downloaded and the jerseys made on this PC (several GB with every pack). Change... moves '
       + 'them to a folder you pick, e.g. on the drive NHL 19 is on; Auto moves them back.'] },
-  { head: 'The checks', items: ['shadPS4: found, and its version.', 'NHL 19: the game (CUSA11126 or CUSA11116) with update 1.60.',
-    'ShadNet: you are signed in inside shadPS4.', 'Network: the Overtime server answers.',
+  { head: 'The checks', items: ['Renderer: found, and its version.', 'NHL 19: the game (CUSA11126 or CUSA11116) with update 1.60.',
+    'ShadNet: you are signed in to the online service.', 'Network: the Overtime server answers.',
     'Hold the mouse on a check to read all of it.'] },
 ];
 
@@ -124,15 +124,15 @@ function WhereCard({ s }) {
     <div class="card-body">
       <div class="row su-pathrow">
         <div class="su-paths">
-          ${(s.folders || []).filter((f) => f.key === 'game' || f.key === 'emulator').reverse().map((f) => html`<div key=${f.key} class="su-path">
-            <span class="su-pl">${f.key === 'game' ? 'Game' : 'Emulator'}</span><${PathText} path=${f.path} unset="Not found"/></div>`)}
+          ${(s.folders || []).filter((f) => f.key === 'game').map((f) => html`<div key=${f.key} class="su-path">
+            <span class="su-pl">Game</span><${PathText} path=${f.path} unset="Not found"/></div>`)}
         </div>
         <${Button} kind=${s.emulator.path ? 'ghost' : 'primary'} disabled=${busy} onClick=${() => findGame(s.emulator.path)}
-          title="Pick NHL 19's eboot.bin or its PKG, or your shadPS4 (shadPS4QtLauncher.exe or shadPS4.exe)">Find game...<//>
+          title="Pick NHL 19's eboot.bin or its PKG">Find game...<//>
       </div>
       <${Folders} folders=${s.folders} checks=${s.checks} checking=${s.checking} busy=${busy}/>
       <div class=${cls('su-state', st.tone, 'su-checkrow')}>
-        ${st.tone === 'good' ? html`<span class="su-chips">${(s.checks || []).map((c) => html`<span key=${c.key} class="su-chip" title=${c.text}><${Mark} tone=${c.tone}/>${c.label}</span>`)}</span>`
+        ${st.tone === 'good' ? html`<span class="su-chip" title="The checks are under Folders"><${Mark} tone="good"/>Ready to play</span>`
           : html`<span class="su-st">${st.text}</span>`}
         ${s.emulator.path && html`<${Button} small disabled=${busy} onClick=${() => call('setup_refresh')}>Check again<//>`}
       </div>
@@ -140,16 +140,19 @@ function WhereCard({ s }) {
   <//>`;
 }
 
-// --- Boost performance: the shadPS4 build the green Play NHL 19 button starts, Overtime Native or Kravickas -----------------
+// --- Boost performance: the shadPS4 build the green Play NHL 19 button starts, Overtime Native v2 / v1 or Kravickas ----------
 const BOOST_INFO = [
-  { head: 'What it does', items: ['Picks the shadPS4 build that the green Play NHL 19 button starts. The lit one is in use.',
-    "Overtime Native (the default): Overtime's own build of shadPS4 for NHL 19, with less RAM reserved, lighter controller polling, steadier frames and the fix for the \"Out of order flip IRQ\" crash. New versions come with Overtime releases.",
+  { head: 'What it does', items: ['Picks the shadPS4 build that the green Play NHL 19 button starts.',
+    "Overtime Native v2 (the default): v1 plus six speed changes: GPU readbacks without stalls, faster texture lookups, game threads at higher priority, a quieter log, shaders built in the background and draws recorded on a second thread. New, so tell us when something looks wrong.",
+    "Overtime Native v1: Overtime's own build of shadPS4 for NHL 19, with less RAM reserved, lighter controller polling, steadier frames and the fix for the \"Out of order flip IRQ\" crash.",
+    'Both Overtime Native builds come with Overtime releases.',
     "Kravickas: Kravickas's NHL 19 build, with his fix for the same crash. Get newest gets his newest published build now.",
     'Play downloads the chosen build the first time, and again when a newer one is published.',
     'Saves, patch and ShadNet login stay the same with either build.'] },
-  { head: 'Online', items: ['Multiplayer lobbies start the lobby build (Overtime Native) by themselves, whichever one is chosen here.',
+  { head: 'Online', items: ['Multiplayer lobbies play on Overtime Native v2 for everyone, whichever build is chosen here.',
     'Open matchmaking pairs you with players on the same build.'] },
-  { head: 'Source code (GPL-2.0)', items: ['Overtime Native: github.com/MatusRiedl/shadPS4, branch overtime-nightly.',
+  { head: 'Source code (GPL-2.0)', items: ['Overtime Native v2: github.com/MatusRiedl/shadPS4, branch overtime-native-v2.',
+    'Overtime Native v1: github.com/MatusRiedl/shadPS4, branch overtime-nightly.',
     'Kravickas: Source code, beside the build choice on the card.'] },
   { head: 'Your own shadPS4', items: ['It stays where it is, untouched.',
     'A portable shadPS4 with its own "user" folder keeps playing itself: the builds would not find its saves.'] },
@@ -178,9 +181,9 @@ function BoostCard({ s }) {
   const noEmu = !(s.emulator && s.emulator.path);
   const why = noEmu ? 'Find NHL 19 first' : undefined;
   const shut = () => setView(null);
-  const builds = (b.builds || []).map((x) => ({ value: x.id, label: x.label,
-    title: x.id === 'nightly' ? "Overtime's own build of shadPS4 for NHL 19 (the default, and the lobby build)"
-      : "Kravickas's NHL 19 build" }));
+  const BUILD_TITLES = { native2: 'Overtime Native v1 plus six speed changes (the default, and the lobby build)',
+    nightly: "Overtime's own build of shadPS4 for NHL 19 (the default until v2)", kravickas: "Kravickas's NHL 19 build" };
+  const builds = (b.builds || []).map((x) => ({ value: x.id, label: x.label, title: BUILD_TITLES[x.id] || x.label }));
   return html`<${Card} title="Boost performance" className="su-boost"
       aside=${html`<${Info} title="Boost performance" sections=${BOOST_INFO}/>`}>
     <div class="card-body">
@@ -189,10 +192,11 @@ function BoostCard({ s }) {
       </div>`}
       <div class="su-state su-build">
         <span class="su-st">Build</span>
-        <${Segmented} options=${builds} value=${b.build} disabled=${!b.can} onChange=${(v) => call('setup_build', v)}/>
+        <${Select} className="su-buildpick" options=${builds} value=${b.build} disabled=${!b.can} title=${BUILD_TITLES[b.build] || ''}
+          onChange=${(v) => call('setup_build', v)}/>
         <span class="su-bacts"><span class="su-bal">Kravickas build:</span>
         <${Button} small kind="link" disabled=${!b.can_update}
-          title=${b.updatable ? "Download Kravickas's newest published build now" : 'For the Kravickas build. Overtime Native comes with Overtime releases: Play NHL 19 gets a new one by itself'}
+          title=${b.updatable ? "Download Kravickas's newest published build now" : 'For the Kravickas build. Overtime Native v1 and v2 come with Overtime releases: Play NHL 19 gets a new one by itself'}
           onClick=${() => call('setup_build_update')}>Get newest<//>
         ${(b.builds || []).filter((x) => x.updatable).map((x) => html`<${Button} small kind="link" title=${`The ${x.label} build's source code (GPL-2.0)`}
           onClick=${() => call('setup_boost_source', x.id)}>Source code ↗<//>`)}</span>
@@ -308,11 +312,11 @@ function ProgramCard({ s }) {
 // --- 2 Which roster do you work on? -----------------------------------------------------------------------------------------
 const ROSTER_INFO = [
   { head: 'Your rosters', items: ['Every roster is a save of NHL 19. The game lists up to 15 under Customize Rosters.',
-    'Pick one: the Update tab, the team tabs and Save all use it.',
+    'Pick one: the roster update on the Patch tab, the team tabs and Save all use it.',
     'Start fresh opens the game roster or the Overtime default. Save it as a new roster to keep it.'] },
   { head: 'Good to know', items: ['Delete moves a roster to the Recycle Bin. You can take it back from there.',
     'The online roster comes from the Overtime server. It is replaced every time you sign in.',
-    'Close shadPS4 before you save or delete a roster.'] },
+    'Close NHL 19 before you save or delete a roster.'] },
 ];
 
 function RosterRow({ r, busy }) {
@@ -345,7 +349,7 @@ function RosterCard({ s }) {
   return html`<${Card} n="2" title="Which roster do you work on?" grow className="su-rosters"
       aside=${html`<${Info} title="Which roster do you work on?" sections=${ROSTER_INFO}/>`}>
     <div class="card-body fill">
-      ${s.running && html`<div class="small-note su-warn">shadPS4 is running. Close it before you save or delete a roster.</div>`}
+      ${s.running && html`<div class="small-note su-warn">NHL 19 is running. Close it before you save or delete a roster.</div>`}
       ${r.can_open && html`<div class=${cls('su-room', r.room_tone)}>
         <span class="su-count">${r.used} used</span><span class="su-room-text">${r.max - r.used} free of ${r.max} save slots</span>
       </div>`}

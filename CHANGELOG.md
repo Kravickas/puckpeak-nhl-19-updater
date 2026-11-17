@@ -2,6 +2,34 @@
 
 What changed in each version, for players.
 
+## 0.96.0 (2026-11-17)
+
+### New
+
+- **World of Chel lobbies in the app**: host a Drop-in 6s, Drop-in 3s or Drop-in Threes lobby, everyone picks Home or
+  Away, and the game starts as soon as everyone is ready. The host can also run a countdown (1, 2, 3 or 5 minutes):
+  whoever is not ready at 0:00 waits on the bench for the next match. A side nobody picked is played by the CPU.
+- **NHL 19 walks itself to the dressing room**: a lobby launch takes the game from the title screen to your mode's
+  dressing room. Pick a position, press READY, then START MATCHMAKING.
+- **See where everyone is**: each player in a running lobby shows where their NHL 19 is ("dressing room",
+  "searching Drop-in 3s"), red for a wrong mode or a closed game.
+- **A PC without a picture plays too**: with NULL GPU, a lobby launch takes a free position and readies up by itself.
+- **Overtime Native v2**: a faster emulator build, now the default. Setup's Boost card has a dropdown: Overtime Native
+  v2, Overtime Native v1 or Kravickas. Every lobby plays on v2: Ready switches you to it.
+- **One Patch tab**: Update and Game patch are one tab now. One press of Patch updates your open roster with today's
+  NHL rosters, saves it, then patches the game. Turn the roster update off to patch only.
+- **Skip the first-run setup** (Patch tab, off by default, new): for a save folder with no profile yet, Patch writes a
+  starter profile so NHL 19 skips its first-run questions.
+- **The game window is called "NHL 19"**.
+
+### Changed
+
+- **New rank icons** and a leaner Multiplayer tab: every lobby is public (no join code), shorter how-to steps.
+- A lobby closes itself when your NHL 19 closes after its game.
+- **World of Chel**: the EASHL menu shows Threes, Drop-in 3s and Drop-in 6s (Ones and Online Seasons are hidden).
+  The server now hosts World of Chel games itself, and lobby mates on the same position and side both get in.
+- **Setup** asks only for the game; the emulator is "Renderer" under Folders. Pro-Am is not offered in lobbies.
+
 ## 0.95.1 (2026-11-13)
 
 ### Changed

@@ -104,6 +104,10 @@ class LobbyClient:
         """A member of a split CHEL lobby moves to Home (0) or Away (1)."""
         return self._call('POST', f'/api/lobby/{_code(code)}/side', {'token': token, 'side': int(side)})
 
+    def start(self, code, token, seconds):
+        """The host of a CHEL lobby starts its countdown (0.96.0 servers): 60, 120, 180 or 300 seconds; 0 cancels."""
+        return self._call('POST', f'/api/lobby/{_code(code)}/start', {'token': token, 'seconds': int(seconds)})
+
     def ready(self, code, token, value=True, patch=None, game=None, caps=None):
         """Ready on or off. `caps` (0.80: ['match_setup']) tells the server what this app can do; it keeps them until
         sent again, so an app announces them right after create/join (docs/notes/lobby.md "Match recipe")."""

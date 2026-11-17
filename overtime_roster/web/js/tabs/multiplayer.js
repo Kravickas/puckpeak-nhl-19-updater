@@ -2,13 +2,13 @@
 // (host / join tiles, the public list; then the two players, Ready, the rules and the game steps); 3 your rating and the
 // history. Everything on the tab is the `multiplayer` slice (the Advanced row is Setup's Online lines); the lobby's secret
 // never reaches the page. docs/ui/multiplayer.md.
-import { html, cls, useState } from '../lib.js';
+import { html, cls, useState, useEffect } from '../lib.js';
 import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
 import { Button, Card, Modal, Segmented, Select, Tag, TextField, Toggle } from '../ui.js';
 import { OnlineLines } from './setup.js';
 
-export const tip = 'Make a lobby, give your friend the code, and both press Ready: the game starts by itself.';
+export const tip = 'Create a lobby or join one from the list; everyone presses Ready and the game starts by itself.';
 
 // a rank's icon (rankicons.js, a global: rankIcon(tier, size) gives an SVG string); nothing when there is no tier
 function TierIcon({ tier, size = 18 }) {
@@ -23,22 +23,7 @@ const STATE_CHIP = {
   matched: { tone: 'good', text: 'matched' },
 };
 const STAGE_TEXT = { lobby: 'game starting', setup: 'Game Setup', searching: 'searching', matched: 'matched' };
-const GO_TEXT = { setup: 'Setup', patch: 'Game patch', update: 'Update' };
-const GAME_TEXT = { title: 'NHL 19 release (title id)', data: 'game data', layers: 'Game patch switches', emu: 'shadPS4 build revision',
-  timing: 'shadPS4 vblank / PS4 Pro mode' };
-
-function copy(text) {
-  try {
-    if (navigator.clipboard) return navigator.clipboard.writeText(text);
-  } catch (err) { /* the next line tries again */ }
-  const area = document.createElement('textarea');
-  area.value = text;
-  document.body.appendChild(area);
-  area.select();
-  try { document.execCommand('copy'); } catch (err) { /* nothing more to try */ }
-  area.remove();
-  return null;
-}
+const GO_TEXT = { setup: 'Setup', patch: 'Patch', update: 'Patch' };
 
 function Fact({ label, tone, sub, children, action }) {
   return html`<div class=${cls('mp-fact', tone)}>
@@ -246,31 +231,33 @@ function You({ s, setup, go }) {
   </${Card}>`;
 }
 
-// --- 2 Lobby, none open yet: a host tile and a join tile, the public list, how a match comes about ---------------------
-const HOWTO = [
-  ['Create or join', 'One lobby, two players.'],
-  ['Both press Ready', 'The host sets the match rules first.'],
-  ['The app starts NHL 19', 'It searches for your friend by itself.'],
-];
+// --- 2 Lobby, none open yet: the host row, the public list, how a match comes about ------------------------------------
+// 0.97.0 (owner 2026-11-15): no join-by-code row and no code on the lobby: every lobby is in the public list, joined
+// from there; the three steps are titles only
+const HOWTO = ['Create or join', 'Everyone presses Ready', 'NHL 19 starts by itself'];
 
 function HowTo() {
-  return html`<div class="mp-howto">${HOWTO.map(([t, d], i) => html`<div class="mp-howto-step" key=${i}>
-    <span class="mp-ftag">${i + 1}</span><div><b>${t}</b><div class="mp-howto-d">${d}</div></div></div>`)}</div>`;
+  return html`<div class="mp-howto">${HOWTO.map((t, i) => html`<div class="mp-howto-step" key=${i}>
+    <span class="mp-ftag">${i + 1}</span><b>${t}</b></div>`)}</div>`;
+}
+
+// the lobby closed by itself after its game (0.97.0): a lobby has no use once its match is over
+function Closed({ text }) {
+  return html`<div class="mp-notice info mp-closed" role="status"><span class="sp"><b>Lobby closed.</b> ${text}</span>
+    <${Button} small kind="ghost" onClick=${() => call('mp_dismiss_closed')}>OK<//></div>`;
 }
 
 function Pick({ s, go }) {
-  const [code, setCode] = useState('');
-  const [pub, setPub] = useState(true);   // public by default (owner, 2026-11-06)
   const [kind, setKind] = useState('quick');   // 0.90.0: a quick pair, or a CHEL (World of Chel) party
   const chelModes = s.chel_modes || [];
   const [chelMode, setChelMode] = useState(chelModes.length ? chelModes[0].mode : 'chel_dropin');
-  const [split, setSplit] = useState(false);
-  const canSplit = !!(chelModes.find((m) => m.mode === chelMode) || {}).split;
-  const create = () => (kind === 'chel' ? call('mp_create_chel', chelMode, pub, split && canSplit) : call('mp_create', pub));
+  // 0.97.0: every lobby is public (nobody could join a private one without its code); everyone picks Home or Away in
+  // the lobby (the old split flag stays off)
+  const create = () => (kind === 'chel' ? call('mp_create_chel', chelMode, true, false) : call('mp_create', true));
   const idle = !s.busy;
   const patch = s.checks.find((c) => c.key === 'patch');
-  const join = () => { if (code) call('mp_join', code); };
   return html`<div class="mp-body mp-fill mp-pick">
+    ${s.closed && html`<${Closed} text=${s.closed}/>`}
     ${patch && patch.tone === 'bad' && html`<div class="mp-notice caution">
       <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" class="mp-warn"><path d="M10 2l9 16H1z" fill="none" stroke="currentColor" stroke-width="2"/>
         <path d="M10 8v5M10 15v1" stroke="currentColor" stroke-width="2"/></svg>
@@ -278,26 +265,13 @@ function Pick({ s, go }) {
         so a lobby cannot start NHL 19.</span>
       ${patch.go && html`<${Button} small kind="caution" onClick=${() => go && go(patch.go)}>Open ${GO_TEXT[patch.go] || 'it'}<//>`}
     </div>`}
-    <div class="mp-tiles">
-      <div class="mp-tile host">
-        <div class="mp-tile-t caps">Host a lobby</div>
-        <div class="mp-tile-d">You get a short code to send to friends, or your lobby shows in the public list.</div>
+    <div class="mp-tile host mp-host">
+      <div class="mp-tile-t caps">Host a lobby</div>
+      <div class="mp-host-row">
         ${chelModes.length > 0 && html`<${Segmented} options=${KIND_OPTIONS} value=${kind} onChange=${setKind}/>`}
         ${kind === 'chel' && html`<div class="mp-chel-pick">
-          <${Select} value=${chelMode} options=${chelModes.map((m) => ({ value: m.mode, label: m.name }))} onChange=${setChelMode}/>
-          ${canSplit && html`<${Toggle} on=${split} onChange=${setSplit}>Split into Home and Away (play each other)<//>`}
-          <div class="mp-tile-d">${canSplit && split ? 'Your lobby plays itself; the CPU fills the empty spots.'
-            : 'Your lobby plays together against another lobby or players searching alone; the CPU fills the rest.'}</div>
-        </div>`}
-        <${Toggle} on=${pub} onChange=${setPub}>Show it in the public list<//>
-        <${Button} kind="gold" big block disabled=${!idle} onClick=${create}>${kind === 'chel' ? 'Create CHEL lobby' : 'Create lobby'}<//>
-      </div>
-      <div class="mp-tile join">
-        <div class="mp-tile-t caps">Join a friend</div>
-        <div class="mp-tile-d">Type the code your friend sent you.</div>
-        <input class="field mp-code-in" placeholder="CODE" value=${code} maxlength="12" spellcheck="false" aria-label="Lobby code"
-          onInput=${(e) => setCode(e.target.value.toUpperCase())} onKeyDown=${(e) => { if (e.key === 'Enter') join(); }}/>
-        <${Button} big block kind=${code ? 'primary' : 'plain'} disabled=${!idle || !code} onClick=${join}>Join with a code<//>
+          <${Select} value=${chelMode} options=${chelModes.map((m) => ({ value: m.mode, label: m.name }))} onChange=${setChelMode}/></div>`}
+        <${Button} kind="gold" big disabled=${!idle} onClick=${create}>${kind === 'chel' ? 'Create CHEL lobby' : 'Create lobby'}<//>
       </div>
     </div>
     <div class="mp-public">
@@ -310,28 +284,26 @@ function Pick({ s, go }) {
             <span class="age">${l.players}/${l.cap}${l.split ? ' · Home/Away' : ''} · ${l.age}</span>
             <${Button} small disabled=${!idle} onClick=${() => call('mp_join', l.code)}>Join<//></div>`)}</div>`
         : html`<div class="mp-public-empty"><div><div class="mp-public-t">No public lobbies right now</div>
-            <div class="mp-public-d">Make one, or ask a friend for a code.</div></div></div>`}
+            <div class="mp-public-d">Create one above: it shows here for your friends.</div></div></div>`}
     </div>
     <${HowTo}/>
   </div>`;
 }
 
-function Player({ p, launching }) {
-  const roster = p.roster === 'ok' ? html`<${Tag} tone="good">roster ok<//>`
-    : p.roster === 'mismatch' ? html`<${Tag} tone="bad">roster differs<//>` : null;
-  // live 2026-11-08: installs that differ (title id, game data, data patch layers) may desync; the server only warns
-  const game = p.game && p.game.length
-    ? html`<span title=${'Not the same as the other game: ' + p.game.map((k) => GAME_TEXT[k] || k).join(', ')
-        + '. This may end the match early. Compare Setup on both PCs.'}><${Tag} tone="caution">game differs<//></span>` : null;
+function Player({ p, launching, chel }) {
+  // 0.97.0 (owner): no "roster ok" or "game differs" tags; a roster that differs still says so (it blocks the start)
+  const roster = p.roster === 'mismatch' ? html`<${Tag} tone="bad">roster differs<//>` : null;
   return html`<div class=${cls('mp-player', p.ready && 'ready')}>
     <span class="mp-player-name">${p.name}${p.you && html`<span class="you caps">you</span>`}</span>
     <div class="mp-marks">
-      ${launching
-        ? html`<${Tag} tone="info">${STAGE_TEXT[p.stage] || p.stage}<//>`
+      ${launching && chel && p.bench ? html`<${Tag} tone="caution">next match<//>`
+        : launching ? html`<${Tag} tone="info">${STAGE_TEXT[p.stage] || p.stage}<//>`
         : html`<${Tag} tone=${p.ready ? 'good' : 'caution'}>${p.ready ? 'ready' : 'not ready'}<//>`}
+      ${launching && chel && !p.bench && html`<${Tag} tone="accent">${SIDE_NAMES[p.side] || 'Home'}<//>`}
       ${roster}
-      ${game}
     </div>
+    ${launching && p.screen && html`<div class=${cls('mp-screen', 'tone-' + p.screen.tone)}
+      title="Where this player's NHL 19 is, from what it sends the server">In game: ${p.screen.text}</div>`}
   </div>`;
 }
 
@@ -349,21 +321,24 @@ const CHEL_MODE_NAMES = {
 
 function ChelPlayers({ l, launching }) {
   const room = Math.max(0, l.cap - l.players.length);
-  if (!l.split) {
+  if (!l.split && !l.picks) {
     return html`<div class="mp-players">
-      ${l.players.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching}/>`)}
-      ${room > 0 && !launching && html`<div class="mp-player empty">Room for ${room} more</div>`}
+      ${l.players.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching} chel/>`)}
+      ${room > 0 && html`<div class="mp-player empty">Room for ${room} more${launching ? ' (next match)' : ''}</div>`}
     </div>`;
   }
   const pick = l.side_pick;
+  // both sides line up (owner 2026-11-15): the same header height whether or not it has the switch button, and an
+  // empty side is one tile as tall as a player's
   return html`<div class="mp-sides">${[0, 1].map((side) => {
     const on = l.players.filter((p) => p.side === side);
     return html`<div key=${side} class="mp-players mp-chel-side">
-      <div class="mp-row"><span class="mp-lbl caps">${SIDE_NAMES[side]}</span><span class="sp"></span>
+      <div class="mp-side-head"><span class="mp-lbl caps">${SIDE_NAMES[side]}</span>
+        <span class="mp-side-n">${on.length}/${l.cap / 2}</span><span class="sp"></span>
         ${pick && pick.edit && pick.mine !== side && on.length < l.cap / 2
-          && html`<${Button} small kind="ghost" onClick=${() => call('mp_side', side)}>Move here<//>`}</div>
-      ${on.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching}/>`)}
-      ${!on.length && html`<div class="mp-player empty">Nobody yet</div>`}
+          && html`<${Button} small kind="primary" onClick=${() => call('mp_side', side)}>Play ${SIDE_NAMES[side]}<//>`}</div>
+      ${on.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching} chel/>`)}
+      ${!on.length && html`<div class="mp-player empty">CPU</div>`}
     </div>`;
   })}</div>`;
 }
@@ -371,17 +346,55 @@ function ChelPlayers({ l, launching }) {
 // the CHEL lobby's mode (the host picks it before Ready); World of Chel takes its other settings in the game
 function ChelCard({ l, modes }) {
   const options = (modes || []).map((m) => ({ value: m.mode, label: m.name }));
-  return html`<${Card} n=${3} title="World of Chel" aside=${html`<${Tag} tone="accent">${l.game}<//>`}>
+  return html`<${Card} n=${3} title="World of Chel">
     <div class="mp-body mp-rules-body">
       <div class="mp-rule mp-mode-pick"><span class="mp-rule-label caps">Mode</span>
         ${l.mode_pick && l.mode_pick.edit && options.length
           ? html`<${Select} value=${l.chel_mode} options=${options} onChange=${(v) => call('mp_set_mode', v)}/>`
           : html`<span class="mp-rule-value">${l.game}</span>`}</div>
-      <div class="mp-note">${l.split ? 'Home plays Away; the CPU fills the empty spots.'
-        : 'Your lobby plays on one side, against another lobby or players searching alone. With nobody to play, the CPU plays you (not rated).'}
-        A game counts in the shared rating when each side has a player.</div>
     </div>
   </${Card}>`;
+}
+
+// 0.96.0: the host's countdown. The server sends the seconds left on each poll (3 s); the page counts in between.
+// 0.97.0 (owner): the app no longer offers one (everyone ready starts the game); a countdown a host on an older app
+// started still shows its clock, and the host can cancel a start.
+function useLeft(left) {
+  const [base, setBase] = useState({ left, at: Date.now() });
+  const [, tick] = useState(0);
+  useEffect(() => { setBase({ left, at: Date.now() }); }, [left]);
+  useEffect(() => {
+    if (left == null) return undefined;
+    const id = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, [left]);
+  if (base.left == null) return null;
+  return Math.max(0, base.left - Math.floor((Date.now() - base.at) / 1000));
+}
+
+const clockText = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+function Countdown({ l }) {
+  const c = l.countdown;
+  const left = useLeft(c ? c.left : null);
+  if (!c) return null;
+  const starting = l.state === 'launching';
+  const cancel = c.edit && (left != null || starting);
+  if (left == null && !cancel) return null;
+  return html`<div class="mp-countdown">
+    ${left != null && html`<span class="mp-countdown-big" aria-live="polite">${clockText(left)}</span>`}
+    <span class="mp-countdown-d">${left != null ? (left > 0 ? 'until the ready players start' : 'Starting...')
+      : 'The game is starting.'}</span>
+    <span class="sp"></span>
+    ${cancel && html`<${Button} small kind="ghost" onClick=${() => call('mp_start', 0)}>Cancel start<//>`}
+  </div>`;
+}
+
+function ChelPath({ l }) {
+  if (!l.path || !l.path.length) return null;
+  return html`<div class="mp-path"><span class="mp-path-t caps">In NHL 19</span>
+    ${l.path.map((step, i) => html`<span key=${i} class=${cls('mp-path-step', i === l.path.length - 1 && 'pick')}>${step}</span>${i < l.path.length - 1 && html`<span class="mp-path-arrow" aria-hidden="true">→</span>`}`)}
+  </div>`;
 }
 
 const HOTKEY_HINT = 'Ctrl+Shift+F1 to F6 sends a phrase while you play';
@@ -417,11 +430,13 @@ function Lobby({ s }) {
   const differ = l.waiting && /ROSTERCRC/.test(l.waiting);
   const chel = l.kind === 'chel';
   const canReady = l.state === 'full' || (chel && l.state === 'open');   // a CHEL party may be one player
-  return html`<${Card} n=${2} title=${(launching ? `Lobby ${l.code}` : 'Lobby') + (chel ? ` · CHEL ${l.game}` : '')} className="mp-stage"
+  return html`<${Card} n=${2} title=${chel ? 'Lobby · CHEL' : 'Lobby'} className="mp-stage"
       aside=${html`<${Tag} tone=${chip.tone}>${chip.text}<//>${l.waiting && html` <${Tag} tone="caution">${l.waiting}<//>`}`}>
     <div class="mp-body">
-      ${!launching && html`<div class="mp-code"><span class="mp-code-big">${l.code}</span>
-        <${Button} small onClick=${() => copy(l.code)}>Copy<//><span class="sp"></span></div>`}
+      ${chel && l.wrong_mode && html`<div class="mp-notice bad"><b>Wrong mode</b><span>${l.waiting}</span></div>`}
+      ${chel && l.bench && launching && html`<div class="mp-notice info"><span class="sp"><b>The others started without you.</b></span></div>`}
+      ${chel && html`<${ChelPath} l=${l}/>`}
+      ${chel && html`<${Countdown} l=${l}/>`}
       ${chel ? html`<${ChelPlayers} l=${l} launching=${launching}/>` : html`<div class="mp-players">
         ${l.players.map((p) => html`<${Player} key=${p.name + p.you} p=${p} launching=${launching}/>`)}
         ${l.players.length < 2 && html`<div class="mp-player empty">Waiting for a friend</div>`}
@@ -432,16 +447,18 @@ function Lobby({ s }) {
         ${l.state === 'open' && !chel && html`<${Button} kind="gold" big disabled>Waiting for a friend<//>`}
         ${canReady && !l.me_ready && html`<${Button} kind="gold" big disabled=${!!s.busy}
           onClick=${() => call('mp_ready', true)}>${s.prep ? 'Getting ready...' : 'Ready'}<//>`}
-        ${canReady && l.me_ready && html`<${Button} kind="gold" big disabled>${chel ? (l.split ? 'Waiting for both sides' : 'Waiting for the lobby') : `Waiting for ${l.partner}`}<//>
+        ${canReady && l.me_ready && html`<${Button} kind="gold" big disabled>${chel ? (l.split ? 'Waiting for both sides' : l.players.length < 2 ? 'Waiting for friends' : 'Waiting for the others') : `Waiting for ${l.partner}`}<//>
           <${Button} small kind="ghost" onClick=${() => call('mp_ready', false)}>Not ready<//>`}
         <span class="sp"></span>
         <${Button} small kind="ghost" onClick=${() => call('mp_leave')}>Leave<//>
       </div>`}
       ${s.prep && html`<div class="mp-note">${s.prep}</div>`}
-      ${!launching && l.state === 'open' && !chel && html`<div class="mp-note">Give your friend the code. Both press Ready, then the game starts by itself.</div>`}
-      ${!launching && chel && html`<div class="mp-note">Give your friends the code (up to ${l.cap} players). Everyone presses Ready,
-        NHL 19 starts with the World of Chel tile: open it, pick ${l.game} and press Play. The server seats your lobby together.</div>`}
-      ${launching && html`<div class="mp-row"><span class="sp"></span><${Button} small kind="ghost" onClick=${() => call('mp_leave')}>Leave<//></div>`}
+      ${launching && chel && html`<div class="mp-note">In the dressing room pick your position and press Play.</div>`}
+      ${launching && html`<div class="mp-row">
+        ${chel && l.bench && l.state === 'launching' && (l.me_ready
+          ? html`<${Button} small kind="ghost" onClick=${() => call('mp_ready', false)}>Not ready<//>`
+          : html`<${Button} kind="gold" disabled=${!!s.busy} onClick=${() => call('mp_ready', true)}>${s.prep ? 'Getting ready...' : 'Ready: come along'}<//>`)}
+        <span class="sp"></span><${Button} small kind="ghost" onClick=${() => call('mp_leave')}>Leave<//></div>`}
       ${l.players.length > 1 && l.chat && html`<${Chat} chat=${l.chat} hud=${s.you.hud}/>`}
     </div>
   </${Card}>`;
@@ -613,7 +630,7 @@ function RatingCard({ r }) {
       <div class="mp-rating-n">${r.rating}</div>
       <div class="mp-rating-side">
         <div class="mp-rating-top">
-          <${TierIcon} tier=${r.ranked ? r.tier : 'Unranked'} size=${26}/>
+          <${TierIcon} tier=${r.ranked ? r.tier : 'Unranked'} size=${34}/>
           <${Tag} tone=${r.ranked ? 'good' : 'info'}>${r.ranked ? r.tier : `Placing ${placed}/5`}<//>
           ${r.change != null && html`<span class=${cls('mp-delta', r.change > 0 && 'plus', r.change < 0 && 'minus')}>${signed(r.change)} last game</span>`}
           <span class="mp-rating-rec">Record ${r.record}</span>
@@ -761,7 +778,7 @@ function History({ h }) {
           : h.loaded && html`<div class="mp-empty">Nobody has a confirmed match yet.</div>`}`}
         ${view === 'ranks' && html`<div class="mp-note mp-ranks-note">A rank shows after 5 rated games.</div>
           <div class="mp-ladder">${h.ladder.map((t) => html`<div key=${t.name} class=${cls('mp-ladder-row', t.you && 'you')}>
-            <${TierIcon} tier=${t.name} size=${22}/><b>${t.name}</b><span class="mp-note">${t.min ? t.min + '+' : 'under 1000'}</span><span class="mp-note mp-ladder-b">${t.blurb}</span></div>`)}</div>`}
+            <${TierIcon} tier=${t.name} size=${30}/><b>${t.name}</b><span class="mp-note">${t.min ? t.min + '+' : 'under 1000'}</span><span class="mp-note mp-ladder-b">${t.blurb}</span></div>`)}</div>`}
       </div>
     </div>
   </${Card}>`;
@@ -880,7 +897,7 @@ export default function Multiplayer({ go }) {
     <div class="mp-col mp-col-lobby">
       ${s.lobby
         ? html`<${Lobby} s=${s}/>`
-        : html`<${Card} n=${2} title="Lobby" aside=${(s.chel_modes || []).length ? 'Quick: one friend · CHEL: World of Chel with friends' : 'Quick: play one friend'} className="mp-card-fill mp-stage">
+        : html`<${Card} n=${2} title="Lobby" className="mp-card-fill mp-stage">
             ${s.you.ext ? html`<${Pick} s=${s} go=${go}/>`
               : html`<div class="mp-body mp-fill"><div class="mp-empty">Sign in to ShadNet first (left): a lobby is tied to your game's own sign-in.</div>
                   <div class="mp-spacer"></div><${HowTo}/></div>`}

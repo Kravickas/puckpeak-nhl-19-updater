@@ -8,7 +8,7 @@ import { Backdrop, Header, TabBar, HelpBar, Details, Question } from './shell.js
 import { Rail } from './rail.js';
 import { SaveBar, EditsWindow, saveRoster, cardDraft } from './savebar.js';
 
-// Python moves to a tab itself (after a Patch with 32 teams, "Update it now" opens Update): the event 'goto' (tab id)
+// Python moves to a tab itself (after a Patch with 31 teams, "Update it now" opens Patch): the event 'goto' (tab id)
 const goto = { pick: null };
 onEvent('goto', (id) => goto.pick && goto.pick(id));
 
@@ -16,8 +16,7 @@ const R = window.React;
 
 export const TABS = [
   { id: 'setup', label: 'Setup' },
-  { id: 'update', label: 'Update' },
-  { id: 'patch', label: 'Game patch' },
+  { id: 'patch', label: 'Patch' },
   { id: 'roster', label: 'Roster', team: true },
   { id: 'lines', label: 'Lines', team: true },
   { id: 'strategy', label: 'Strategy', team: true },
@@ -28,9 +27,9 @@ export const TABS = [
 ];
 const IDS = TABS.map((t) => t.id);
 const TEAM = new Set(TABS.filter((t) => t.team).map((t) => t.id));
-// beta1's tab names, so old links (?tab=...) and texts still land somewhere sensible
+// older tab names, so old links (?tab=...) and texts still land somewhere sensible (0.97.0: Update is in Patch)
 const OLD_NAMES = { source: 'setup', 'setup-play': 'setup', editor: 'roster', 'edit-roster': 'roster', gear: 'jerseys',
-  'team-gear': 'jerseys', verify: 'update', save: 'update', 'game-patch': 'patch' };
+  'team-gear': 'jerseys', verify: 'patch', save: 'patch', update: 'patch', 'game-patch': 'patch' };
 const SHORT = 720;                 // window lines under which the compact layout is used
 const params = new URLSearchParams(location.search);
 
@@ -77,7 +76,7 @@ function App() {
   const rail = useSlice('rail');
   const save = useSlice('save');
   const question = useSlice('question');
-  const update = useSlice('update');
+  const patchall = useSlice('patchall');
   useLobbyChimes(useSlice('multiplayer'));
   const short = useShort();
   const asked = OLD_NAMES[params.get('tab')] || params.get('tab');
@@ -95,7 +94,8 @@ function App() {
   useEffect(() => { if (tab) call('tab', tab); }, [tab]);
 
   goto.pick = pickTab;
-  function pickTab(id) {
+  function pickTab(asked) {
+    const id = OLD_NAMES[asked] || asked;
     if (!IDS.includes(id) || id === state.current.tab) return;
     const from = IDS.indexOf(state.current.tab), to = IDS.indexOf(id);
     setDir(from < 0 ? '' : to > from ? 'from-right' : 'from-left');
@@ -103,8 +103,8 @@ function App() {
     setSeen((s) => (s.has(id) ? s : new Set([...s, id])));
   }
 
-  const go = update && update.go;
-  const enter = tab === 'update' && go && go.enabled ? go.text : null;
+  const one = patchall && patchall.button;
+  const enter = tab === 'patch' && one && one.enabled && !(status && status.busy) ? 'Patch' : null;
   // Ctrl+S does what the Save button does: only while it is on (or the Roster card has typed values to apply)
   const canSave = !!(save && save.button && save.button.enabled && !save.busy);
   state.current = { tab, enter, details, canSave };
@@ -135,7 +135,7 @@ function App() {
       if (k === 'd') { setDetails((v) => !v); return; }
       if (k === 'q' || k === 'e') { step(k === 'q' ? -1 : 1); return; }
       if (e.key === 'Enter' && canGo && !(e.target.closest && e.target.closest('button, a, [role=option], [tabindex]'))) {
-        e.preventDefault(); call('update_go');
+        e.preventDefault(); call('patch_all');
       }
     };
     const menu = (e) => { if (!typingIn(e.target)) e.preventDefault(); };
@@ -146,7 +146,7 @@ function App() {
 
   const info = TABS.find((t) => t.id === tab);
   const mod = tab && mods[tab] && mods[tab].mod;
-  const tip = (own && own.tip) || (mod && mod.tip);   // a tab's slice may say a tip for its state (Update: no roster)
+  const tip = (own && own.tip) || (mod && mod.tip);   // a tab's slice may say a tip for its state
   const teamTab = TEAM.has(tab);
   const nosave = info && info.nosave;
 
@@ -172,7 +172,7 @@ function App() {
     </main>
     <${Details} open=${details} onClose=${() => setDetails(false)}/>
     <${HelpBar} status=${status} tip=${tip} enter=${enter} detailsOpen=${details}
-      onDetails=${() => setDetails((v) => !v)} onEnter=${() => call('update_go')}/>
+      onDetails=${() => setDetails((v) => !v)} onEnter=${() => call('patch_all')}/>
     ${IDS.map((id) => mods[id] && mods[id].mod && mods[id].mod.Modals
       && html`<${Boundary} key=${id} name=${id}><${mods[id].mod.Modals}/><//>`)}
     <${EditsWindow}/>

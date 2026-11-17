@@ -24,7 +24,7 @@ DEFAULT = 'default'
 STARTS = (('game', 'Game roster', 'The roster NHL 19 came with (2018-19).', 'NHL 19'),
           (DEFAULT, 'Overtime default', 'The 2026-27 teams with Seattle. Ready to play.', None))
 MADE_BY = re.compile(r'\(Overtime Roster(?: ([^()]+))?\)\s*$')     # install.py's DETAIL: "<name> (Overtime Roster)"
-RUNNING = ['shadPS4 is running. Rosters are not deleted while the game is open.',
+RUNNING = ['NHL 19 is running. Rosters are not deleted while the game is open.',
            'Close shadPS4, press Check again, then delete it.']
 MISFIT = ('New Season crashes with this roster while the game runs 32 teams. Open it and run Update: Seattle comes '
           'in.')
@@ -73,7 +73,7 @@ class RostersCtl(Part):
             try:
                 if savegame.zero_trailers(save_dir):
                     if overlay.emulator_running():   # the next start tries again
-                        c.host.log('Rosters the game cannot load are put right at the next start: shadPS4 is running.')
+                        c.host.log('Rosters the game cannot load are put right at the next start: NHL 19 is running.')
                         return
                     self._repair(save_dir)
             except (OSError, ValueError) as err:
@@ -167,7 +167,7 @@ class RostersCtl(Part):
                 c.remember(roster=ident)
             c.host.log(f'Opened {label}: {len(c.session.entry_row)} rostered players, '
                        f'{len(c.session.team_entries)} teams.')
-            c.say(said or f'{label} is open. The Update tab and the team tabs use it now.', 'good')
+            c.say(said or f'{label} is open. The roster update on the Patch tab and the team tabs use it now.', 'good')
             c.rail.roster_changed()     # the rail's first club; every part hears of the new roster
             c.changed_all()
 

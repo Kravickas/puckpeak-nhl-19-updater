@@ -19,7 +19,7 @@ from .registry import Part
 from .session import EditError
 
 SHOWN = 150     # the list shows the best 150 of a search
-SEATTLE_CUSTOM = ("This roster keeps Seattle's players in the game's custom team only. Run the update on the Update "
+SEATTLE_CUSTOM = ("This roster keeps Seattle's players in the game's custom team only. Run the roster update on the Patch "
                   'tab to edit them here.')
 SEATTLE_COPY = {'text': 'Seattle copy', 'tip': 'His Season and Franchise card. Seattle in the Teams list holds his '
                                                'Play Now card.'}

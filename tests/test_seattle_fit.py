@@ -82,10 +82,10 @@ def test_a_save_without_seattle_is_marked_and_the_patch_offers_to_update_it(app)
     c.calls['answer'](q['id'], 'later')
     assert c.shell.asking is None and c.host.events == []
 
-    # Update it now: the Update tab, Go over this save; then it fits and nothing is asked
+    # Update it now: the Patch tab, the roster update over this save; then it fits and nothing is asked
     assert patch_ctl.offer_update(c) is True
     c.calls['answer'](c.shell.asking['id'], 'update')
-    assert ('goto', 'update') in c.host.events
+    assert ('goto', 'patch') in c.host.events
     r = view(c.host)['result']
     assert r['kind'] == 'good', (r, c.host.lines[-30:])
     assert sorted(savegame.used_slots(c.save_dir)) == ['RosterCustom0']     # written over, no new save

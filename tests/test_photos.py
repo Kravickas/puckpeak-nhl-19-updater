@@ -169,6 +169,11 @@ def test_update_counts_the_local_photos_only_as_the_patch_served_them(cache, mon
     # nothing served, nothing counted; a packs folder named alone (OVERTIME_ART_PACKS) leaves the cache unread
     serve(monkeypatch, [])
     assert patch.served_portraits('game', cache) == (set(), [])
+    # the Patch tab's one press with the photos switch on: the coming patch serves the local pack as it is now
+    files, people = patch.served_portraits('game', cache, serving=True)
+    assert files == {art.PORTRAIT.format(n) for n in (40000, 65535, 65533)}
+    assert people == [person(ANN, 40000), person(BOB, 65535), person(DEE, 65533)]
+    assert patch.served_portraits('game', cache, serving=False) == (set(), [])
     monkeypatch.setenv(patch.ART_ENV, str(tmp_path / 'elsewhere'))
     assert patch.local_people(cache) is None and patch.art_packs(cache)[0] == []
 

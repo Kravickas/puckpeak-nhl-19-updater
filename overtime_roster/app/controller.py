@@ -24,8 +24,10 @@ ALIASES = {
     'editor': ('roster', 'roster_card', 'rail', 'save', 'faces', 'equipment'),
     'faces': ('roster_face',),
     'equipment': ('roster_gear', 'jerseys'),
-    'patch': ('patch', 'patch_files'),
+    'patch': ('patch', 'patch_files', 'patchall'),
     'save': ('save', 'update'),
+    # the Patch tab's one press reads busy, the open roster, the update and the patch (0.97.0)
+    'app': ('patchall',), 'update': ('patchall',), 'setup': ('patchall',),
 }
 
 # beta1's public names -> (part, method there). Each becomes a Controller method that calls the part's.

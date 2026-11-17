@@ -57,9 +57,9 @@ CHECK_STEPS = GO_STEPS[:2]                         # Check first: NHL.com and th
 SAVE_STEP = {'gather': 3, 'build': 3, 'verify': 3, 'backup': 4, 'install': 5, 'report': 6}   # install.STEPS on Go's
 MODES = ('update', 'new', 'online', 'folder')
 CANNOT_UPDATE = {
-    'online': 'The online roster is replaced at every login: Go saves a new roster.',
-    'game': "The game's own roster cannot be written over: Go saves a new roster.",
-    'default': 'The Overtime default roster cannot be written over: Go saves a new roster.',
+    'online': 'The online roster is replaced at every login: the update saves a new roster.',
+    'game': "The game's own roster cannot be written over: the update saves a new roster.",
+    'default': 'The Overtime default roster cannot be written over: the update saves a new roster.',
 }
 NAME_MAX = 40
 BACKUPS_KEPT = savegame.BACKUPS_KEPT
@@ -82,11 +82,11 @@ def season_label(year):
 
 
 PATCH_FIRST = {
-    'none': 'NHL 19 is not patched. Run Update first, then Game patch: without the patch the game has no Seattle or '
-            'Utah and cannot go online.',
-    'problem': 'The game patch has a problem. Open Game patch and press Patch again.',
-    'money': "The 2026-27 salary cap switch in Game patch changed after this roster was updated, so its contracts "
-             'no longer fit the cap the game plays. Press Go to update it again, or set the switch back.',
+    'none': 'NHL 19 is not patched. Press Patch: without the patch the game has no Seattle or Utah and cannot go '
+            'online.',
+    'problem': 'The game patch has a problem. Press Patch again.',
+    'money': "The 2026-27 salary cap switch changed after this roster was updated, so its contracts no longer fit the "
+             'cap the game plays. Press Patch with Roster update on to update it again, or set the switch back.',
 }
 
 
@@ -411,9 +411,12 @@ class UpdateCtl(Part):
         """Take back the edits made since the roster was saved or opened (the unsaved question's Lose them)."""
         return self.ctl.parts['save'].discard()
 
-    def start_go(self):
+    def start_go(self, then=None, served=None):
         """Go's job: NHL.com (no lock), plan, change, check (under the lock); on errors stop, else back up, save and
-        report (install.run, under the lock). Returns at once."""
+        report (install.run, under the lock). Returns at once. `then()`: after a run that saved (the Patch tab's one
+        press: Patch next). `served`: the switches of the Patch that follows (patch_ctl.switches), so the deals and the
+        photos are written for the game as that Patch leaves it, not as it is now (a game never patched would get 2018
+        money)."""
         c = self.ctl
         with c.lock:
             roster = c.parts['rosters'].open_roster()
@@ -487,8 +490,10 @@ class UpdateCtl(Part):
                                          f"{sm['releases']} leave")
             self._step(2, 'Changing the roster: rosters, lines, ratings, calendar...')
             with c.lock:
-                rec['served'] = office.league_served(c.game_dir, c.patch_status)
-                portraits = patch.served_portraits(c.game_dir, paths.app_dir('cache'))
+                rec['served'] = office.league_served(c.game_dir, c.patch_status) if served is None \
+                    else bool(served.get('league'))
+                portraits = patch.served_portraits(c.game_dir, paths.app_dir('cache'),
+                                                   serving=None if served is None else bool(served.get('photos')))
                 rep = update.run(session, c.game, gathered, todo, per32=per32, names=c._code, log=c.host.log,
                                  nhl27=opts['nhl27'], schedule=opts['calendar'], retire=opts['retire'],
                                  expansion=True, lines=opts['lines'], portraits=portraits, served=rec['served'])
@@ -571,6 +576,12 @@ class UpdateCtl(Part):
             with c.lock:
                 r = self.result_view()
             c.say(r['say'], ('caution' if r.get('log') else 'good') if ok else 'bad', 1.0 if ok else None)
+            if ok and then is not None:
+                try:
+                    then()      # before the tabs redraw: the Patch tab shows the Patch half, not a stopped Update
+                except Exception as err:    # noqa: BLE001 - the saved update stands; the Help bar says what stopped
+                    jobs.log_block(err, 'After the update')
+                    c.say(f'The roster was updated, but the next step did not start: {err}', 'bad')
             c.changed_all()
 
         def failed(message):
@@ -1014,8 +1025,8 @@ class UpdateCtl(Part):
                                                          'on this PC. They show after your next Patch and Update.'})
         elif rec.get('photos_skipped'):
             out.append({'part': 'Player photos', 'text': 'New players got no photo: the player photo pack is not in '
-                                                         'the game yet. Download it in Game patch, Patch, then press '
-                                                         'Update again.'})
+                                                         'the game yet. Turn on Player photos under Updated assets '
+                                                         'and press Patch again.'})
         clubs = rec.get('clubart') or {}
         missing = len(clubs.get('missing') or [])
         text = ''
@@ -1047,10 +1058,10 @@ class UpdateCtl(Part):
             return self._error_result(o)
         if o['run'] == 'check':
             sm = o['todo'].summary()
-            return {'kind': 'plan', 'title': 'What Go would change', 'lines': self._part_lines(o, True), 'issues': [],
-                    'items': [['Data', self.data_label(o)], ['Saved', 'Nothing yet. Press Go to update and save.']],
+            return {'kind': 'plan', 'title': 'What the update would change', 'lines': self._part_lines(o, True), 'issues': [],
+                    'items': [['Data', self.data_label(o)], ['Saved', 'Nothing yet. Press Patch to update, save and patch.']],
                     'folder': None, 'report': None, 'can_play': False, 'can_undo': False,
-                    'say': f"Go would move {sm['moves']} players, add {sm['new']} and let {sm['releases']} go. "
+                    'say': f"The update would move {sm['moves']} players, add {sm['new']} and let {sm['releases']} go. "
                            'Nothing was saved.'}
         can_undo = o['change'] is not None and c.session is not None and bool(c.session.history) \
             and c.session.history[-1] is o['change']
@@ -1097,7 +1108,7 @@ class UpdateCtl(Part):
             why = (out.lines[0] if out and out.lines else 'The roster could not be saved.')
             return {'kind': 'bad', 'title': 'Updated, but not saved',
                     'lines': [{'part': 'Not saved', 'text': why},
-                              {'part': 'What now', 'text': 'Press Go again, save it with the Save bar, or Undo to take '
+                              {'part': 'What now', 'text': 'Press Patch again, save it with the Save bar, or Undo to take '
                                                            'the update back.'}],
                     'issues': [], 'items': [['Data', self.data_label(o)]], 'folder': None, 'report': None,
                     'can_play': False, 'can_undo': can_undo, 'say': f'The update was not saved: {why}'}
@@ -1146,9 +1157,9 @@ class UpdateCtl(Part):
         if at == 0:     # NHL.com or the offline copy (the details are in the log)
             offline = o['offline']
             lines = [{'part': 'Offline copy', 'text': 'The offline copy could not be read. Turn Data back to NHL.com '
-                                                      'and press Go again.'} if offline else
+                                                      'and press Patch again.'} if offline else
                      {'part': 'NHL.com', 'text': 'NHL.com did not answer. Check your internet connection and press '
-                                                 'Go again.'}, NOTHING_CHANGED]
+                                                 'Patch again.'}, NOTHING_CHANGED]
             can_offline = not offline and bool(update.offline_date(paths.app_dir('cache')))
             say = ('The update stopped: the offline copy could not be read.' if offline else
                    'The update stopped: NHL.com did not answer.') + ' Nothing was saved.'
@@ -1217,7 +1228,7 @@ class UpdateCtl(Part):
             sm = todo.summary()
             teams = changed_teams(todo)
             out = o.get('out') if o else None
-            return {'open': True, 'title': 'What Go would change' if o and o['run'] == 'check' else 'List of changes',
+            return {'open': True, 'title': 'What the update would change' if o and o['run'] == 'check' else 'List of changes',
                     'summary': {'players': sm['players'], 'moves': sm['moves'], 'new': sm['new'],
                                 'releases': sm['releases'], 'teams': len(teams)},
                     'moves': [{'name': n, 'pos': pos(pi), 'from': where(f), 'to': where(t)}

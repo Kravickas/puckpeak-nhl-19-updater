@@ -8,15 +8,23 @@ stop_emulator() closes a running NHL 19 (WM_CLOSE to its window, then terminate)
 match setup. It is only for lobby Ready; nothing else in the app stops shadPS4.
 """
 import csv
+import logging
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 from overtime_core import gamefiles, overlay
 
 from . import gamesetup, onlinetag, selfupdate
+
+log = logging.getLogger(__name__)
+
+WINDOW_TITLE = 'NHL 19'     # the emulator's window title (docs/notes/window-title.md)
+TITLE_FOR = 15              # seconds from the start of the process during which the title is kept
+TITLE_POLL = 0.5            # seconds between looks at the window's title
 
 
 class LaunchError(RuntimeError):
@@ -59,12 +67,15 @@ def start(emu_exe, game_dir, patch_file=None, running=None, popen=subprocess.Pop
         # above normal from its first instruction (owner 2026-11-13, docs/notes/native-port.md: the native port's own
         # process setup; steadier frame times with other programs running, timing-neutral, every build)
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | ABOVE_NORMAL
+    env = selfupdate.clean_environment()
+    env['OVERTIME_WINDOW_TITLE'] = WINDOW_TITLE     # a fork build may show it as the whole title (none does yet)
     proc = popen(command(run, game_dir, patch_file), cwd=cwd,
-                 creationflags=flags, close_fds=True, env=selfupdate.clean_environment())
+                 creationflags=flags, close_fds=True, env=env)
     if popen is subprocess.Popen and sys.platform == 'win32':
         full_speed(proc.pid)
         from . import gameicon      # NHL 19's icon on the emulator's window, not shadPS4's (owner 2026-11-12)
         gameicon.watch(proc, game_dir)
+        title_watch(proc)           # the window reads NHL 19, not shadPS4's long title (first 15 s)
     return proc
 
 
@@ -158,6 +169,10 @@ class Windows:
         u.IsWindowVisible.restype = wt.BOOL
         u.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
         u.PostMessageW.restype = wt.BOOL
+        u.GetWindowTextW.argtypes = [wt.HWND, wt.LPWSTR, ct.c_int]
+        u.GetWindowTextW.restype = ct.c_int
+        u.SetWindowTextW.argtypes = [wt.HWND, wt.LPCWSTR]
+        u.SetWindowTextW.restype = wt.BOOL
         return u
 
     def visible_of(self, pids):
@@ -182,6 +197,44 @@ class Windows:
     def close(self, hwnd):
         """Ask a window to close (WM_CLOSE, posted: never waits on the window)."""
         return bool(self.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
+
+    def title(self, hwnd):
+        buf = self._ctypes.create_unicode_buffer(1024)
+        self.user32.GetWindowTextW(hwnd, buf, 1024)
+        return buf.value
+
+    def set_title(self, hwnd, text):
+        return bool(self.user32.SetWindowTextW(hwnd, text))
+
+
+def _keep_title(proc, win, sleep=time.sleep, clock=time.monotonic):
+    """Until TITLE_FOR seconds pass or proc ends: title proc's visible windows WINDOW_TITLE, looking every TITLE_POLL
+    (a window that has not shown yet is simply not in the list)."""
+    start = clock()
+    while clock() - start < TITLE_FOR and proc.poll() is None:
+        for hwnd in win.visible_of([proc.pid]):
+            if win.title(hwnd) != WINDOW_TITLE:
+                win.set_title(hwnd, WINDOW_TITLE)
+        sleep(TITLE_POLL)
+
+
+def title_watch(proc, windows=None, sleep=time.sleep, clock=time.monotonic):
+    """A daemon thread that keeps the emulator's window titled WINDOW_TITLE for the first TITLE_FOR seconds (the
+    emulator sets its long title itself at start). -> the thread, or None when it could not start. Never raises: a
+    failure is logged and the watch stops; a window that never shows does not hold Play up."""
+    def run():
+        try:
+            _keep_title(proc, windows if windows is not None else Windows(), sleep, clock)
+        except Exception:               # noqa: BLE001 (a cosmetic step: never in the way of the game)
+            log.warning('window title: stopped', exc_info=True)
+
+    try:
+        t = threading.Thread(target=run, daemon=True, name='window-title')
+        t.start()
+        return t
+    except Exception:                   # noqa: BLE001
+        log.warning('window title: no watch thread', exc_info=True)
+        return None
 
 
 def _taskkill(pid, run=subprocess.run):

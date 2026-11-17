@@ -110,10 +110,9 @@ export function Order({ here, go }) {
   const step = (id, n, text) => here === id
     ? html`<span class="order-step here" aria-current="step"><b>${n}</b>${text}</span>`
     : html`<button type="button" class="order-step" onClick=${() => go(id)}><b>${n}</b>${text}</button>`;
-  return html`<div class="order" role="note" aria-label="The order: Update, then Game patch, then the Active Roster in the game">
-    ${step('update', 1, 'Update')}<span class="order-arrow" aria-hidden="true">›</span>
-    ${step('patch', 2, 'Game patch')}<span class="order-arrow" aria-hidden="true">›</span>
-    <span class="order-step last"><b>3</b>In NHL 19: Rosters > Active Rosters, pick the new roster</span>
+  return html`<div class="order" role="note" aria-label="The order: Patch, then the Active Roster in the game">
+    ${step('patch', 1, 'Patch')}<span class="order-arrow" aria-hidden="true">›</span>
+    <span class="order-step last"><b>2</b>In NHL 19: Rosters > Active Rosters, pick the new roster</span>
   </div>`;
 }
 

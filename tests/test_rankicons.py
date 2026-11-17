@@ -30,8 +30,14 @@ def test_every_tier_has_an_icon_and_its_own_colour():
 
 def test_the_icons_are_the_ones_the_design_names():
     count = {name: len(rankicons.icon(name)['shapes']) for name in [UNRANKED, *RANKED]}
-    assert count == {UNRANKED: 1, 'Minor League': 1, 'Rookie': 1, 'Pro': 2, 'Top 6': 3, 'Alternate Captain': 2,
-                     'Captain': 2, 'All-Star': 1, 'Superstar': 3, 'Hall of Fame': 1}
+    one = count['Rookie']                                         # one bevelled chevron: rim, facets, face, sheen
+    assert count['Pro'] == 2 * one and count['Top 6'] == 3 * one
+    assert count['Alternate Captain'] == count['Captain']         # the same patch, another letter
+    assert count['Superstar'] == 3 * count['All-Star']            # three faceted stars against one
+    assert count['Hall of Fame'] == max(count.values())           # the top tier is the richest icon
+    letter = f'fill="{rankicons.LETTER}"'
+    assert letter in rankicons.svg('Captain') and letter in rankicons.svg('Alternate Captain')
+    assert letter not in rankicons.svg('Pro')
 
 
 @pytest.mark.parametrize('rel', [os.path.join('overtime_roster', 'web', 'js', 'rankicons.js'),
@@ -51,15 +57,15 @@ def test_the_shapes_stay_in_the_64_unit_box():
 def test_svg_is_a_box_with_one_path_per_shape():
     text = rankicons.svg('Superstar', 32)
     assert text.startswith('<svg ') and 'viewBox="0 0 64 64"' in text and 'width="32"' in text
-    assert text.count('<path ') == 3 and 'aria-label="Superstar"' in text
-    assert 'fill="#ffffff"' in rankicons.svg('Captain') and 'fill="#ffffff"' not in rankicons.svg('Pro')
+    assert text.count('<path ') == len(rankicons.icon('Superstar')['shapes']) and 'aria-label="Superstar"' in text
 
 
 def test_pixels_scale_and_move_with_the_square():
     polys = rankicons.pixels('Pro', 100, 50, 128)
-    assert len(polys) == 2
+    assert len(polys) == len(rankicons._shapes('Pro'))
     colour, pts = polys[0]
-    assert colour == rankicons.COLOURS['Pro']
+    assert colour.startswith('#') and len(colour) == 7               # a shade of the tier colour, ready for GDI+
+    assert rankicons.COLOURS['Pro'] in {c for c, _ in polys}          # the chevron face is the tier colour itself
     x0, y0 = rankicons._shapes('Pro')[0][1][0]
     assert pts[0] == pytest.approx((100 + x0 * 2, 50 + y0 * 2))
     assert rankicons.pixels('No such tier', 0, 0, 10) == []
@@ -72,7 +78,7 @@ def test_the_js_wrapper_builds_an_svg_when_node_is_here():
     script = os.path.join(ROOT, 'overtime_roster', 'web', 'js', 'rankicons.js')
     out = subprocess.run([node, '-e', f"require({script!r}); process.stdout.write(rankIcon('Captain', 24))"],
                          capture_output=True, text=True, check=True).stdout
-    assert out.startswith('<svg ') and out.count('<path ') == 2 and 'width="24"' in out
+    assert out.startswith('<svg ') and out.count('<path ') == len(rankicons.icon('Captain')['shapes']) and 'width="24"' in out
     assert rankicons.render_js().count('root.rankIcon') == 1
 
 
@@ -111,8 +117,10 @@ def test_the_result_card_swaps_the_icon_on_a_rank_up():
     before, after = FakeGfx(), FakeGfx()
     cards.draw_result(before, res, 1.0, 1.0)           # before the flash: the tier below (Rookie, one chevron)
     cards.draw_result(after, res, 3.0, 1.0)            # after it: Pro (two chevrons)
-    assert before.polys == [(hexcolor(rankicons.COLOURS['Rookie']), 6)]
-    assert [c for c, _ in after.polys] == [hexcolor(rankicons.COLOURS['Pro'])] * 2
+    def want(tier):
+        return [(hexcolor(c), len(pts)) for c, pts in rankicons.pixels(tier, 0, 0, 64)]
+    assert before.polys == want('Rookie')
+    assert after.polys == want('Pro')
 
 
 def test_icon_tier_is_the_tier_below_until_the_flash_on_a_rank_up():

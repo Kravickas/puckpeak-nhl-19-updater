@@ -11,7 +11,7 @@ from overtime_roster.app import gamesetup, launch, matchsetup, onlinetag
 from test_gamesetup import _versioninfo, world  # noqa: F401 (the fixture)
 
 SERVER = ('ot.puckpeak.com', 'https://91.98.195.150/')
-TRUSTED = next(iter(onlinetag.ONLINE_EXES))      # the online build (Overtime Native): trusted, and why() has no remark
+TRUSTED = next(iter(onlinetag.ONLINE_EXES))      # the online build (Overtime Native v2): trusted, why() has no remark
 
 
 @pytest.fixture
@@ -73,15 +73,19 @@ def test_both_kravickas_builds_are_trusted_and_an_intel_pc_on_either_meets_amd()
                                                       'Kravickas nhl-test d334436',
                                                       # 2026-11-13: + the collector's ages in seconds (texture cache)
                                                       'Overtime Native dab14f34 + collector seconds (4788f0b)',
+                                                      # 2026-11-16: Overtime Native v2 (no CPU math change)
+                                                      'Overtime Native v2 d1d3168a (Kravickas nhl-perf-test d0b7ac91)',
                                                       'Overtime nightly dab14f34 (4788f0b)',
                                                       'Overtime smooth c97b8b51 (Kravickas 749170d)',
                                                       'upstream shadPS4 nightly 4788f0b']
     for sha in onlinetag.TRUSTED_EXES:
         assert len(sha) == 64 and sha == sha.lower()
         assert onlinetag.math_class(sha, 'intel', True) == 'amd' and onlinetag.math_class(sha, 'intel', False) != 'amd'
-    new, old, krav_test, ours_gc, ours, smooth, nightly = sorted(onlinetag.TRUSTED_EXES, key=onlinetag.TRUSTED_EXES.get)
-    # owner 2026-11-13: Overtime Native (ours_gc) is the online build; every other trusted exe is another tag
-    assert list(onlinetag.ONLINE_EXES) == [ours_gc] and onlinetag.ONLINE_EXES[ours_gc] == onlinetag.TRUSTED_EXES[ours_gc]
+    new, old, krav_test, ours_gc, v2, ours, smooth, nightly = sorted(onlinetag.TRUSTED_EXES, key=onlinetag.TRUSTED_EXES.get)
+    # owner 2026-11-16: Overtime Native v2 is the online build (v1, ours_gc, from 2026-11-13); every other trusted exe is
+    # another tag
+    assert list(onlinetag.ONLINE_EXES) == [v2] and onlinetag.ONLINE_EXES[v2] == onlinetag.TRUSTED_EXES[v2]
+    assert onlinetag.compute('NHL19_1.60', 'f' * 20, v2, 'amd') != onlinetag.compute('NHL19_1.60', 'f' * 20, ours_gc, 'amd')
     assert onlinetag.compute('NHL19_1.60', 'f' * 20, ours_gc, 'amd') != onlinetag.compute('NHL19_1.60', 'f' * 20, ours, 'amd')
     assert onlinetag.compute('NHL19_1.60', 'f' * 20, krav_test, 'amd') != onlinetag.compute('NHL19_1.60', 'f' * 20, ours, 'amd')
     assert onlinetag.compute('NHL19_1.60', 'f' * 20, nightly, 'amd') != onlinetag.compute('NHL19_1.60', 'f' * 20, new, 'amd')
@@ -182,7 +186,7 @@ def test_only_overtime_native_is_the_online_build(game, monkeypatch):
     other = onlinetag.start_inputs(emu, gd)
     said = onlinetag.why(other)
     assert onlinetag.tag(other) != onlinetag.tag(native) and other['math'] == native['math'] == 'amd'
-    assert 'does not run the Overtime Native build' in said and 'Nightly' not in said and 'choose' not in said
+    assert 'does not run the Overtime Native v2 build' in said and 'Nightly' not in said and 'choose' not in said
 
 
 def test_intel_meets_amd_only_with_the_key_on_the_trusted_build(game, monkeypatch):

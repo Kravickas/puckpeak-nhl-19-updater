@@ -1,7 +1,10 @@
-"""The shadPS4 builds the app plays with (Setup's Boost performance card, the header's Play NHL 19 button). Two builds,
+"""The shadPS4 builds the app plays with (Setup's Boost performance card, the header's Play NHL 19 button). Three builds,
 each a pack on the release host pinned by its sha256 in latest.json, never in the exe (owner 2026-11-11, 0.90.2;
-order, default and packs from 0.92.0, owner 2026-11-13):
-- 'nightly', shown as "Overtime Native" (the default, first on the card, the lobby build of onlineemu.py): Overtime's
+order, default and packs from 0.92.0, owner 2026-11-13; v2 from 2026-11-16):
+- 'native2', shown as "Overtime Native v2" (the default, first in the dropdown, the lobby build): v1's commits on
+  Kravickas's nhl-perf-test plus six speed items (fork branch overtime-native-v2, docs/notes/native-v2.md)
+  (packdownload.NATIVE2_PACK);
+- 'nightly', shown as "Overtime Native v1" (the default and lobby build from 0.92.0 to 0.97.0): Overtime's
   build of upstream nightly 4788f0b + lazy RAM commit, the input poll thread, Kravickas's flip fix and the texture
   collector by seconds (fork branch overtime-nightly, docs/notes/perf-ram.md, native-port.md)
   (packdownload.NIGHTLY_PACK). Overtime publishes it with its releases; the id, folder and pack name keep "nightly"
@@ -20,15 +23,19 @@ from overtime_core import durable, overlay
 
 from . import gamesetup, packdownload, paths
 
-NIGHTLY, KRAVICKAS = 'nightly', 'kravickas'
-DEFAULT = NIGHTLY
-BUILDS = {      # GPL-2.0: each build's source code; the card shows them in this order
-    NIGHTLY: {'pack': packdownload.NIGHTLY_PACK, 'label': 'Overtime Native', 'folder': ('boost', 'nightly'),
+NATIVE2, NIGHTLY, KRAVICKAS = 'native2', 'nightly', 'kravickas'
+DEFAULT = NATIVE2   # 2026-11-16 (owner): Overtime Native v2 is the default and what every lobby plays on
+BUILDS = {      # GPL-2.0: each build's source code; the card's dropdown shows them in this order
+    # Overtime Native v2 (docs/notes/native-v2.md): Kravickas's nhl-perf-test + Overtime's v1 commits + six speed
+    # items, each with an OVERTIME_* off switch
+    NATIVE2: {'pack': packdownload.NATIVE2_PACK, 'label': 'Overtime Native v2', 'folder': ('boost', 'native2'),
+              'source': 'https://github.com/MatusRiedl/shadPS4/tree/overtime-native-v2'},
+    NIGHTLY: {'pack': packdownload.NIGHTLY_PACK, 'label': 'Overtime Native v1', 'folder': ('boost', 'nightly'),
               'source': 'https://github.com/MatusRiedl/shadPS4/tree/overtime-nightly'},
     KRAVICKAS: {'pack': packdownload.EMULATOR_PACK, 'label': 'Kravickas', 'folder': ('boost',),
                 'source': 'https://github.com/Kravickas/shadPS4/tree/d3344364003349c2bb35f0c0eb2389a64db4c792'},
 }
-UPDATABLE = (KRAVICKAS,)        # the card's Update button: Overtime Native comes with Overtime's releases (Play gets it)
+UPDATABLE = (KRAVICKAS,)        # the card's Update button: Overtime Native v1/v2 come with Overtime's releases (Play gets them)
 PACK = packdownload.EMULATOR_PACK       # the Kravickas pack
 LOBBY_PACK = BUILDS[DEFAULT]['pack']    # the lobby build when the server names none (onlineemu), online_boost's
 SOURCE = BUILDS[KRAVICKAS]['source']

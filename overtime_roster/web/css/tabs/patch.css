@@ -1,6 +1,7 @@
-/* Game patch tab. The Game patch builder owns this file. Rules sit under .tab-patch (the pane) and use the prefix .gp-
-   (docs/ui/CONTRACT.md); tokens from tokens.css, parts from app.css. Legacy's Game patch layout: the patch and its switches on
-   the left; what is in the game now and what the patch does on the right. */
+/* Patch tab (0.97.0: Update and Game patch in one). Rules sit under .tab-patch (the pane) and use the prefix .gp- (the
+   roster update's parts: .up-, update.css; docs/ui/CONTRACT.md); tokens from tokens.css, parts from app.css. The patch and
+   what one press puts in on the left (the Roster update group first); the update's result and what is in the game now on
+   the right. */
 
 /* the patch and its groups take the wider column; what is in the game now the narrower one */
 .tab-patch .columns.gp { grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr); }
@@ -97,6 +98,18 @@
 }
 
 
+/* --- the one press: the Roster update group, the update's steps under the buttons, the starter switch (0.97.0) ------- */
+.tab-patch .gp-roster-body { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 5px;
+  padding: 1px 8px 6px 14px; animation: rise-in .18s var(--ease) both; }
+.tab-patch .gp-roster .gp-group-head .info-dot { flex: none; }
+.tab-patch .gp-run { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 5px 8px 5px 12px;
+  background: var(--tile); box-shadow: inset 3px 0 0 var(--accent); }
+.tab-patch .gp-run.stopped { box-shadow: inset 3px 0 0 var(--bad); }
+.tab-patch .gp-run-label { flex: none; font-size: 12.5px; letter-spacing: .1em; color: var(--text-3); }
+.tab-patch .gp-starter .gp-layer-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-patch .gp-layers:has(.gp-group.open) > .gp-starter .gp-layer-sub { display: none; }
+.gp-modals { display: contents; }
+
 /* --- 2 The Photos, logos pack (v0.10.0) --------------------------------------------------------------------------- */
 .tab-patch .gp-pack-size { font-size: 12.5px; color: var(--text-3); }
 .tab-patch .gp-pack-body { display: flex; flex-direction: column; gap: 6px; padding-left: 14px; box-shadow: inset 3px 0 0 var(--caution); }
@@ -165,4 +178,7 @@
   .tab-patch .gp-tool { padding-top: 6px; }
   .tab-patch .gp-facts { gap: 3px; font-size: 13px; }
   .tab-patch .gp-tool .field { height: 30px; }
+  .tab-patch .gp-run { padding-top: 3px; padding-bottom: 3px; }
+  .tab-patch .gp-roster-body { gap: 4px; padding-bottom: 4px; }
+  .tab-patch .gp-layers:has(.gp-group.open) .gp-group:not(.open) .gp-group-sub { display: none; }
 }

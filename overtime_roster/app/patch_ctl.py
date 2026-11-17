@@ -364,7 +364,7 @@ def run_job(setup, busy, work, said, stopped, then=None, error=False, rescan=Tru
             ctl.busy = None
             if failure and part is not None:
                 part.error = failure
-        ctl.changed('patch', 'setup', 'app', 'status', 'update')     # Update's patch bar reads the look too
+        ctl.changed('patch', 'setup', 'app', 'status', 'update', 'patchall')   # Update's notices read the look too
         if rescan and hasattr(setup, '_scan'):
             setup._scan()
 
@@ -393,14 +393,14 @@ def patched_text(teams32, roster):
     if teams32:
         return 'Patched. Start NHL 19 to play on the Overtime server.'
     if roster:
-        return 'Patched, with 31 teams: the default roster has no Seattle. Run Update, then press Patch again.'
+        return 'Patched, with 31 teams: the default roster has no Seattle. Press Patch again with Roster update on.'
     return 'Patched, with 31 teams. Turn on the default roster switch for Seattle.'
 
 
 def offer_update(ctl):
     """After a Patch with 32 teams: when the open roster is a save without an active Seattle (New Season crashes with
     it while the game runs 32 teams, rosterupdate.seattle_ready), ask "Update <name> now?": Update it now opens the
-    Update tab and runs Go over it (its own questions and backup first), Later closes. Returns whether it asked."""
+    Patch tab and runs the roster update over it (its own questions and backup first), Later closes. Returns whether it asked."""
     parts = getattr(ctl, 'parts', None) or {}
     if 'rosters' not in parts or 'update' not in parts or getattr(ctl, 'shell', None) is None:
         return False
@@ -418,14 +418,14 @@ def offer_update(ctl):
         name = mine['name']
 
     def now():
-        ctl.host.send('goto', 'update')
+        ctl.host.send('goto', 'patch')
         up = parts['update']
         if up.save_mode('update') is not None:
             return None             # it says why (the Help bar)
         return up.update_go()
     ctl.shell.ask(f'Update {name} now?', [
         f'The game runs 32 teams now. New Season crashes with {name} until it is updated: the update brings '
-        'Seattle in.', 'Update it now runs the Update tab\'s Go over it (your saves are backed up first).'],
+        'Seattle in.', 'Update it now runs the roster update over it (your saves are backed up first).'],
         [('Update it now', 'update', 'primary'), ('Later', 'later', 'plain')], {'update': now})
     return True
 
@@ -533,7 +533,7 @@ def one_click(setup, then=None):
         if not game['ok']:
             raise Refused(f"NHL 19 cannot be patched: {game['problem']}.")
         if overlay.emulator_running():
-            raise Refused('shadPS4 is running. Close NHL 19, then press Patch again.')
+            raise Refused('NHL 19 is running. Close it, then press Patch again.')
         if matchsetup.active():
             raise Refused(MATCH_LOCKED)
         gamesetup.use_game(game_dir)
@@ -738,7 +738,7 @@ def one_unpatch(setup):
 
     def work(_step):
         if overlay.emulator_running():
-            raise Refused('shadPS4 is running. Close NHL 19, then press Unpatch again.')
+            raise Refused('NHL 19 is running. Close it, then press Unpatch again.')
         if matchsetup.active():
             raise Refused(MATCH_LOCKED)
         tags = onlinetag.remove(game_dir) if game_dir else []     # first: overlay.undo then clears empty folders
@@ -1056,7 +1056,7 @@ def state_line(f):
     if not f['checked']:
         return {'text': 'Looking at NHL 19...', 'tone': 'info'}
     if f['running']:
-        return {'text': 'shadPS4 is running. Close NHL 19 before you patch or unpatch.', 'tone': 'caution'}
+        return {'text': 'NHL 19 is running. Close it before you patch or unpatch.', 'tone': 'caution'}
     if f.get('match_setup'):
         return {'text': MATCH_LOCKED, 'tone': 'caution'}
     if f['error']:

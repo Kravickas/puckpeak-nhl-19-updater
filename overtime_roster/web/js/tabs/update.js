@@ -1,27 +1,26 @@
-// Update: Legacy's Update tab in NHL 19's look. The From bar (the open roster), "What should be updated?" (the
-// switches), the result of the last Go or Check first, and the Save card with Go. One Go checks NHL.com, plans,
-// changes the roster, checks it, backs up, saves and writes the list of changes; the steps show in the Save card and
-// the Help bar. Slices `update`, `update_list`; calls in docs/ui/update.md.
+// The roster update's parts, drawn in the Patch tab's Roster update group (0.97.0: Update and Game patch are one
+// Patch tab; this file is no tab of its own). The From line (the open roster), the switches, the season and data
+// choices, where it saves, the result of the last run and its steps. One press of Patch runs the update first: it
+// checks NHL.com, plans, changes the roster, checks it, backs up, saves and writes the list of changes. Slices
+// `update`, `update_list`; calls in docs/ui/patch.md.
 import { html, cls } from '../lib.js';
-import { useSlice } from '../store.js';
 import { call } from '../bridge.js';
-import { Card, Button, Switch, Segmented, Select, TextField, Field, Info, Tag, Modal, Why } from '../ui.js';
+import { Button, Switch, Segmented, Select, TextField, Field, Info, Tag, Modal } from '../ui.js';
 
-export const tip = 'Pick what to update and how to save it, then press Go.';
-
-const GO_INFO = [
-  { head: 'One Go does it all', items: [
+export const GO_INFO = [
+  { head: 'The roster update', items: [
     'Checks NHL.com for today\'s rosters (or reads the offline copy).',
     'Plans the changes and makes them in the open roster.',
     'Checks that the roster opens in NHL 19.',
     'Backs up the save it writes over, then saves.',
     'Writes a list of every change.',
+    'Then the patch goes in.',
   ] },
   { head: 'Not sure?', items: ['Press Check first: it shows what would change and saves nothing.'] },
 ];
 
-function FromBar({ f, go }) {
-  return html`<div class="card up-from">
+export function FromLine({ f, go }) {
+  return html`<div class="up-from">
     <span class="caps up-from-label">From</span>
     <span class="up-from-name">${f.name}</span>
     ${f.tag && html`<${Tag} tone=${f.tag.tone || null}>${f.tag.text}<//>`}
@@ -32,15 +31,13 @@ function FromBar({ f, go }) {
   </div>`;
 }
 
-// the game patch is missing or broken, or the cap switch changed: say so over the switches (no button: owner 2026-11-07)
-function PatchBar({ p }) {
-  return html`<div class=${cls('card up-patch', p.tone)} role="status">
-    <span class="up-patch-text">${p.text}</span>
-  </div>`;
+// the game patch is missing or broken, the cap switch changed, or the roster is not the active one: one line
+export function Notice({ p, tone }) {
+  return html`<div class=${cls('up-patch', tone || p.tone)} role="status"><span class="up-patch-text">${p.text}</span></div>`;
 }
 
-// one tile of "What should be updated?": title, two lines at most (all of it in the "?"), the switch
-function Step({ w, busy }) {
+// one switch tile: title, two lines at most (all of it in the "?"), the switch
+export function Step({ w, busy }) {
   return html`<div class=${cls('up-step', w.on && 'on', w.locked && 'locked')} data-key=${w.key}>
     <div class="up-step-main">
       <div class="up-step-title">${w.title}${w.always && html`<span class="up-always">Always on</span>`}</div>
@@ -51,56 +48,87 @@ function Step({ w, busy }) {
   </div>`;
 }
 
-// the tiles' order: the rosters and what rides on them, the ratings, then the season (v0.70.0: every switch shows,
-// the calendar's and the data's choices sit in one bar under the tiles, so the card needs no scroll)
+// the tiles' order: the rosters and what rides on them, the ratings, then the season
 const ORDER = ['rosters', 'lines', 'myedits', 'retire', 'nhl27', 'drafts', 'calendar'];
 
-function StepsCard({ s }) {
+export function Steps({ s }) {
   const by = Object.fromEntries(s.switches.map((w) => [w.key, w]));
   const keys = ORDER.filter((k) => by[k]).concat(s.switches.map((w) => w.key).filter((k) => !ORDER.includes(k)));
-  const cal = by.calendar || { on: false };
-  return html`<${Card} n="1" title="What should be updated?" grow className="up-steps-card"
-      aside=${html`<span class="up-aside">Turn a part off to keep it as it is.</span><${Info} title="What Go does" sections=${GO_INFO}/>`}>
-    <div class="card-body up-steps-body">
-      <div class="up-steps">${keys.map((k) => html`<${Step} key=${k} w=${by[k]} busy=${s.busy}/>`)}</div>
-      <div class="up-bar">
-        <div class=${cls('up-opt', !cal.on && 'off')}>
-          <span class="caps up-opt-label">Season</span>
-          <${Segmented} className="up-season" options=${s.seasons} value=${s.season} disabled=${s.busy || !cal.on}
-            onChange=${(v) => call('update_option', 'season', v)}/>
-          <${Segmented} className="up-per32" value=${s.per32} disabled=${s.busy || !cal.on}
-            options=${[{ value: 84, label: '84 games', title: 'The real NHL since 2025-26' }, { value: 82, label: '82 games', title: 'The length NHL 19 was made for' }]}
-            onChange=${(v) => call('update_option', 'per32', v)}/>
-        </div>
-        <span class="sp"></span>
-        <div class="up-opt">
-          <span class="caps up-opt-label">Data</span>
-          <${Segmented} className="up-data" value=${s.offline} disabled=${s.busy}
-            options=${[{ value: false, label: 'NHL.com' }, { value: true, label: s.offline_date ? `Offline copy (${s.offline_date})` : 'Offline copy' }]}
-            onChange=${(v) => call('update_option', 'offline', v)}/>
-          <${Info} title="Data" text="NHL.com has today's rosters. The offline copy comes with Overtime Roster: use it when NHL.com does not answer."/>
-        </div>
-      </div>
-    </div>
-  <//>`;
+  return html`<div class="up-steps">${keys.map((k) => html`<${Step} key=${k} w=${by[k]} busy=${s.busy}/>`)}</div>`;
 }
 
-function Result({ r }) {
+// the calendar's season and length, where the data comes from
+export function Choices({ s }) {
+  const cal = s.switches.find((w) => w.key === 'calendar') || { on: false };
+  return html`<div class="up-bar">
+    <div class=${cls('up-opt', !cal.on && 'off')}>
+      <span class="caps up-opt-label">Season</span>
+      <${Segmented} className="up-season" options=${s.seasons} value=${s.season} disabled=${s.busy || !cal.on}
+        onChange=${(v) => call('update_option', 'season', v)}/>
+      <${Segmented} className="up-per32" value=${s.per32} disabled=${s.busy || !cal.on}
+        options=${[{ value: 84, label: '84 games', title: 'The real NHL since 2025-26' }, { value: 82, label: '82 games', title: 'The length NHL 19 was made for' }]}
+        onChange=${(v) => call('update_option', 'per32', v)}/>
+    </div>
+    <span class="sp"></span>
+    <div class="up-opt">
+      <span class="caps up-opt-label">Data</span>
+      <${Segmented} className="up-data" value=${s.offline} disabled=${s.busy}
+        options=${[{ value: false, label: 'NHL.com' }, { value: true, label: s.offline_date ? `Offline copy (${s.offline_date})` : 'Offline copy' }]}
+        onChange=${(v) => call('update_option', 'offline', v)}/>
+      <${Info} title="Data" text="NHL.com has today's rosters. The offline copy comes with Overtime Roster: use it when NHL.com does not answer."/>
+    </div>
+  </div>`;
+}
+
+// where the update saves (Save to, its name or slot), Check first, and the note under them
+export function SaveFields({ s }) {
+  const sv = s.save;
+  const busy = s.busy;
+  return html`<div class="up-save">
+    <div class="up-save-row">
+      <${Field} label="Save to" className="up-mode-field">
+        <${Segmented} className="up-modes" options=${sv.modes} value=${sv.mode} disabled=${busy}
+          onChange=${(v) => call('update_save_mode', v)}/>
+      <//>
+      ${sv.mode === 'update' && html`<${Field} label="Roster" className="up-name-field"><div class="field up-target" title=${sv.target}>${sv.target}</div><//>`}
+      ${(sv.mode === 'new' || sv.mode === 'folder') && html`<${Field} label="Name" className="up-name-field">
+        <${TextField} value=${sv.name} placeholder=${sv.name_default} disabled=${busy} onChange=${(t) => call('update_name', t)}/>
+      <//>`}
+      ${sv.mode === 'folder' && html`<${Field} label="Slot on the other PC" className="up-slot-field">
+        <${Select} value=${sv.folder_slot || ''} disabled=${busy} onChange=${(v) => call('update_folder_slot', v)}
+          options=${[{ value: '', label: 'Automatic' }].concat(sv.folder_slots)}/>
+      <//>`}
+      ${sv.mode === 'online' && html`<${Field} label="File" className="up-name-field"><div class="field up-target">roster_h2h.db</div><//>`}
+      ${sv.slots && html`<${Field} label="Write over" className="up-slot-field">
+        <${Select} value=${sv.slot || ''} disabled=${busy} onChange=${(v) => v && call('update_slot', v)}
+          options=${[{ value: '', label: 'Pick a save...' }].concat(sv.slots)}/>
+      <//>`}
+      <span class="sp"></span>
+      ${sv.mode !== 'online' && html`<span class="up-used small-note">${sv.used} of ${sv.max} saves used</span>`}
+      <${Button} small className="up-check" disabled=${!s.check.enabled} onClick=${() => call('update_check')}
+        title="Shows what would change. Nothing is saved.">Check first<//>
+    </div>
+    <span class=${cls('small-note up-note', (sv.why || sv.note.tone === 'caution') && 'caution')}>
+      ${sv.why ? `${sv.why} ` : ''}${sv.note.text}
+    </span>
+  </div>`;
+}
+
+export function Result({ r }) {
   const buttons = [];
   if (r.kind !== 'bad' || r.can_undo) buttons.push(html`<${Button} small key="list" className="up-list-btn" onClick=${() => call('update_list', true)}>List of changes<//>`);
   if (r.can_offline) buttons.push(html`<${Button} small key="off" onClick=${() => call('update_option', 'offline', true)}>Use the offline copy<//>`);
   if (r.kind === 'bad' || r.log) buttons.push(html`<${Button} small key="log" onClick=${() => call('open_error_log')}>Open the error log<//>`);
   if (r.can_undo) buttons.push(html`<${Button} small key="undo" title="Take the whole update back" onClick=${() => call('update_result', 'undo')}>Undo the update<//>`);
   if (r.folder) buttons.push(html`<${Button} small key="dir" onClick=${() => call('open_path', r.folder)}>Open folder<//>`);
-  if (r.can_play) buttons.push(html`<${Button} small kind="primary" key="play" onClick=${() => call('setup_play')}>Play<//>`);
   return html`<section class=${cls('card up-result', r.kind)} role="status">
     <div class="up-r-head">
       <span class="up-r-title caps">${r.title}</span>
       ${r.issues.length > 0 && html`<${Tag} tone="caution">${r.issues.length} to know<//>`}
       <span class="sp"></span>
-      <div class="up-r-buttons">${buttons}</div>
       <button type="button" class="up-close" aria-label="Close" title="Close" onClick=${() => call('update_result', 'close')}>✕</button>
     </div>
+    <div class="up-r-buttons">${buttons}</div>
     <div class="up-r-body">
       <ul class="up-r-lines">
         ${r.lines.map((l, k) => html`<li key=${`${l.part}${k}`} class=${l.tone === 'bad' ? 'bad' : undefined}><b>${l.part}</b><span>${l.text}</span></li>`)}
@@ -113,8 +141,8 @@ function Result({ r }) {
   </section>`;
 }
 
-// Go's steps: faint before a run, lit while it runs (the Help bar says the same), red where it stopped
-function RunStrip({ run, idle }) {
+// the update's steps: faint before a run, lit while it runs (the Help bar says the same), red where it stopped
+export function RunStrip({ run, idle }) {
   return html`<ol class=${cls('up-run', idle && 'idle')}>
     ${run.steps.map((st, i) => html`<li key=${st.key}
         class=${cls(!idle && i < run.at && 'done', !idle && i === run.at && (run.failed ? 'fail' : 'now'))}>
@@ -123,73 +151,11 @@ function RunStrip({ run, idle }) {
   </ol>`;
 }
 
-const IDLE_RUN = { at: -1, steps: [['check', 'NHL.com'], ['plan', 'Plan'], ['apply', 'Change'], ['verify', 'Check'],
+export const IDLE_RUN = { at: -1, steps: [['check', 'NHL.com'], ['plan', 'Plan'], ['apply', 'Change'], ['verify', 'Check'],
   ['backup', 'Back up'], ['save', 'Save'], ['report', 'Report']].map(([key, label]) => ({ key, label })) };
 
-function SaveCard({ s }) {
-  const sv = s.save;
-  const busy = s.busy;
-  return html`<${Card} n="2" title="Save" featured className="up-save" aside=${sv.mode === 'online' ? null : html`<span>${sv.used} of ${sv.max} saves used</span>`}>
-    <div class="card-body up-save-body">
-      <div class="up-save-row">
-        <${Field} label="Save to" className="up-mode-field">
-          <${Segmented} className="up-modes" options=${sv.modes} value=${sv.mode} disabled=${busy}
-            onChange=${(v) => call('update_save_mode', v)}/>
-        <//>
-        ${sv.mode === 'update' && html`<${Field} label="Roster" className="up-name-field"><div class="field up-target" title=${sv.target}>${sv.target}</div><//>`}
-        ${(sv.mode === 'new' || sv.mode === 'folder') && html`<${Field} label="Name" className="up-name-field">
-          <${TextField} value=${sv.name} placeholder=${sv.name_default} disabled=${busy} onChange=${(t) => call('update_name', t)}/>
-        <//>`}
-        ${sv.mode === 'folder' && html`<${Field} label="Slot on the other PC" className="up-slot-field">
-          <${Select} value=${sv.folder_slot || ''} disabled=${busy} onChange=${(v) => call('update_folder_slot', v)}
-            options=${[{ value: '', label: 'Automatic' }].concat(sv.folder_slots)}/>
-        <//>`}
-        ${sv.mode === 'online' && html`<${Field} label="File" className="up-name-field"><div class="field up-target">roster_h2h.db</div><//>`}
-        ${sv.slots && html`<${Field} label="Write over" className="up-slot-field">
-          <${Select} value=${sv.slot || ''} disabled=${busy} onChange=${(v) => v && call('update_slot', v)}
-            options=${[{ value: '', label: 'Pick a save...' }].concat(sv.slots)}/>
-        <//>`}
-        <span class="sp"></span>
-        <div class="up-go-wrap">
-          <${Button} className="up-check" disabled=${!s.check.enabled} onClick=${() => call('update_check')}
-            title="Shows what would change. Nothing is saved.">Check first<//>
-          <${Button} kind="featured" big className="up-go" disabled=${!s.go.enabled} title=${sv.block || 'Update and save (Enter)'}
-            onClick=${() => call('update_go')}>${s.go.text}<//>
-        </div>
-      </div>
-      <div class="up-save-foot">
-        <${RunStrip} run=${s.run || IDLE_RUN} idle=${!s.run}/>
-        <span class=${cls('small-note up-note', (sv.why || sv.note.tone === 'caution') && 'caution')}>
-          ${sv.why ? `${sv.why} ` : ''}${sv.note.text}
-        </span>
-      </div>
-    </div>
-  <//>`;
-}
-
-export default function Update({ go }) {
-  const s = useSlice('update');
-  if (!s) return null;
-  if (!s.ready) {
-    return html`<div class="up">
-      <${Why} className="up-none" text="Pick the roster to update first. Setup also shows the program where shadPS4 is.">
-        <${Button} kind="primary" onClick=${() => go('setup')}>Go to Setup<//>
-      <//>
-    </div>`;
-  }
-  return html`<div class=${cls('up', s.result && 'has-result')}>
-    <${FromBar} f=${s.from} go=${go}/>
-    ${s.patch && html`<${PatchBar} p=${s.patch} go=${go}/>`}
-    ${s.active && html`<div class="card up-patch bad" role="status"><span class="up-patch-text">${s.active.text}</span></div>`}
-    <${StepsCard} s=${s}/>
-    ${s.result && html`<${Result} r=${s.result}/>`}
-    <${SaveCard} s=${s}/>
-  </div>`;
-}
-
 // the list of changes (from the result's button): who moves, who is new, who leaves
-export function Modals() {
-  const l = useSlice('update_list');
+export function ChangesModal({ l }) {
   if (!l || !l.open) return null;
   const close = () => call('update_list', false);
   const part = (title, rows, line) => html`<section class="up-l-part">

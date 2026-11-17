@@ -28,20 +28,47 @@ CRLF = b'\r\n'
 
 def fake_playnow():
     return CRLF.join([menus.PLAYNOW_STOCK[0], b'    --NHL19 BETA ProAM mode should be disabled',
-                      menus.PROAM_LOCK_ANCHOR + b'    return o', b'end', b'    ' + menus.PLAYNOW_STOCK[1], b''])
+                      menus.PROAM_LOCK_ANCHOR + b'    return o', b'end', b'function PlayNowMenu:_Initialize()',
+                      b''.join(old for old, _new in menus.DROPIN_ACTIONS) + b'    ' + menus.PLAYNOW_STOCK[1], b''])
 
 
 def fake_playnow_layout():
-    tiles = zip((b'ProamTile', b'ThreesTile', b'GauntletTile', b'EASHLTile'),
-                (menus.TILE_X[0], menus.TILE_X[2], menus.TILE_X[1], menus.TILE_X[3]))
+    tiles = [(b'ProamTile', b'125.0', menus.PROAM_ART[0]), (b'ThreesTile', b'965.0', b'"type": "resort_brand_threes",'),
+             (b'GauntletTile', b'545.0', b'"type": "resort_brand_outdoor1",'), (b'EASHLTile', b'1385.0', b'"type": "resort_brand_eashl",')]
     return (CRLF.join([b'{', b'    "name": "PlayNowMenu",', b'            "targets":', b'            [', b''])
-            + menus.PROAM_TARGET + CRLF.join([b'                "ThreesTile",', b'                "EASHLTile"',
-                                              b'            ],', b''])
-            + b''.join(b'            "name": "' + n + b'",' + CRLF + b'            ' + x for n, (x, _new) in tiles)
+            + menus.PLAYNOW_TARGETS + CRLF.join([b'            ],', b''])
+            + b''.join(CRLF.join([b'            "name": "' + n + b'",', b'            "x": ' + x + b',', b'            ' + t, b''])
+                       for n, x, t in tiles)
             + b'}' + CRLF)
 
 
-PLAYNOW_FILES = {menus.PLAYNOW_PATH: fake_playnow(), menus.PLAYNOW_LAYOUT_PATH: fake_playnow_layout()}
+def fake_playnow_dd():
+    return CRLF.join([b'{'] + [b'    ' + old for old, _new in menus.PLAYNOW_DD_EDITS] + [b'}', b''])
+
+
+def fake_dropinhub():
+    return CRLF.join([menus.DROPINHUB_STOCK[0], b'end', menus.DROPINHUB_STOCK[1], b'end',
+                      b'function DropInHub:Initialize()', b'']) + menus.DROPINHUB_END
+
+
+def fake_eashlmenu(walk=False):
+    lines = [menus.SEASONS_STOCK[0], menus.SEASONS_LOCK_ANCHOR + b'end', b'    ' + menus.SEASONS_STOCK[1],
+             menus.EASHLMENU_INIT + b'end']
+    if walk:
+        lines.insert(0, menus.EASHLMENU_STOCK[0] + b' = ' + menus.EASHLMENU_STOCK[1] + b',')
+    return CRLF.join(lines + [b''])
+
+
+def fake_eashlmenu_layout():
+    return (CRLF.join([b'{', b'    "name": "EASHLMenu",', b'            "targets":', b'            [', b''])
+            + menus.SEASONS_TARGET + CRLF.join([b'            ],', b'            "name": "DropInTile",', b''])
+            + menus.SEASONS_MARGINS[0][0] + b'            "name": "OnlineSeasonsTile",' + CRLF
+            + menus.SEASONS_MARGINS[1][0] + b'}' + CRLF)
+
+
+PLAYNOW_FILES = {menus.PLAYNOW_PATH: fake_playnow(), menus.PLAYNOW_LAYOUT_PATH: fake_playnow_layout(),
+                 menus.EASHLMENU_PATH: fake_eashlmenu(), menus.EASHLMENU_LAYOUT_PATH: fake_eashlmenu_layout(),
+                 menus.PLAYNOW_DD_PATH: fake_playnow_dd(), menus.DROPINHUB_PATH: fake_dropinhub()}
 
 
 def changes(old, new):
@@ -152,22 +179,32 @@ def test_game_files_edit_is_only_insertions(game_dir, chel):
     assert menus.edit_layout(layout) == layout.replace(b'"numSections": 6,', b'"numSections": 5,')
 
 
-def test_the_play_menu_loses_the_pro_am_tile():
-    """World of Chel's PLAY menu: Pro-Am locked in the Lua, its tile off screen and out of the cursor's targets, the
-    other three centred; served with every build."""
+def test_the_play_menu_has_three_tiles_with_drop_in_3s_and_6s():
+    """World of Chel's PLAY menu: Threes | Drop-in 3s (the Pro-Am slot, unlocked) | Drop-in 6s (the EASHL slot), Ones
+    hidden (0.97.0: off the cursor and the canvas, its action does nothing); each Drop-in tile names its room and opens
+    the EASHL menu; served with every build."""
     lua = menus.edit_playnow(fake_playnow())
-    assert lua.replace(menus.PROAM_LOCK, b'') == fake_playnow() and lua.count(b'o.mProAmModeLocked = true') == 1
+    assert lua.count(b'o.mProAmModeLocked = false') == 1 and lua.count(b'_G.OvertimeDropIn = nil') == 1
+    assert b"_G.OvertimeDropIn = '3s'; self:_OnAdvanceEASHL()" in lua and b"_G.OvertimeDropIn = '6s'; self:_OnAdvanceEASHL()" in lua
+    assert b'EVENTS.GAUNTLET' not in lua and b'RegisterAction(ACTIONS.GAUNTLET, function() end)' in lua
     lay = menus.edit_playnow_layout(fake_playnow_layout())
-    assert b'                "ProamTile",' not in lay and b'"name": "ProamTile",' in lay
-    for old, new in menus.TILE_X:
-        assert old not in lay and new in lay
+    assert menus.PLAYNOW_ORDER in lay and menus.PROAM_ART[0] not in lay and b'"GauntletTile"' not in lay.split(b']')[0]
+    for name, (_old, new) in menus.TILE_X.items():
+        at = lay.index(b'"name": "' + name + b'",')
+        assert lay.index(b'"x": ' + new + b',', at) < (lay.find(b'"name": "', at + 1) % (len(lay) + 1))
+    dd = menus.edit_playnow_dd(fake_playnow_dd())
+    assert all(new in dd and old not in dd for old, new in menus.PLAYNOW_DD_EDITS)
+    hub = menus.edit_dropinhub_direct(fake_dropinhub())
+    assert b"if room == '6s' then s:_OpenPlayers6s() else s:_OpenPlayers3s() end" in hub
+    assert hub.endswith(b'end' + CRLF) and menus.DROPINHUB_END not in hub
     with pytest.raises(menus.MenuError):
         menus.edit_playnow(lua)
     with pytest.raises(menus.MenuError):
         menus.edit_playnow_layout(lay)
     for opts in (menus.options({'chel': False}), menus.options()):
         out = menus.edits(fake_files().__getitem__, opts)
-        assert out[menus.PLAYNOW_PATH] == lua and out[menus.PLAYNOW_LAYOUT_PATH] == lay
+        assert out[menus.PLAYNOW_PATH] == lua and out[menus.PLAYNOW_LAYOUT_PATH] == lay and out[menus.PLAYNOW_DD_PATH] == dd
+        assert out[menus.DROPINHUB_PATH] == hub
 
 
 @pytest.mark.game
@@ -176,11 +213,14 @@ def test_the_play_menu_edit_on_the_games_own_files(game_dir):
     read = lambda path: gamefiles.read_latest(game_dir, path)[0]
     lay = json.loads(menus.edit_playnow_layout(read(menus.PLAYNOW_LAYOUT_PATH)))
     sel = next(b for b in lay['behaviors'] if b['name'] == 'SelectionManager')
-    assert sel['targets'] == ['GauntletTile', 'ThreesTile', 'EASHLTile']
-    assert {c['name']: c['x'] for c in lay['children']} == {'ProamTile': -2000.0, 'GauntletTile': 340.0,
-                                                           'ThreesTile': 760.0, 'EASHLTile': 1180.0}
+    assert sel['targets'] == ['ThreesTile', 'ProamTile', 'EASHLTile']
+    assert {c['name']: c['x'] for c in lay['children']} == {'ProamTile': 755.0, 'GauntletTile': 6000.0,
+                                                           'ThreesTile': 335.0, 'EASHLTile': 1175.0}
+    assert next(c for c in lay['children'] if c['name'] == 'ProamTile')['type'] == 'resort_brand_eashl'
+    json.loads(menus.edit_playnow_dd(read(menus.PLAYNOW_DD_PATH)))
+    menus.edit_dropinhub_direct(read(menus.DROPINHUB_PATH))
     raw = read(menus.PLAYNOW_PATH)
-    assert [tag for tag, _a, _b in changes(raw, menus.edit_playnow(raw))] == ['insert']
+    assert [tag for tag, _a, _b in changes(raw, menus.edit_playnow(raw))] == ['insert', 'replace']   # the 3 actions in a row
 
 
 # --- the zero-press launch hook (docs/plans/m2-zero-press.md) ---------------------------------------------------
@@ -211,7 +251,7 @@ def test_launch_off_changes_nothing_and_serves_no_hub():
 def test_launch_on_hooks_the_homepage_and_the_hub_inside_pcall():
     files = fake_files()
     on = menus.edits(files.__getitem__, menus.options(), {'until': UNTIL})
-    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()) - {menus.THREES_HUB_PATH})  # the rules file only when rules are named; the Threes hub only for Threes
+    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()) - {menus.THREES_HUB_PATH} - (set(menus.CHEL_WALK_PATHS) - set(menus.PATHS)))  # the rules file only when rules are named; the Threes hub only for Threes
     home, hub = on[menus.HOMEPAGE_PATH], on[menus.HUB_PATH]
     for lua in (home, hub):
         assert b'pcall(function()' in lua and b'os.time() <= %d' % UNTIL in lua
@@ -229,9 +269,9 @@ def test_launch_on_hooks_the_homepage_and_the_hub_inside_pcall():
 def test_launch_rules_serve_the_rules_file_with_those_defaults():
     files = {**fake_files(), rules.RULES_PATH: fake_rules()}
     on = menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {'periodlength': 10, 'icing': 1}})
-    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - {rules.SHOOTOUT_PATH, rules.THREES_PATH, menus.THREES_HUB_PATH})
+    assert sorted(on) == sorted(set(menus.LAUNCH_PATHS) - {rules.SHOOTOUT_PATH, rules.THREES_PATH, menus.THREES_HUB_PATH} - (set(menus.CHEL_WALK_PATHS) - set(menus.PATHS)))
     assert rules.read(on[rules.RULES_PATH])['periodlength'] == '10' and rules.read(on[rules.RULES_PATH])['icing'] == '1'
-    assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {}}).keys() ==         set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()) - {menus.THREES_HUB_PATH}
+    assert menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {}}).keys() ==         set(menus.LAUNCH_PATHS) - set(rules.PATHS.values()) - {menus.THREES_HUB_PATH} - (set(menus.CHEL_WALK_PATHS) - set(menus.PATHS))
     with pytest.raises(menus.MenuError, match='pick one'):
         menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'rules': {'periodlength': 7}})
     with pytest.raises(menus.MenuError, match='0 times'):
@@ -327,3 +367,111 @@ def test_shootout_launch_rules_serve_the_shootout_file_only():
     with pytest.raises(menus.MenuError, match='pick one|Unknown'):
         menus.edits(files.__getitem__, menus.options(), {'until': UNTIL, 'mode': 'shootout', 'rules': {'periodlength': 10}})
     assert menus.record(menus.options(), {'until': UNTIL})['autoplay_mode'] == 'versus'
+
+
+# --- 0.96.0 Phase 4: the World of Chel auto-walk ---------------------------------------------------------------------
+def fake_chel_files():
+    return {**fake_files(), menus.PLAYNOW_PATH: fake_playnow(),
+            menus.MAINHUB_PATH: CRLF.join([menus.MAINHUB_STOCK[0], menus.MAINHUB_SHOW + b'end',
+                                           menus.MAINHUB_INPUTS + b'end', menus.MAINHUB_STOCK[1], b'end', b'']),
+            menus.EASHLMENU_PATH: fake_eashlmenu(walk=True),
+            menus.DROPINHUB_PATH: fake_dropinhub(),
+            menus.GAUNTLETHUB_PATH: CRLF.join([menus.GAUNTLETHUB_STOCK[2], menus.GAUNTLETHUB_STOCK[0], b'end',
+                                               b'x = ' + menus.GAUNTLETHUB_STOCK[1], menus.GAUNTLETHUB_DATA + b'end', b'']),
+            menus.DRESSINGROOM_PATH: CRLF.join(list(menus.DRESSINGROOM_STOCK) + [b'end', b'function DressingRoomFlow:new(init)',
+                                                b'']) + menus.DRESSINGROOM_NEW_END}
+
+
+def walk(files, chel):
+    return menus.edits(files.__getitem__, menus.options({'chel': False}), {'until': UNTIL, 'mode': 'chel', 'chel': chel})
+
+
+def test_a_chel_launch_walks_to_the_lobbys_drop_in_mode():
+    files = fake_chel_files()
+    six, three, gm = (walk(files, m) for m in (rules.CHEL_DROPIN, rules.CHEL_DROPIN3, rules.CHEL_GM3ON3))
+    home = six[menus.HOMEPAGE_PATH]
+    assert b'afterMovieTarget = "evt_eashl"' in home and b'_G.OvertimeChelStep = 1' in home
+    assert b'[MODES_NAMES.EASHL] = true' not in home                        # the tile is on
+    assert set(six) == set(three) == set(menus.PATHS) | {menus.MAINHUB_PATH}
+    assert set(gm) == set(menus.PATHS) | {menus.MAINHUB_PATH}                # Drop-in Threes: straight from PLAY
+    assert b's.nav.Event(nil, EVENTS.PLAY, nil)' in six[menus.MAINHUB_PATH]
+    assert b'self.mOvertimeInputs = newstate' in six[menus.MAINHUB_PATH]
+    assert b's:_OnAdvanceEASHL()' in six[menus.PLAYNOW_PATH] and b's:_OnAdvance(EVENTS.THREES)' in gm[menus.PLAYNOW_PATH]
+    assert b'o.mProAmModeLocked = false' in gm[menus.PLAYNOW_PATH]           # the Pro-Am slot is Drop-in 3s
+    assert b's:_OnAdvance(EVENTS.DROPIN)' in six[menus.EASHLMENU_PATH]
+    assert b'self.mOnlineSeasonsLocked = true' in six[menus.EASHLMENU_PATH]   # Online Seasons stays locked
+    assert b's:_OpenPlayers6s()' in six[menus.DROPINHUB_PATH] and b's:_OpenPlayers3s()' in three[menus.DROPINHUB_PATH]
+    for out in (six, three, gm):
+        for raw in out.values():
+            assert raw.count(b'\r\n') == raw.count(b'\n')
+    steps = [b'< %d and' % n for n in (2, 3, 4, 5)]
+    assert all(s in b''.join(six.values()) for s in steps)
+
+
+def test_a_chel_launch_walks_ones_through_its_hub():
+    files = fake_chel_files()
+    ones = walk(files, rules.CHEL_ONES)
+    assert set(ones) == set(menus.PATHS) | {menus.MAINHUB_PATH, menus.GAUNTLETHUB_PATH}
+    assert b's:_OnAdvance(EVENTS.GAUNTLET)' in ones[menus.PLAYNOW_PATH]
+    hub = ones[menus.GAUNTLETHUB_PATH]
+    assert b's:_GotoPlayNow()' in hub and b'< 4 and' in hub and b'HUB_STATE.BLACK_OUT' in hub
+    assert hub.index(menus.GAUNTLETHUB_DATA) < hub.index(b's:_GotoPlayNow()')
+    assert hub.count(CRLF) == hub.count(b'\n')
+
+
+def test_auto_ready_readies_and_searches_in_the_dressing_room_only_when_asked():
+    files = fake_chel_files()
+    for chel in (rules.CHEL_DROPIN, rules.CHEL_DROPIN3, rules.CHEL_GM3ON3, rules.CHEL_ONES):
+        assert menus.DRESSINGROOM_PATH not in walk(files, chel)               # a PC with a picture presses by hand
+        on = menus.edits(files.__getitem__, menus.options({'chel': False}),
+                         {'until': UNTIL, 'mode': 'chel', 'chel': chel, 'auto_ready': True})
+        room = on[menus.DRESSINGROOM_PATH]
+        assert room.count(CRLF) == room.count(b'\n') and room.endswith(b'    return o\r\nend\r\n')
+        assert room.index(b'    o:initialize()') < room.index(b'o.update = function') < room.rindex(b'return o')
+        for press in (b's:HandleSelectPosition(nil, dev)', b's:HandleReady(PRESENCE_IDS.READY, dev)',
+                      b's:HandleStartMatchMaking()', b'it.Position ~= goalie', b'os.time() > %d' % UNTIL):
+            assert press in room
+    plain = menus.edits(files.__getitem__, menus.options({'chel': False}),
+                        {'until': UNTIL, 'mode': 'chel', 'chel': rules.CHEL_PROAM, 'auto_ready': True})
+    assert menus.DRESSINGROOM_PATH not in plain                               # no walk, no auto-ready
+
+
+def test_a_chel_launch_of_another_mode_serves_the_tile_only():
+    files = fake_chel_files()
+    plain = menus.edits(files.__getitem__, menus.options({'chel': False}), {'until': UNTIL, 'mode': 'chel'})
+    assert walk(files, rules.CHEL_PROAM) == plain and set(plain) == set(menus.PATHS)
+    assert b'evt_eashl' not in plain[menus.HOMEPAGE_PATH]
+
+
+@pytest.mark.game
+def test_the_chel_walk_on_the_games_own_files_only_inserts(game_dir):
+    read = lambda path: gamefiles.read_latest(game_dir, path)[0]
+    for chel in (rules.CHEL_DROPIN, rules.CHEL_DROPIN3, rules.CHEL_GM3ON3, rules.CHEL_ONES):
+        on = menus.edits(read, menus.options({'chel': False}), {'until': UNTIL, 'mode': 'chel', 'chel': chel})
+        for path in menus.CHEL_WALK_PATHS:
+            if path in on:
+                assert {tag for tag, _a, _b in changes(read(path), on[path])} == {'insert'}
+
+
+def test_the_eashl_menu_loses_the_online_seasons_tile():
+    lua = menus.edit_eashlmenu_seasons(fake_eashlmenu())
+    assert b'    self.mOnlineSeasonsLocked = true' in lua
+    lay = menus.edit_eashlmenu_layout(fake_eashlmenu_layout())
+    assert b'                "OnlineSeasonsTile"' not in lay and b'"name": "OnlineSeasonsTile",' in lay
+    assert b'"marginRight": 460.0' not in lay and b'"marginLeft": 6000.0' in lay
+    with pytest.raises(menus.MenuError):
+        menus.edit_eashlmenu_seasons(lua)
+    for opts in (menus.options({'chel': False}), menus.options()):
+        out = menus.edits(fake_files().__getitem__, opts)
+        assert out[menus.EASHLMENU_PATH] == lua and out[menus.EASHLMENU_LAYOUT_PATH] == lay
+
+
+@pytest.mark.game
+def test_the_eashl_menu_edit_on_the_games_own_files(game_dir):
+    import json
+    read = lambda path: gamefiles.read_latest(game_dir, path)[0]
+    lay = json.loads(menus.edit_eashlmenu_layout(read(menus.EASHLMENU_LAYOUT_PATH)))
+    assert next(b for b in lay['behaviors'] if b['name'] == 'SelectionManager')['targets'] == ['DropInTile']
+    assert {c['name']: c.get('marginLeft') for c in lay['children']} == {'DropInTile': None, 'OnlineSeasonsTile': 6000.0}
+    raw = read(menus.EASHLMENU_PATH)
+    assert [tag for tag, _a, _b in changes(raw, menus.edit_eashlmenu_seasons(raw))] == ['insert', 'insert']

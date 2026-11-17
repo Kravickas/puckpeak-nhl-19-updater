@@ -28,7 +28,7 @@ import webbrowser
 from overtime_core import history as H, overlay, rules as RU, xmlpatch
 
 from .. import VERSION, hud
-from . import (crashreport as CR, gamesetup, history_view as HV, hostroster, jobs, keypress, launch,
+from . import (boost, crashreport as CR, emusettings, gamesetup, history_view as HV, hostroster, jobs, keypress, launch,
                lobby_client as LC, matchsetup, onlineemu, onlinetag, patch_ctl, paths, shadnet)
 from .registry import Part
 
@@ -84,26 +84,39 @@ STEPS = ('Online start set', 'NHL 19 started', 'Pressing the title screen', 'Gam
 GAME_NAMES = {RU.VERSUS: 'Versus', RU.SHOOTOUT: 'Shootout', RU.THREES: 'Threes'}
 # 0.90.0 CHEL lobbies: the World of Chel modes a lobby can pick (the club ones come with club games), and the game's
 # own path to each (the app serves the tile; the player walks it, docs/notes/woc.md)
-CHEL_NAMES = {RU.CHEL_DROPIN: 'Drop-in 6s', RU.CHEL_DROPIN3: 'Drop-in 3s', RU.CHEL_GM3ON3: 'Drop-in 3-on-3 arcade',
+CHEL_NAMES = {RU.CHEL_DROPIN: 'Drop-in 6s', RU.CHEL_DROPIN3: 'Drop-in 3s', RU.CHEL_GM3ON3: 'Drop-in Threes',
               RU.CHEL_ONES: 'Ones', RU.CHEL_PROAM: 'Pro-Am', RU.CHEL_CLUB: 'Club 6s', RU.CHEL_CLUB3: 'Club 3s',
               RU.CHEL_PLAYOFFS: 'Club playoffs 6s', RU.CHEL_PLAYOFFS3: 'Club playoffs 3s',
               RU.CHEL_OTP: 'Online Team Play'}
-# 0.90.1 hotfix: CHEL lobbies are not supported yet, so the app hides them (no CHEL host option, no CHEL rows in the
-# public list, no joining one by code). The code stays for later: set True to bring them back.
-CHEL_LOBBIES = False
+# 0.90.1 hid CHEL lobbies; 0.96.0 brings them back with the host's countdown and the server's Home/Away split (owner
+# 2026-11-13: everyone in the lobby in one game). False hides them again (no host option, no rows, no join by code).
+CHEL_LOBBIES = True
+COUNTDOWNS = (60, 120, 180, 300)     # the host's countdown lengths (the server's lobby.COUNTDOWNS)
+OLD_SERVER_COUNTDOWN = 'This server has no lobby countdown yet (it needs the 0.96.0 server update).'
+# 0.97.0 (owner 2026-11-15): a lobby whose match was played closes when NHL 19 closes; it has no use after its game
+CLOSED_AFTER_GAME = 'Your game is over. Create a new lobby to play again.'
+# what to press in NHL 19 for each mode a CHEL lobby plays (the drop-in modes walk it by themselves, CHEL_WALK; the
+# card shows it for a walk that stops). The EASHL steps are the walk's own path (lab 2026-11-14, woc.md "auto-walk")
+CHEL_PATHS = {RU.CHEL_DROPIN: ('World of Chel', 'Play', 'EASHL', 'Drop-in 6s'),
+              RU.CHEL_DROPIN3: ('World of Chel', 'Play', 'EASHL', 'Drop-in 3s'),
+              RU.CHEL_GM3ON3: ('World of Chel', 'Play', 'Drop-in Threes'),
+              RU.CHEL_ONES: ('World of Chel', 'Play', 'Ones', 'Play Now')}
 NO_CHEL_JOIN = 'That is a World of Chel lobby. CHEL lobbies are not available yet: join or host a Quick lobby.'
-CHEL_PICK = (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3, RU.CHEL_ONES, RU.CHEL_PROAM)
+# no Pro-Am: the game keeps it locked (menus.PROAM_LOCK). No Ones in 0.97.0 (owner 2026-11-16): it fails on the hub
+# (game-server-hub.md game 69) and the PLAY menu hides its tile; the Drop-ins only
+CHEL_PICK = (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3)
 CHEL_SPLIT = (RU.CHEL_DROPIN, RU.CHEL_DROPIN3, RU.CHEL_GM3ON3)      # the modes with Home and Away
+CHEL_WALK = CHEL_SPLIT + (RU.CHEL_ONES,)   # 0.96.0: the modes NHL 19 walks to by itself (menus.CHEL_WALKS), up to the dressing room
 OLD_SERVER_CHEL = ('This server has no CHEL lobbies yet: it needs the 0.90.0 server update. '
                    'Quick lobbies work as before.')
 CHEL_STEPS = ('World of Chel tile on', 'NHL 19 started', 'Pressing the title screen',
-              'Open World of Chel, pick {game}, press Play', 'Searching with your lobby', 'Match found')
+              'NHL 19 walks to {game}: pick your position, press Play', 'Searching with your lobby', 'Match found')
 ALL_NAMES = {**GAME_NAMES, **CHEL_NAMES}
-PHASES = {'hook': 0, 'starting': 1, 'title': 2, 'ready': 3, 'running': 4}
+PHASES = {'restarting': 0, 'hook': 0, 'starting': 1, 'title': 2, 'ready': 3, 'running': 4}
 # a 0.80 match-setup launch: one step before (the restart, then the match setup), the rest one further on
 MATCH_STEP = 'Match set up (your own setup comes back after)'
 RESTART_STEP = 'Restarting NHL 19 for the match'
-MATCH_PHASES = {'restarting': 0, 'setup': 0, **{k: v + 1 for k, v in PHASES.items()}}
+MATCH_PHASES = {**{k: v + 1 for k, v in PHASES.items()}, 'restarting': 0, 'setup': 0}
 ONLINE_READY = 'Online ready: Ready sets up each match by itself'
 
 
@@ -119,7 +132,7 @@ class MultiplayerCtl(Part):
              'mp_set_hud': 'set_hud', 'mp_set_link': 'set_link', 'mp_say': 'say', 'mp_shadnet_signin': 'shadnet_signin',
              'mp_shadnet_register': 'shadnet_register', 'mp_shadnet_create': 'shadnet_create',
              'mp_set_reports': 'set_reports', 'mp_send_report': 'send_report', 'mp_create_chel': 'create_chel',
-             'mp_side': 'set_side'}
+             'mp_side': 'set_side', 'mp_start': 'start_countdown', 'mp_dismiss_closed': 'dismiss_closed'}
     TAB = 'multiplayer'
 
     def __init__(self, ctl):
@@ -149,6 +162,8 @@ class MultiplayerCtl(Part):
         self.checks = None          # [{key, label, text, tone, go}] of the last look
         self.lobbies = []           # the public list
         self.error = ''             # the last thing that went wrong, in words
+        self.closed = ''            # why my lobby closed by itself (after its game), until I dismiss it or enter another
+        self.played_in = None       # (code, token) of the lobby whose match I reached (it closes when NHL 19 closes)
         self.busy = ''              # a call in flight ('create', 'join', ...)
         self.prep = ''              # what Ready does before it tells the lobby (the shadPS4 build, the patch), for the card
         self.auto_patched = None    # the lobby code Ready patched the game for (once per lobby)
@@ -172,7 +187,6 @@ class MultiplayerCtl(Part):
         self.now = time.time
         self.running = overlay.emulator_running
         self.stop_emulator = launch.stop_emulator
-        self.online_exe = None      # the online shadPS4 copy Ready got for a match-setup lobby (onlineemu)
         self.make_hud = lambda: hud.Hud(hud.emulator_rect, on_hotkey=self._hotkey, hotkeys=hud.PHRASE_KEYS)
         self.hud_ok = hud.available
         self.service_down = False   # the last ask of the service got no answer
@@ -250,7 +264,7 @@ class MultiplayerCtl(Part):
             raise gamesetup.SetupError('Find NHL 19 in Setup first.')
         npid, password = gamesetup.shadnet_check(npid, password)
         if overlay.emulator_running():
-            raise gamesetup.SetupError('shadPS4 is running. Close the game first, then try again.')
+            raise gamesetup.SetupError('NHL 19 is running. Close the game first, then try again.')
         if overlay.launcher_running():
             raise gamesetup.SetupError("shadPS4's launcher is open: it keeps its own copy of the users and can write "
                                        'over the sign-in. Close it, then try again.')
@@ -482,7 +496,7 @@ class MultiplayerCtl(Part):
         return self._enter('create', make)
 
     def set_side(self, side):
-        """A member of a split CHEL lobby moves to Home (0) or Away (1)."""
+        """A member of a CHEL lobby with sides (split, or 0.97.0 team picks) moves to Home (0) or Away (1)."""
         if side not in (0, 1):
             return {'ok': False}
         with self.mlock:
@@ -495,6 +509,36 @@ class MultiplayerCtl(Part):
             return self._lobby_error(err)
         self._apply(lobby)
         return {'ok': True}
+
+    def start_countdown(self, seconds):
+        """The host of a CHEL lobby starts the countdown (0.96.0): everyone ready launches early, at 0:00 the ready
+        players launch and the rest wait for the next match. 0 cancels; on a lobby whose game is on, the next round."""
+        try:
+            seconds = int(seconds or 0)
+        except (TypeError, ValueError):
+            return {'ok': False}
+        if seconds and seconds not in COUNTDOWNS:
+            return {'ok': False}
+        with self.mlock:
+            code, token = self.code, self.token
+        if not code:
+            return {'ok': False}
+        try:
+            lobby = self.client().start(code, token, seconds)
+        except LC.LobbyRefused as err:
+            if err.status == 404 and not (err.text or '').startswith('no such lobby'):
+                return self._fail(OLD_SERVER_COUNTDOWN)     # a server before 0.96.0 has no such route
+            return self._lobby_error(err)
+        except LC.LobbyError as err:
+            return self._lobby_error(err)
+        self._apply(lobby)
+        return {'ok': True}
+
+    def _benched(self, lobby):
+        """I wait on the bench of a launching or matched CHEL lobby (0.96.0 servers say so per player)."""
+        players = lobby.get('players') or []
+        mine = players[self.me] if 0 <= self.me < len(players) and isinstance(players[self.me], dict) else {}
+        return bool(mine.get('bench'))
 
     def _chel(self):
         with self.mlock:
@@ -548,6 +592,7 @@ class MultiplayerCtl(Part):
             self.code, self.token = lobby['code'], got['token']
             self.lobby, self.me = lobby, int(got.get('you', 0))
             self.error, self.down, self.game, self.launched_for = '', 0, None, None
+            self.closed, self.played_in = '', None
         self._changed()
         self._announce(lobby['code'], got['token'])
         self._ensure_poller()
@@ -589,25 +634,36 @@ class MultiplayerCtl(Part):
 
     def _tag_inputs(self, plan, emu):
         """onlinetag inputs of the next start (launch.start writes the tag of the same inputs). A lobby match: the match
-        patch, the online copy (_ready_job got it before Ready), the key the match config gets."""
+        patch, the lobby build (_ready_job switched it on before Ready), the key the match config gets."""
         game_dir = self.ctl.game_dir
         if plan is None:
             return onlinetag.start_inputs(emu, game_dir)
-        run = self.online_exe or (onlineemu.ready(plan['emu_sha']) if plan.get('emu_sha') else None) or emu
+        run = self._lobby_exe() or emu
         text = matchsetup.match_xml(plan['recipe'], self._own_text())
         return onlinetag.match_inputs(emu, game_dir, text, run)
 
-    def _online_copy(self, plan, note=None):
-        """The online shadPS4 for this lobby (downloaded once), checked to reach the player's own data."""
-        emu = self.ctl.setup.known_emulator()
-        onlineemu.start_dir(emu)
+    @staticmethod
+    def _lobby_exe():
+        """The lobby build's shadPS4 when it is on this PC, else None. Every lobby match plays on boost.DEFAULT
+        (Overtime Native v2, owner 2026-11-16; before, the copy the server pinned, onlineemu): the server's pin is not
+        read. Without it here the game starts on the player's own build, and the lobby compares the tags."""
+        return boost.here(boost.DEFAULT) or None
 
-        def progress(_name, done, total):
-            if note and total:
-                note(f'Getting the online shadPS4... {int(done * 100 / total)}%')
-        exe, _sha = onlineemu.ensure(patch_ctl.cache_dir(), want=plan['emu_sha'], progress=progress)
-        self.online_exe = exe
-        return exe
+    def _lobby_build(self, note=None):
+        """The lobby build switched on and up to date (Setup.online_boost, waits for a download). '' or why not."""
+        setup = self.ctl.setup
+        if not hasattr(setup, 'online_boost'):      # a bare Setup (tests): nothing to prepare
+            return ''
+        try:
+            got = setup.online_boost(note)
+        except Exception as err:    # noqa: BLE001
+            jobs.log_block(err, 'Lobby build before an online Ready')
+            got = 'it did not install'
+        if got == 'none published':
+            return 'the NHL 19 build of shadPS4 is not on the Overtime server right now'
+        if got not in ('on', 'already'):
+            return f'the NHL 19 build of shadPS4 could not be switched on ({str(got).rstrip(".")})'
+        return ''
 
     def _restore(self, note_on_fail=True, only=None):
         """The player's own setup back (the game has closed). '' or why it could not (logged, said on the card).
@@ -627,9 +683,9 @@ class MultiplayerCtl(Part):
 
     def ready(self, value=True):
         """Ready: first the game is made fit for online play with no click (owner 2026-11-08: "we just handle all
-        things for him"): the published lobby build of shadPS4 (Setup.online_boost), the patch file of this version
-        (patch_ctl.refresh_network) and, for a game without the patch, the eboot patch alone (patch_ctl.online_minimum). Then the lobby is told. A job: the
-        card shows what it does (`prep`)."""
+        things for him"): the published lobby build of shadPS4 (Setup.online_boost: Overtime Native v2, in every
+        lobby), the patch file of this version (patch_ctl.refresh_network) and, for a game without the patch, the eboot
+        patch alone (patch_ctl.online_minimum). Then the lobby is told. A job: the card shows what it does (`prep`)."""
         with self.mlock:
             code, token = self.code, self.token
         if not code:
@@ -653,16 +709,14 @@ class MultiplayerCtl(Part):
     def _ready_job(self, code, token):
         try:
             plan = self._match_plan()
-            if plan is not None:            # 0.80 pair: nothing of the player's own setup is changed at Ready
-                try:
-                    self._prep_note('Getting the online shadPS4 ready...')
-                    self._online_copy(plan, self._prep_note)
-                except (onlineemu.OnlineEmuError, gamesetup.SetupError) as err:
-                    return self._fail(str(err))
-                self.prep_why = ''
+            if plan is not None:            # 0.80 pair: the lobby build; nothing else of the player's own setup changes
+                self._prep_note('Getting the lobby build of shadPS4 ready...')
+                # not under a running game (a Next round): the match start switches it on once the game is closed
+                self.prep_why = '' if self.running() else self._lobby_build(self._prep_note)
                 return self._send_ready(code, token, True)
             try:
-                self.prep_why = self._prepare_online(code) or ''
+                # 0.96.0: Ready again with NHL 19 on (Next round): no build switch or patch under a running game
+                self.prep_why = '' if self.running() else self._prepare_online(code) or ''
             except Exception as err:    # noqa: BLE001 (Ready goes on: the lobby compares what is there)
                 jobs.log_block(err, 'Preparing the game for an online Ready')
                 self.prep_why = ''
@@ -677,16 +731,8 @@ class MultiplayerCtl(Part):
         setup = self.ctl.setup
         if not hasattr(setup, 'online_boost'):      # a bare Setup (tests): nothing to prepare
             return ''
-        why = []
-        try:
-            got = setup.online_boost(self._prep_note)
-        except Exception as err:    # noqa: BLE001
-            jobs.log_block(err, 'Lobby build before an online Ready')
-            got = 'it did not install'
-        if got == 'none published':
-            why.append('the NHL 19 build of shadPS4 is not on the Overtime server right now')
-        elif got not in ('on', 'already'):
-            why.append(f'the NHL 19 build of shadPS4 could not be switched on ({str(got).rstrip(".")})')
+        built = self._lobby_build(self._prep_note)
+        why = [built] if built else []
         patch_ctl._refresh_before_start(setup)      # the patch file of this version and server, network keys on
         emu = setup.known_emulator()
         game_dir = self.ctl.game_dir
@@ -719,7 +765,7 @@ class MultiplayerCtl(Part):
             except (OSError, ValueError, gamesetup.SetupError, matchsetup.MatchSetupError, xmlpatch.PatchError) as err:
                 self.ctl.host.log(f'Multiplayer: the patch could not be read ({err!r}).')
             try:
-                plays = self.online_exe if plan is not None and self.online_exe else emu
+                plays = (self._lobby_exe() or emu) if plan is not None else emu
                 game = dict(gamesetup.game_identity(self.ctl.game_dir) if self.ctl.game_dir else {},
                             **gamesetup.emulator_identity(plays), app=VERSION, cpu=gamesetup.cpu_tag())
             except Exception as err:   # the identity is for the log: Ready goes on without it
@@ -1185,10 +1231,16 @@ class MultiplayerCtl(Part):
             playing = (self.game or {}).get('phase') in ('running', 'rematch')
             link = lobby['link'] if 'link' in lobby and playing else None if self.link_shown and not playing else False
             self.link_shown = link not in (None, False)
-            if lobby.get('state') in LAUNCHING:
-                if self.launched_for != key and not (self.job and self.job.is_alive()):
+            players = lobby.get('players') or []
+            mine = players[self.me] if 0 <= self.me < len(players) and isinstance(players[self.me], dict) else {}
+            if mine.get('stage') == 'matched' or (lobby.get('state') == 'matched' and not self._benched(lobby)):
+                self.played_in = key
+            if lobby.get('state') in LAUNCHING and not self._benched(lobby):
+                if self.launched_for != key:
+                    # 0.96.0: a game that is on already (the host's Next round) plays this launch: marked, not started
+                    # again, so closing NHL 19 later does not start it once more
                     self.launched_for = key
-                    start = True
+                    start = not (self.job and self.job.is_alive())
             else:
                 self.launched_for = None
                 if self.game and self.game.get('phase') in ('failed', 'ended', 'rematch'):
@@ -1241,6 +1293,8 @@ class MultiplayerCtl(Part):
             state = (self.lobby or {}).get('state')
             if state not in LAUNCHING:
                 return self._fail('Both players have to be ready first.')
+            if self._benched(self.lobby or {}):
+                return self._fail('You wait for the next match: the host starts the next countdown.')
             if self.job and self.job.is_alive():
                 return self._fail('The game is starting already.')
             self.launched_for = (self.code, self.token)
@@ -1282,29 +1336,54 @@ class MultiplayerCtl(Part):
         checks = self.look()
         bad = next((k for k in checks if k['key'] == 'patch' and k['tone'] != 'good'), None)
         if bad:
-            raise gamesetup.SetupError(f'Patch the game first ({bad["text"]}): open Game patch and press Patch.')
+            raise gamesetup.SetupError(f'Patch the game first ({bad["text"]}): open the Patch tab and press Patch.')
         user = gamesetup.emu_user_dir(emu)
         self._signin_ready(user)
         rules = self._launch_rules()
         if self.running():
-            note = self._rematch_note()
-            if rules:
-                note += ' It keeps the rules it started with: close the game and Ready again to play the lobby\'s.'
-            self._phase('rematch', note)
-            self._hud_call('ping')
-            self._watch(emu, hooked=False)
-            return
+            if self._same_game():   # Next round: the game this lobby started, in its mode, plays on
+                note = self._rematch_note()
+                if rules:
+                    note += ' It keeps the rules it started with: close the game and Ready again to play the lobby\'s.'
+                self._phase('rematch', note)
+                self._hud_call('ping')
+                try:
+                    self._watch(emu, hooked=False)
+                finally:
+                    self.hooked = None
+                return
+            self._restart_for_hook()
         self._phase('hook')
-        overlay.set_menus(game_dir, self._hook_opts(rules))
+        overlay.set_menus(game_dir, self._hook_opts(rules, user))
         before = (gamesetup.shadnet_log(user) or {}).get('when')
         try:
             self._phase('starting')
             launch.start(emu, game_dir)
+            self.hooked = self._hook_key()
             self._titles(emu, lambda: self._signed_in(user, before))
             self._ready(emu)
             self._watch(emu, hooked=True)
         finally:
+            self.hooked = None
             self._unhook(game_dir)
+
+    def _hook_key(self):
+        with self.mlock:
+            lobby = self.lobby or {}
+            return self.code, lobby.get('kind') or 'quick', lobby.get('mode')
+
+    def _same_game(self):
+        """The running NHL 19 is the one this app started hooked for this lobby in its mode (a Next round). Any other
+        (started by hand, or for another lobby or mode) never had this lobby's hook: it is restarted with it."""
+        return self.hooked is not None and self.hooked == self._hook_key()
+
+    def _restart_for_hook(self, note=None):
+        self._phase('restarting', note or 'Restarting NHL 19 so it goes to %s by itself...' % self._game_name())
+        got = self.stop_emulator()
+        if got == 'unsupported':
+            raise gamesetup.SetupError(RESTART_UNSUPPORTED)
+        if got == 'failed' or self.running():
+            raise gamesetup.SetupError(RESTART_FAILED)
 
     def _rematch_note(self):
         if self._chel():
@@ -1312,10 +1391,17 @@ class MultiplayerCtl(Part):
                     'together.' % self._game_name())
         return 'NHL 19 is already running. Press PLAY in Online %s to meet your friend.' % GAME_NAMES[self._mode()]
 
-    def _hook_opts(self, rules):
+    def _hook_opts(self, rules, user=None):
         opts = {'until': int(self.now()) + HOOK_SECONDS}
-        if self._chel():   # the World of Chel tile, whatever the player's switch; no hook (menus.CHEL_LAUNCH)
-            return {**opts, 'mode': 'chel'}
+        if self._chel():   # the World of Chel tile, whatever the player's switch (menus.CHEL_LAUNCH); 0.96.0: and the
+            with self.mlock:   # walk to the lobby's mode (drop-in modes; any other mode: the tile only)
+                mode = (self.lobby or {}).get('mode')
+            if mode not in CHEL_WALK:
+                return {**opts, 'mode': 'chel'}
+            # 0.97.0 (owner 2026-11-15: a laptop runs NULL GPU, nobody sees its screen): the dressing room picks a
+            # position, readies and searches by itself
+            auto = bool(user) and emusettings.null_gpu(user)
+            return {**opts, 'mode': 'chel', 'chel': mode, **({'auto_ready': True} if auto else {})}
         if self._mode() != RU.VERSUS:
             opts['mode'] = self._mode()
         if rules:
@@ -1324,8 +1410,8 @@ class MultiplayerCtl(Part):
 
     def _launch_match(self, plan):
         """A 0.80 lobby match: the game restarts when it runs with anything but this match's setup, plays on the
-        match setup (the online copy, the match patch with -p, the match -mods view and config), and the player's own
-        setup comes back once it closed. The player's own shadPS4, patch, data and settings are never changed."""
+        match setup (the lobby build, the match patch with -p, the match -mods view and config), and the player's own
+        setup comes back once it closed. The player's own patch, data and settings are never changed."""
         c = self.ctl
         emu, game_dir = c.setup.known_emulator(), c.game_dir
         if not emu or not game_dir:
@@ -1334,35 +1420,36 @@ class MultiplayerCtl(Part):
         self._signin_ready(user)
         rules = self._launch_rules()
         if self.running():
-            if matchsetup.tag() == plan['id']:      # started for this very match setup: keep it (a rematch)
+            # started for this very match setup by this lobby in its mode: keep it (a Next round). 0.96.0: a game left
+            # open from another lobby or mode never had this lobby's hook (the same setup is not enough): it restarts
+            if matchsetup.tag() == plan['id'] and self._same_game():
                 self._phase('rematch', self._rematch_note())
                 self._hud_call('ping')
                 try:
                     self._watch(emu, hooked=False)
                 finally:
+                    self.hooked = None
                     self._restore()
                 return
-            self._phase('restarting', 'Restarting NHL 19 for the match...')
-            got = self.stop_emulator()
-            if got == 'unsupported':
-                raise gamesetup.SetupError(RESTART_UNSUPPORTED)
-            if got == 'failed' or self.running():
-                raise gamesetup.SetupError(RESTART_FAILED)
+            self._restart_for_hook('Restarting NHL 19 for the match...')
         self._phase('setup', 'Setting up the match (your own setup comes back after)...')
-        exe = self._online_copy(plan)
+        self._lobby_build()         # NHL 19 is closed now: on the lobby build (Ready skipped it under a running game)
+        exe = self._lobby_exe()
         try:
             got = matchsetup.apply(game_dir, user, plan['recipe'], self._own_text(), running=self.running,
                                    log=c.host.log, tag=plan['id'])
             self._phase('hook')
-            overlay.set_menus(game_dir, self._hook_opts(rules))     # on the match view: the player's files stay
+            overlay.set_menus(game_dir, self._hook_opts(rules, user))     # on the match view: the player's files stay
             before = (gamesetup.shadnet_log(user) or {}).get('when')
             self._phase('starting')
             launch.start(emu, game_dir, patch_file=got['patch'], exe=exe)
+            self.hooked = self._hook_key()
             # the key map, sign-in log and config are the player's own data folder's (the copy runs on it)
             self._titles(emu, lambda: self._signed_in(user, before))
             self._ready(emu)
             self._watch(emu, hooked=True)
         finally:
+            self.hooked = None
             self._unhook(game_dir)
             self._restore()
 
@@ -1476,6 +1563,28 @@ class MultiplayerCtl(Part):
         self._phase('ended', 'NHL 19 closed.')
         self._spawn(self._history_job, 'mp-history')    # a result may have arrived while the game ran
         self._after_game(emu)
+        self._close_after_game()
+
+    def _close_after_game(self):
+        """NHL 19 closed after this lobby's match was on (0.97.0, owner): the lobby has no use any more, so the app
+        leaves it and says to create a new one. A start that failed or a game closed before the match keeps it (Start
+        the game again). The reports (_after_game) read the history, not the lobby, so they still find the match."""
+        with self.mlock:
+            code, token = self.code, self.token
+            if not code or self.played_in != (code, token):
+                return
+            self.closed = CLOSED_AFTER_GAME
+        try:
+            self.client().leave(code, token)
+        except LC.LobbyError:
+            pass            # gone already, or the service is down (the lobby expires there)
+        self._left('')
+
+    def dismiss_closed(self):
+        with self.mlock:
+            self.closed = ''
+        self._changed()
+        return {'ok': True}
 
     def _unhook(self, game_dir):
         """The hook comes off once the game is closed (set_menus refuses while it runs)."""
@@ -1686,6 +1795,7 @@ class MultiplayerCtl(Part):
                 'reports': {'on': self.reports, 'asked': self.reports_asked, 'busy': self.report['busy'],
                             'note': self.report['note'], 'error': self.report['error']},
                 'error': self.error,
+                'closed': self.closed,
                 'busy': self.busy,
                 'prep': self.prep,
                 'quoted': 'signed in ... accountId=16349',
@@ -1712,6 +1822,7 @@ class MultiplayerCtl(Part):
         chel = lobby.get('kind') == 'chel'
         players = [{'name': str(p.get('name') or ''), 'you': i == self.me, 'ready': bool(p.get('ready')),
                     'roster': p.get('roster') or 'unknown', 'stage': p.get('stage') or 'lobby',
+                    'bench': bool(p.get('bench')), 'screen': _screen_view(p.get('screen'), lobby.get('mode')),
                     'side': p.get('side') if p.get('side') in (0, 1) else 0,
                     'game': [str(k) for k in p.get('game') or () if isinstance(k, str)][:5]}
                    for i, p in enumerate(lobby.get('players') or [])]
@@ -1723,9 +1834,11 @@ class MultiplayerCtl(Part):
                  self._rules_view(lobby, host) if isinstance(lobby.get('rules'), dict) else None)
         return {'code': lobby.get('code'), 'public': bool(lobby.get('public')), 'state': lobby.get('state'),
                 'kind': 'chel' if chel else 'quick', 'cap': cap, 'split': bool(lobby.get('split')),
+                # 0.97.0: the server lets members pick Home or Away (a drop-in lobby on a 0.97.0 server)
+                'picks': bool(chel and (lobby.get('split') or lobby.get('picks'))),
                 'chel_mode': lobby.get('mode') if chel else None,
                 'side_pick': ({'edit': lobby.get('state') not in LAUNCHING, 'mine': mine['side'] if mine else 0}
-                              if chel and lobby.get('split') else None),
+                              if chel and (lobby.get('split') or lobby.get('picks')) else None),
                 'mode': lobby.get('mode') if chel else self._mode(), 'game': self._game_name(), 'mode_pick': (
                     {'edit': host and lobby.get('state') not in LAUNCHING} if 'mode' in lobby else None),
                 'waiting': lobby.get('waiting'), 'players': players, 'rules': rules,
@@ -1737,7 +1850,14 @@ class MultiplayerCtl(Part):
                          for c in (lobby.get('chat') or [])[-CHAT_SHOWN:] if isinstance(c, dict) and isinstance(c.get('n'), int)],
                 'host': host, 'host_name': players[0]['name'] if players else '',
                 'me_ready': bool(mine and mine['ready']), 'partner': other['name'] if other else '',
-                'full': len(players) >= cap}
+                'full': len(players) >= cap,
+                # 0.96.0: the host's countdown (None: a server without it), my bench, the game's path to the mode
+                'countdown': ({'left': lobby.get('deadline_in'), 'lengths': list(COUNTDOWNS),
+                               'edit': host}
+                              if chel and 'countdowns' in lobby else None),
+                'bench': bool(mine and mine['bench']),
+                'path': list(CHEL_PATHS.get(lobby.get('mode'), ())) if chel else [],
+                'wrong_mode': chel and 'this lobby plays' in str(lobby.get('waiting') or '')}
 
     @staticmethod
     def _rules_view(lobby, host):
@@ -1793,6 +1913,44 @@ class MultiplayerCtl(Part):
 def _down_text(text):
     """True for the words a service that did not answer left (cleared once it answers again)."""
     return text == CERT_TEXT or text.startswith('The lobby service did not answer')
+
+
+# 0.97.0 (owner 2026-11-15, a NULL GPU laptop shows no picture): which screen each player's NHL 19 is on, from the
+# server (overtime_server/screens.py). gameSetupMode -> name; a lobby mode -> the setup mode its players should be in.
+SETUP_MODE_NAMES = {1: 'Versus', 2: 'Shootout', 18: 'Threes', 19: 'Threes', 50: 'Drop-in 6s', 51: 'Drop-in 3s',
+                    53: 'Ones', 55: 'Drop-in Threes'}
+LOBBY_SETUP_MODES = {'chel_dropin': 50, 'chel_dropin3': 51, 'chel_ones': 53, 'chel_gm3on3': 55}
+SCREEN_TEXT = {'online': 'logged in, main menu', 'chel': 'World of Chel hub', 'ones': 'Ones hub',
+               'room': '%s dressing room', 'position': '%s dressing room, position taken',
+               'searching': 'searching %s', 'closed': 'game closed'}
+SCREEN_STUCK = 90   # seconds on one screen before the walk (not the search) counts as stuck
+
+
+def _screen_view(s, lobby_mode=None):
+    """{'text', 'tone', 'for'} for the server's {'id', 'mode', 'for'}, or None. Tone 'bad' for a mode the lobby does
+    not play, 'caution' for a walk screen held SCREEN_STUCK seconds (a popup, a stall), 'good' while searching."""
+    if not isinstance(s, dict) or s.get('id') not in SCREEN_TEXT:
+        return None
+    sid, mode = s['id'], s.get('mode')
+    try:
+        held = max(0, int(s.get('for') or 0))
+    except (TypeError, ValueError):
+        held = 0
+    name = SETUP_MODE_NAMES.get(mode, 'game setup' if mode is None else 'mode %s' % mode)
+    text = SCREEN_TEXT[sid] % name if '%s' in SCREEN_TEXT[sid] else SCREEN_TEXT[sid]
+    want = LOBBY_SETUP_MODES.get(lobby_mode)
+    if want is not None and isinstance(mode, int) and sid in ('room', 'position', 'searching') and mode != want:
+        return {'text': text + ': wrong mode, this lobby plays ' + SETUP_MODE_NAMES[want], 'tone': 'bad', 'for': held}
+    if sid == 'ones' and want is not None and want != 53:
+        return {'text': text + ': wrong mode, this lobby plays ' + SETUP_MODE_NAMES[want], 'tone': 'bad', 'for': held}
+    if sid == 'searching':
+        return {'text': text, 'tone': 'good', 'for': held}
+    if sid == 'closed':
+        return {'text': text, 'tone': 'bad', 'for': held}
+    if held >= SCREEN_STUCK and sid != 'position':
+        return {'text': '%s for %s: stuck?' % (text, _age(held) if held >= 45 else '%d s' % held), 'tone': 'caution',
+                'for': held}
+    return {'text': text, 'tone': 'info', 'for': held}
 
 
 def _age(seconds):

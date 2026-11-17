@@ -54,11 +54,17 @@ TRUSTED_EXES = {'fe88293d67e4e9ab6d0799ac6dcff84644def7806ff0d03b028967cbfdf0e99
                 # 2026-11-13, "Overtime Native" (0.92.0's default and lobby build): dab14f34 + the texture collector's
                 # ages in seconds (OVERTIME_GC_SECONDS, texture cache only: no CPU math change)
                 '5b743815321f8dfdb8e3690299d8a7fb9a41757bc22ba424084ce5a3341cda17':
-                    'Overtime Native dab14f34 + collector seconds (4788f0b)'}
-# The online build: Overtime Native on Setup's card (0.92.0, owner 2026-11-13), the default and what a lobby starts. The
-# exe's sha is in the tag, so a player on another trusted build (Kravickas, an older one) has another tag (why()).
-ONLINE_EXES = {'5b743815321f8dfdb8e3690299d8a7fb9a41757bc22ba424084ce5a3341cda17':
-               'Overtime Native dab14f34 + collector seconds (4788f0b)'}
+                    'Overtime Native dab14f34 + collector seconds (4788f0b)',
+                # 2026-11-16, Overtime Native v2 (the default and lobby build after v1): Kravickas's nhl-perf-test
+                # (upstream f048bb74) + v1's commits + six speed items (docs/notes/native-v2.md). cpu_patches, the linker
+                # and memory_patcher are v1's (git diff dab14f34..d1d3168a: none); the build of d1d3168a with symbols
+                'e162fada7fcafe705d0062e2d9a647f63228e708f202e6c10e4f5609bf6725d9':
+                    'Overtime Native v2 d1d3168a (Kravickas nhl-perf-test d0b7ac91)'}
+# The online build: Overtime Native v2 on Setup's card (owner 2026-11-16; v1 from 0.92.0), the default and what every
+# lobby starts. The exe's sha is in the tag, so a player on another trusted build (v1, Kravickas, an older one) has
+# another tag (why()).
+ONLINE_EXES = {'e162fada7fcafe705d0062e2d9a647f63228e708f202e6c10e4f5609bf6725d9':
+               'Overtime Native v2 d1d3168a (Kravickas nhl-perf-test d0b7ac91)'}
 MARK ='; Overtime Roster: matchmaking tag (only games that stay in step meet). Unpatch removes this file.'
 TMP = '.overtime-tmp'
 
@@ -194,15 +200,15 @@ def why(inp):
     if inp['sha'] in ONLINE_EXES:
         pass
     elif inp['sha'] in TRUSTED_EXES:
-        reasons.append('it does not run the Overtime Native build, so open matchmaking pairs it with players on its '
-                       'own build (a Multiplayer lobby starts the lobby build by itself)')
+        reasons.append('it does not run the Overtime Native v2 build, so open matchmaking pairs it with players on '
+                       'its own build (a Multiplayer lobby starts the lobby build by itself)')
     else:
-        reasons.append("this shadPS4 is not the online build (choose Overtime Native on Setup's Boost performance "
+        reasons.append("this shadPS4 is not the online build (choose Overtime Native v2 on Setup's Boost performance "
                        'card: that is the one; a Multiplayer lobby plays on it too)')
     if not inp['crossvendor']:
         reasons.append('the Cross-CPU fix is not in the patch (it needs the v1.60 eboot.bin)')
     if gamesetup.amd_math_needed() and not inp['key']:
-        reasons.append("AMD math is off in the game's shadPS4 settings (Game patch, Patch turns it on)")
+        reasons.append("AMD math is off in the game's shadPS4 settings (Patch turns it on)")
     if not reasons:
         return ''
     return 'Online you meet only players with the same setup: ' + '; '.join(reasons) + '.'

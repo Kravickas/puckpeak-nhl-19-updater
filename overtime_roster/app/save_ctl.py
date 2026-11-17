@@ -258,7 +258,7 @@ class SaveCtl(Part):
         reopen: a new save becomes the open roster (Save as new: the Save bar then updates it)."""
         c = self.ctl
         if c.session and c.target == install.TARGET_SAVE and overlay.emulator_running():
-            c.shell.ask('Close shadPS4 first', ['shadPS4 is running, and the game holds its saves while it runs.',
+            c.shell.ask('Close shadPS4 first', ['NHL 19 is running, and the game holds its saves while it runs.',
                                                 'Close it, press Check again, then save.'], [('OK', 'ok', 'plain')])
             return
         with c.lock:

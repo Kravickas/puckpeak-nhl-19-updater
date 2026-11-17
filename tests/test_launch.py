@@ -3,6 +3,7 @@ and kill here is a fake: nothing touches a real process or window."""
 import ctypes
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -306,3 +307,146 @@ def test_full_speed_turns_power_throttling_off_and_never_raises():
     refused = FakeKernel32(ok=0)
     assert launch.full_speed(1234, refused) is False and refused.calls[-1] == ('close', 77)
     assert launch.full_speed(1234, object()) is False                               # no such API: the game runs anyway
+
+
+EMU_TITLE = 'shadPS4 v0.21.1 WIP Kravickas/overtime-nightly 1.0 | NHL 19'
+
+
+class FakeTitles:
+    """launch.Windows stand-in: {hwnd: [pid, visible, title]}. The test may change a title between looks."""
+
+    def __init__(self, windows):
+        self.windows, self.sets = windows, []
+
+    def visible_of(self, pids):
+        return [h for h, (pid, vis, _) in self.windows.items() if pid in pids and vis]
+
+    def title(self, hwnd):
+        return self.windows[hwnd][2]
+
+    def set_title(self, hwnd, text):
+        self.sets.append((hwnd, text))
+        self.windows[hwnd][2] = text
+        return True
+
+
+class FakeClock:
+    """sleep() moves the clock on; on_tick(n) runs after the n-th sleep."""
+
+    def __init__(self, on_tick=None):
+        self.now, self.slept, self.on_tick = 0.0, [], on_tick
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+        if self.on_tick:
+            self.on_tick(len(self.slept))
+
+
+class FakeProc:
+    pid = 4242
+
+    def __init__(self):
+        self.exit = None
+
+    def poll(self):
+        return self.exit
+
+
+def test_title_is_set_on_the_emulators_window_only():
+    win = FakeTitles({0x10: [4242, True, EMU_TITLE], 0x20: [777, True, 'Other app'], 0x30: [4242, False, EMU_TITLE]})
+    proc = FakeProc()
+    clk = FakeClock(on_tick=lambda n: setattr(proc, 'exit', 0) if n == 2 else None)
+    launch._keep_title(proc, win, clk.sleep, clk.clock)
+    assert win.windows[0x10][2] == 'NHL 19'
+    assert win.windows[0x20][2] == 'Other app'                  # another process's window is not touched
+    assert win.windows[0x30][2] == EMU_TITLE                    # hidden: not a window to title yet
+    assert win.sets == [(0x10, 'NHL 19')]
+
+
+def test_title_is_set_again_when_the_emulator_changes_it_back():
+    win = FakeTitles({0x10: [4242, True, EMU_TITLE]})
+    proc = FakeProc()
+
+    def tick(n):
+        if n == 3:
+            win.windows[0x10][2] = EMU_TITLE                    # the emulator wrote its long title again
+        if n == 6:
+            proc.exit = 0
+
+    clk = FakeClock(on_tick=tick)
+    launch._keep_title(proc, win, clk.sleep, clk.clock)
+    assert win.windows[0x10][2] == 'NHL 19'
+    assert win.sets == [(0x10, 'NHL 19'), (0x10, 'NHL 19')]
+
+
+def test_the_watch_stops_after_15_seconds_while_the_process_runs():
+    win = FakeTitles({0x10: [4242, True, 'NHL 19']})
+    clk = FakeClock()
+    launch._keep_title(FakeProc(), win, clk.sleep, clk.clock)
+    assert len(clk.slept) == 30 and clk.now == 15.0             # 30 looks at 0.5 s
+    assert win.sets == []                                       # the title already reads NHL 19
+
+
+def test_the_watch_stops_when_the_process_ends():
+    win = FakeTitles({})
+    proc = FakeProc()
+    clk = FakeClock(on_tick=lambda n: setattr(proc, 'exit', 1) if n == 2 else None)
+    launch._keep_title(proc, win, clk.sleep, clk.clock)
+    assert len(clk.slept) == 2
+
+
+def test_a_window_that_never_shows_does_not_block_start_or_raise():
+    gate = threading.Event()
+    proc = FakeProc()
+    t = launch.title_watch(proc, windows=FakeTitles({0x10: [4242, False, EMU_TITLE]}), sleep=lambda s: gate.wait(5))
+    assert t.daemon and t.is_alive()                            # returned at once, watching in the background
+    gate.set()
+    proc.exit = 0
+    t.join(5)
+    assert not t.is_alive()
+
+
+def test_a_failing_window_api_is_logged_and_the_watch_stops(caplog):
+    class Broken(FakeTitles):
+        def visible_of(self, pids):
+            raise RuntimeError('no user32')
+
+    t = launch.title_watch(FakeProc(), windows=Broken({}), sleep=lambda s: None)
+    t.join(5)
+    assert not t.is_alive()
+    assert 'window title' in caplog.text
+
+
+def test_start_passes_the_window_title_in_the_emulators_environment(world, monkeypatch):   # noqa: F811
+    seen = []
+    monkeypatch.setattr(launch, 'title_watch', lambda proc, **kw: seen.append(proc))
+    calls = []
+    proc = launch.start(str(world['emu']), str(world['game']), running=lambda: False,
+                        popen=lambda cmd, **kw: calls.append(kw) or 'proc')
+    assert calls[0]['env']['OVERTIME_WINDOW_TITLE'] == 'NHL 19'
+    assert 'PYINSTALLER_RESET_ENVIRONMENT' in calls[0]['env']
+    assert seen == []                                           # a fake popen gets no window watch
+    assert proc == 'proc'
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='the window watch is Windows only')
+def test_start_watches_the_window_of_a_real_launch(world, monkeypatch):   # noqa: F811
+    from overtime_roster.app import gameicon
+    seen = []
+
+    class FakePopen:
+        pid = 4242
+
+        def __init__(self, cmd, **kw):
+            self.kw = kw
+
+    monkeypatch.setattr(launch.subprocess, 'Popen', FakePopen)  # the start path checks `popen is subprocess.Popen`
+    monkeypatch.setattr(launch, 'full_speed', lambda pid: True)
+    monkeypatch.setattr(gameicon, 'watch', lambda *a, **kw: None)
+    monkeypatch.setattr(launch, 'title_watch', lambda proc, **kw: seen.append(proc))
+    proc = launch.start(str(world['emu']), str(world['game']), running=lambda: False, popen=FakePopen)
+    assert seen == [proc] and proc.kw['env']['OVERTIME_WINDOW_TITLE'] == 'NHL 19'

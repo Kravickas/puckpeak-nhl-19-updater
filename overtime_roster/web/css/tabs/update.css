@@ -1,112 +1,106 @@
-/* Update tab. The Update builder owns this file. Rules sit under .tab-update (the pane) and use the prefix .up-
-   (docs/ui/CONTRACT.md); tokens from tokens.css, parts from app.css. Legacy's Update layout in one column: the From bar, the
-   switches (two columns of rows), the result when there is one, the Save card with Go. */
+/* The roster update's parts in the Patch tab (0.97.0: Update and Game patch are one tab). Rules sit under .tab-patch (the
+   pane) and use the prefix .up- (docs/ui/CONTRACT.md); tokens from tokens.css, parts from app.css. The Roster update group
+   (patch.css .gp-roster) holds the From line, the switch tiles, the season and data bar and where it saves; the result
+   sits over "What's in your game now"; the steps show under the Patch button while the update runs. */
 
-.tab-update .up { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.tab-update .up > .card { flex: none; }
-.tab-update .up > .card.grow { flex: 1 1 0; min-height: 0; }
+/* --- the From line: the open roster, its date and version ----------------------------------------------------------- */
+.tab-patch .up-from { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 3px 6px 3px 12px;
+  background: rgba(255, 255, 255, .035); box-shadow: inset 3px 0 0 var(--metal-flat); }
+.tab-patch .up-from-label { flex: none; font-size: 12.5px; color: var(--text-3); letter-spacing: .1em; }
+.tab-patch .up-from-name { flex: none; font-size: 15px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.tab-patch .up-from-date { flex: none; font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.tab-patch .up-from-note { min-width: 0; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-patch .up-from .btn { flex: none; }
 
-/* --- the From bar: the open roster, its date and version ------------------------------------------------------------ */
-.tab-update .up-from { flex-direction: row; align-items: center; gap: 10px; min-height: 40px; padding: 5px 8px 5px 14px;
-  box-shadow: inset 3px 0 0 var(--metal-flat), 0 10px 30px rgba(0, 0, 0, .35); }
-.tab-update .up-from-label { flex: none; font-size: 13px; color: var(--text-3); letter-spacing: .1em; }
-.tab-update .up-from-name { flex: none; font-size: 16px; font-weight: 700; color: var(--text); white-space: nowrap; }
-.tab-update .up-from-date { flex: none; font-size: 13px; color: var(--text-2); white-space: nowrap; }
-.tab-update .up-from-note { min-width: 0; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tab-update .up-from .btn { flex: none; }
+/* --- a notice: the game patch is missing, the cap switch changed, the roster is not the active one ------------------ */
+.tab-patch .up-patch { display: flex; align-items: center; gap: 10px; min-height: 30px; padding: 3px 8px 3px 12px;
+  background: rgba(255, 255, 255, .035); box-shadow: inset 3px 0 0 var(--caution); }
+.tab-patch .up-patch.bad { box-shadow: inset 3px 0 0 var(--bad); }
+.tab-patch .up-patch-text { min-width: 0; font-size: 13px; color: var(--text); }
 
-/* --- the patch bar: the game is not patched, the patch has a problem or an older Overtime made it ------------------ */
-.tab-update .up-patch { flex-direction: row; align-items: center; gap: 10px; min-height: 36px; padding: 4px 8px 4px 14px;
-  box-shadow: inset 3px 0 0 var(--caution); }
-.tab-update .up-patch.bad { box-shadow: inset 3px 0 0 var(--bad); }
-.tab-update .up-patch-text { min-width: 0; font-size: 13px; color: var(--text); }
-.tab-update .up-patch .btn { flex: none; }
-
-/* --- 1 What should be updated?: tiles with the red bar on the left when on, the choices in one bar under them ------- */
-.tab-update .up-aside { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tab-update .up-steps-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-/* as many columns as fit (4 on a wide window, 3 on a small one), every tile as tall as two lines of text */
-.tab-update .up-steps { flex: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px; }
-.tab-update .up-step { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 10px 6px 14px; background: var(--tile);
-  box-shadow: inset 3px 0 0 var(--text-off); transition: box-shadow .15s, background-color .15s; }
-.tab-update .up-step.on { box-shadow: inset 3px 0 0 var(--accent); }
-.tab-update .up-step:hover { background: var(--tile-hi); }
-.tab-update .up-step-main { flex: 1; min-width: 0; }
-.tab-update .up-step-title { display: flex; align-items: baseline; font-size: 14.5px; font-weight: 700; line-height: 1.3;
+/* --- the switch tiles: the red bar on the left when on ----------------------------------------------------------------- */
+.tab-patch .up-steps { flex: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 5px; }
+.tab-patch .up-step { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 10px 4px 12px;
+  background: rgba(255, 255, 255, .035); box-shadow: inset 3px 0 0 var(--text-off); transition: box-shadow .15s, background-color .15s; }
+.tab-patch .up-step.on { box-shadow: inset 3px 0 0 var(--accent); }
+.tab-patch .up-step:hover { background: var(--tile-hi); }
+.tab-patch .up-step-main { flex: 1; min-width: 0; }
+.tab-patch .up-step-title { display: flex; align-items: baseline; font-size: 14px; font-weight: 700; line-height: 1.25;
   color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tab-update .up-step:not(.on) .up-step-title { color: var(--text-2); }
-.tab-update .up-step-sub { margin-top: 1px; min-height: 2.7em; font-size: 12.5px; line-height: 1.35; color: var(--text-2);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.tab-update .up-always { margin-left: 8px; font: 700 11.5px/1 var(--font-head); font-stretch: var(--head-stretch);
+.tab-patch .up-step:not(.on) .up-step-title { color: var(--text-2); }
+.tab-patch .up-step-sub { font-size: 12.5px; line-height: 1.3; color: var(--text-2); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tab-patch .up-always { margin-left: 8px; font: 700 11px/1 var(--font-head); font-stretch: var(--head-stretch);
   font-style: var(--head-style); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
-.tab-update .up-step .toggle { margin-left: 2px; }
-.tab-update .up-step.locked:not(.on) .up-step-sub { color: var(--text-3); }
-/* the choices: the calendar's season and length, where the data comes from */
-.tab-update .up-bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; padding: 7px 10px 7px 14px;
-  background: var(--tile); box-shadow: inset 3px 0 0 var(--metal-flat); }
-.tab-update .up-opt { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
-.tab-update .up-opt-label { font-size: 13px; letter-spacing: .1em; color: var(--text-3); margin-right: 2px; }
-.tab-update .up-opt.off .up-opt-label { opacity: .6; }
-.tab-update .up-opts .seg button, .tab-update .up-bar .seg button { padding: 3px 11px; font-size: 14px; }
+.tab-patch .up-step .toggle { margin-left: 2px; }
+.tab-patch .up-step.locked:not(.on) .up-step-sub { color: var(--text-3); }
 
-/* --- the result: what the last Go (or Check first) did; a bar in its tone on the left -------------------------------- */
-.tab-update .up-result { padding: 8px 10px 10px 16px; animation: rise-in .22s var(--ease) both;
-  box-shadow: inset 3px 0 0 var(--blue), 0 10px 30px rgba(0, 0, 0, .35); }
-.tab-update .up-result.good { box-shadow: inset 3px 0 0 var(--good), 0 10px 30px rgba(0, 0, 0, .35); }
-.tab-update .up-result.bad { box-shadow: inset 3px 0 0 var(--bad), 0 10px 30px rgba(0, 0, 0, .35);
-  background: linear-gradient(90deg, rgba(230, 0, 65, .10), transparent 40%), linear-gradient(rgba(34, 41, 50, .96), rgba(24, 29, 35, .96)); }
-.tab-update .up-r-head { display: flex; align-items: center; gap: 10px; min-height: 28px; }
-.tab-update .up-r-title { font-size: 18px; color: var(--text); white-space: nowrap; }
-.tab-update .up-result.good .up-r-title { color: var(--good); }
-.tab-update .up-result.bad .up-r-title { color: #ff4f7b; }
-.tab-update .up-r-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.tab-update .up-close { flex: none; width: 28px; height: 26px; padding: 0; border: 0; background: transparent; color: var(--text-2);
-  font-size: 14px; cursor: pointer; }
-.tab-update .up-close:hover, .tab-update .up-close:focus-visible { background: var(--tile-hi); color: var(--text); outline: none; }
-.tab-update .up-r-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 32%); gap: 4px 28px; margin-top: 6px;
-  max-height: 150px; overflow-y: auto; }
-.tab-update .up-r-lines { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; line-height: 1.4; }
-.tab-update .up-r-lines:only-child { grid-column: 1 / -1; }
-.tab-update .up-r-lines li { display: grid; grid-template-columns: 124px minmax(0, 1fr); gap: 12px; color: var(--text-soft); }
-.tab-update .up-r-lines b { font-weight: 600; color: var(--text-3); }
-.tab-update .up-r-lines li.issue, .tab-update .up-r-lines li.issue b { color: var(--caution); }
-.tab-update .up-r-lines li.bad, .tab-update .up-r-lines li.bad b { color: var(--bad); }
-.tab-update .up-r-items { margin: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; line-height: 1.4; min-width: 0; }
-.tab-update .up-r-items > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; }
-.tab-update .up-r-items dt { color: var(--text-3); }
-.tab-update .up-r-items dd { margin: 0; min-width: 0; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* --- the choices: the calendar's season and length, where the data comes from ----------------------------------------- */
+.tab-patch .up-bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px; padding: 5px 10px 5px 12px;
+  background: rgba(255, 255, 255, .035); box-shadow: inset 3px 0 0 var(--metal-flat); }
+.tab-patch .up-opt { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.tab-patch .up-opt-label { font-size: 12.5px; letter-spacing: .1em; color: var(--text-3); margin-right: 2px; }
+.tab-patch .up-opt.off .up-opt-label { opacity: .6; }
+.tab-patch .up-bar .seg button { padding: 2px 10px; font-size: 13.5px; }
 
-/* --- 2 Save: where it goes, Check first, Go; Go's steps under them --------------------------------------------------- */
-.tab-update .up-save .card-head .aside { font-variant-numeric: tabular-nums; }
-.tab-update .up-save-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; padding-bottom: 12px; }
-.tab-update .up-save-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px 14px; }
-.tab-update .up-mode-field { flex: none; }
+/* --- where it saves, Check first, the note ---------------------------------------------------------------------------- */
+.tab-patch .up-save { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 6px 12px;
+  background: rgba(255, 255, 255, .035); box-shadow: inset 3px 0 0 var(--metal-flat); }
+.tab-patch .up-save-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 14px; }
+.tab-patch .up-mode-field { flex: none; }
 /* a field under its label keeps its own height (.field grows along the column otherwise) */
-.tab-update .up-save .labelled > .field { flex: none; }
-.tab-update .up-name-field, .tab-update .up-slot-field { flex: 1 1 150px; min-width: 140px; max-width: 320px; }
-.tab-update .up-target { display: block; line-height: 34px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tab-update .up-go-wrap { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-.tab-update .up-go { min-width: 190px; }
-.tab-update .up-save-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
-.tab-update .up-note { flex: 1 1 280px; min-width: 0; }
-.tab-update .up-note.caution { color: var(--caution); }
+.tab-patch .up-save .labelled > .field { flex: none; height: 30px; }
+.tab-patch .up-save .seg button { padding: 2px 10px; font-size: 13.5px; }
+.tab-patch .up-name-field, .tab-patch .up-slot-field { flex: 1 1 150px; min-width: 140px; max-width: 300px; }
+.tab-patch .up-target { display: block; line-height: 30px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-patch .up-used { flex: none; align-self: center; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tab-patch .up-check { flex: none; }
+.tab-patch .up-note { min-width: 0; }
+.tab-patch .up-note.caution { color: var(--caution); }
 
-.tab-update .up-run { flex: none; display: flex; gap: 3px; margin: 0; padding: 0; list-style: none; }
-.tab-update .up-run li { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 12px 0 10px; background: var(--tile);
+.tab-patch .up-none { display: flex; align-items: center; gap: 12px; padding: 8px 12px; color: var(--text-2); font-size: 13.5px; }
+
+/* --- the result: what the last run (or Check first) did; over "What's in your game now" ------------------------------ */
+.tab-patch .up-result { flex: none; padding: 8px 10px 10px 16px; animation: rise-in .22s var(--ease) both;
+  box-shadow: inset 3px 0 0 var(--blue), 0 10px 30px rgba(0, 0, 0, .35); }
+.tab-patch .up-result.good { box-shadow: inset 3px 0 0 var(--good), 0 10px 30px rgba(0, 0, 0, .35); }
+.tab-patch .up-result.bad { box-shadow: inset 3px 0 0 var(--bad), 0 10px 30px rgba(0, 0, 0, .35);
+  background: linear-gradient(90deg, rgba(230, 0, 65, .10), transparent 40%), linear-gradient(rgba(34, 41, 50, .96), rgba(24, 29, 35, .96)); }
+.tab-patch .up-r-head { display: flex; align-items: center; gap: 10px; min-height: 26px; }
+.tab-patch .up-r-title { min-width: 0; font-size: 17px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-patch .up-result.good .up-r-title { color: var(--good); }
+.tab-patch .up-result.bad .up-r-title { color: #ff4f7b; }
+.tab-patch .up-r-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.tab-patch .up-r-buttons:empty { display: none; }
+.tab-patch .up-close { flex: none; width: 28px; height: 26px; padding: 0; border: 0; background: transparent; color: var(--text-2);
+  font-size: 14px; cursor: pointer; }
+.tab-patch .up-close:hover, .tab-patch .up-close:focus-visible { background: var(--tile-hi); color: var(--text); outline: none; }
+.tab-patch .up-r-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-height: 200px; overflow-y: auto; }
+.tab-patch .up-r-lines { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.4; }
+.tab-patch .up-r-lines li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; color: var(--text-soft); }
+.tab-patch .up-r-lines b { font-weight: 600; color: var(--text-3); }
+.tab-patch .up-r-lines li.issue, .tab-patch .up-r-lines li.issue b { color: var(--caution); }
+.tab-patch .up-r-lines li.bad, .tab-patch .up-r-lines li.bad b { color: var(--bad); }
+.tab-patch .up-r-items { margin: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.4; min-width: 0; }
+.tab-patch .up-r-items > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; }
+.tab-patch .up-r-items dt { color: var(--text-3); }
+.tab-patch .up-r-items dd { margin: 0; min-width: 0; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- the update's steps (under the Patch button while it runs) --------------------------------------------------------- */
+.tab-patch .up-run { flex: none; display: flex; flex-wrap: wrap; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.tab-patch .up-run li { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 11px 0 9px; background: var(--tile);
   color: var(--text-2); font: 600 12.5px/1 var(--font); white-space: nowrap;
   clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%); transition: background-color .2s, color .2s; }
-.tab-update .up-run-n { font: 700 13px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); color: var(--text-3); }
-.tab-update .up-run.idle li { background: rgba(38, 42, 49, .55); color: var(--text-3); }
-.tab-update .up-run li.done { background: rgba(49, 199, 120, .16); color: var(--good); }
-.tab-update .up-run li.done .up-run-n { color: var(--good); }
-.tab-update .up-run li.now { background: var(--accent); color: #fff; animation: glow-pulse 1.2s ease-in-out infinite; }
-.tab-update .up-run li.now .up-run-n { color: #fff; }
-.tab-update .up-run li.fail { background: var(--bad); color: #fff; }
-.tab-update .up-run li.fail .up-run-n { color: #fff; }
+.tab-patch .up-run-n { font: 700 13px/1 var(--font-head); font-stretch: var(--head-stretch); font-style: var(--head-style); color: var(--text-3); }
+.tab-patch .up-run.idle li { background: rgba(38, 42, 49, .55); color: var(--text-3); }
+.tab-patch .up-run li.done { background: rgba(49, 199, 120, .16); color: var(--good); }
+.tab-patch .up-run li.done .up-run-n { color: var(--good); }
+.tab-patch .up-run li.now { background: var(--accent); color: #fff; animation: glow-pulse 1.2s ease-in-out infinite; }
+.tab-patch .up-run li.now .up-run-n { color: #fff; }
+.tab-patch .up-run li.fail { background: var(--bad); color: #fff; }
+.tab-patch .up-run li.fail .up-run-n { color: #fff; }
 
-/* --- nothing to update yet ----------------------------------------------------------------------------------------- */
-
-/* --- the list of changes (a dialog at window level, so not under .tab-update) ------------------------------------------ */
+/* --- the list of changes (a dialog at window level, so not under .tab-patch) ------------------------------------------- */
 .modal.up-changes .up-l-sum { margin: 0 0 10px; color: var(--text-2); }
 .modal.up-changes .up-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .modal.up-changes .up-l-head { display: flex; align-items: center; gap: 8px; padding-bottom: 5px; margin-bottom: 4px;
@@ -120,48 +114,29 @@
 .modal.up-changes .up-l-way { color: var(--text-2); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
 .modal.up-changes .up-l-way b { color: var(--text); }
 
-/* --- with a result: the switches shrink to their lines; under 900 lines the result takes their place until its ✕ ---- */
-.tab-update .up.has-result .up-step-sub { -webkit-line-clamp: 1; min-height: 0; }
-.tab-update .up.has-result .up-step { padding-top: 6px; padding-bottom: 6px; }
-@media (max-height: 900px) {
-  .tab-update .up.has-result .up-steps-card { display: none; }
-  .tab-update .up > .up-result { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-  .tab-update .up-r-body { flex: 1; min-height: 0; max-height: none; align-content: start; }
-}
-
-/* --- narrow windows (940 wide): the From bar drops its note, the result one column --------------------------------- */
+/* --- narrow windows (940 wide) ---------------------------------------------------------------------------------------- */
 @media (max-width: 1100px) {
-  .tab-update .up-from-note { display: none; }
-  .tab-update .up-r-body { grid-template-columns: minmax(0, 1fr) minmax(200px, 38%); gap: 4px 18px; }
-  .tab-update .up-r-lines li { grid-template-columns: 104px minmax(0, 1fr); }
-  .tab-update .up-run li { padding: 0 9px 0 8px; }
-  .tab-update .up-go { min-width: 140px; }
-  .tab-update .up-aside { display: none; }
+  .tab-patch .up-from-note, .tab-patch .up-used { display: none; }
+  .tab-patch .up-run li { padding: 0 8px 0 7px; }
 }
 @media (max-width: 760px) {
-  .tab-update .up-steps { grid-template-columns: minmax(0, 1fr); }
+  .tab-patch .up-steps { grid-template-columns: minmax(0, 1fr); }
   .modal.up-changes .up-list { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* --- small screens (768-line laptops, 940x640) ---------------------------------------------------------------------- */
+/* --- small screens (768-line laptops, 940x640): each tile's line moves into its "?" ---------------------------------- */
 @media (max-height: 720px) {
-  .tab-update .up { gap: 8px; }
-  .tab-update .up-from { min-height: 34px; padding-top: 3px; padding-bottom: 3px; }
-  .tab-update .up-from-name { font-size: 15px; }
-  .tab-update .up-steps { gap: 5px; }
-  .tab-update .up-step-sub { -webkit-line-clamp: 1; min-height: 0; white-space: nowrap; text-overflow: ellipsis; display: block; }
-  .tab-update .up-bar { padding-top: 4px; padding-bottom: 4px; }
-  .tab-update .up-bar .seg button { padding: 2px 10px; font-size: 13.5px; }
-  .tab-update .up-step { padding: 6px 10px 6px 12px; }
-  .tab-update .up-step-title { font-size: 14px; }
-  .tab-update .up-step-sub { font-size: 12px; line-height: 1.3; }
-  .tab-update .up-opts { margin-top: 5px; }
-  .tab-update .up-opts .seg button { padding: 2px 10px; font-size: 13.5px; }
-  .tab-update .up > .up-result { padding: 6px 8px 8px 14px; }
-  .tab-update .up-r-title { font-size: 16px; }
-  .tab-update .up-r-lines, .tab-update .up-r-items { font-size: 13px; gap: 1px; }
-  .tab-update .up-save-body { gap: 7px; padding-top: 7px; padding-bottom: 8px; }
-  .tab-update .up-target { line-height: 30px; }
-  .tab-update .up-save .field { height: 30px; }
-  .tab-update .up-run li { height: 22px; }
+  .tab-patch .up-from { min-height: 30px; padding-top: 2px; padding-bottom: 2px; }
+  .tab-patch .up-from-name { font-size: 14px; }
+  .tab-patch .up-steps { gap: 4px; }
+  .tab-patch .up-step { padding: 3px 10px 3px 12px; }
+  .tab-patch .up-step-title { font-size: 13.5px; }
+  .tab-patch .up-step-sub { display: none; }
+  .tab-patch .up-bar, .tab-patch .up-save { padding-top: 3px; padding-bottom: 3px; }
+  .tab-patch .up-save { gap: 3px; }
+  .tab-patch .up-result { padding: 6px 8px 8px 14px; }
+  .tab-patch .up-r-title { font-size: 15px; }
+  .tab-patch .up-r-body { max-height: 140px; }
+  .tab-patch .up-r-lines, .tab-patch .up-r-items { font-size: 12.5px; gap: 1px; }
+  .tab-patch .up-run li { height: 22px; }
 }

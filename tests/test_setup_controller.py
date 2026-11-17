@@ -157,7 +157,7 @@ def test_patch_refused_for_wrong_game_and_running(sc, monkeypatch):
     sc.setup_refresh()
     monkeypatch.setattr(overlay, 'emulator_running', lambda: True)
     sc.setup_patch()
-    assert sc.ctl.said[-1] == ('shadPS4 is running. Close NHL 19, then press Patch again.', 'caution')
+    assert sc.ctl.said[-1] == ('NHL 19 is running. Close it, then press Patch again.', 'caution')
     assert not gamesetup.load_manifest()
     assert sc.ctl.busy is None
 
@@ -220,10 +220,10 @@ def test_no_shadps4_gets_the_apps_own(sc, monkeypatch):
     got = _no_shadps4(sc, monkeypatch)
     assert not sc.known_emulator() and 'Find game' in sc._state(True, [], False)['text']
     assert sc.setup_set_emulator(str(sc.world['game'] / 'eboot.bin')) == {'ok': True}
-    assert got == ['nightly'] and sc.known_emulator() == boost.exe_path('nightly') and sc.standalone()
-    assert sc.ctl.game_dir == str(sc.world['game']) and sc.ctl.prefs['setup']['build'] == 'nightly'
+    assert got == ['native2'] and sc.known_emulator() == boost.exe_path('native2') and sc.standalone()
+    assert sc.ctl.game_dir == str(sc.world['game']) and sc.ctl.prefs['setup']['build'] == 'native2'
     card = sc._boost_card(sc.known_emulator())
-    assert card['build'] == 'nightly' and card['playing'] == 'nightly' and card['text'] == 'Overtime Native: ready. Play NHL 19 starts it.'
+    assert card['build'] == 'native2' and card['playing'] == 'native2' and card['text'] == 'Overtime Native v2: ready. Play NHL 19 starts it.'
     # the player picks their own shadPS4 later: it is kept, and Play still starts the chosen build
     sc.setup_set_emulator(str(sc.world['emu']))
     assert not sc.standalone()
@@ -243,10 +243,10 @@ def test_find_game_installs_a_pkg_and_sets_up_shadps4(sc, monkeypatch, tmp_path)
     monkeypatch.setattr(pkginstall, 'install', install)
     assert sc.setup_set_emulator(str(pkg)) == {'ok': True}
     assert calls == [(str(pkg), sc.ctl.game_dir and calls[0][1])]
-    assert sc.ctl.game_dir == str(sc.world['game']) and got and sc.known_emulator() == boost.exe_path('nightly')
+    assert sc.ctl.game_dir == str(sc.world['game']) and got and sc.known_emulator() == boost.exe_path('native2')
     said = [t for t, _ in sc.ctl.said]
     assert any('Extracting the PKG... 50 %' in t for t in said)
-    assert any('Now press Find game again and pick the update 1.60 PKG' in t and 'Overtime Native build) is set up too' in t
+    assert any('Now press Find game again and pick the update 1.60 PKG' in t and 'Overtime Native v2 build) is set up too' in t
                for t in said)
 
 
@@ -276,9 +276,9 @@ def test_play_refusal_is_reported(sc, monkeypatch):
     monkeypatch.setattr(launch, 'start', refuse)
     sc.setup_refresh()
     assert sc.setup_play() == {'ok': True}                  # the default build downloads first (a job), then starts
-    assert sc.calls['installed'] == ['nightly'] and sc.ctl.said[-1] == ('shadPS4 is already running.', 'bad')
+    assert sc.calls['installed'] == ['native2'] and sc.ctl.said[-1] == ('shadPS4 is already running.', 'bad')
     assert sc.setup_play() == {'error': 'shadPS4 is already running.'}     # here now: no download
-    assert sc.calls['installed'] == ['nightly']
+    assert sc.calls['installed'] == ['native2']
 
 
 def test_one_click_switch_off_takes_its_layer_away(sc, monkeypatch):
