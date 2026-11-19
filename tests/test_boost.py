@@ -13,6 +13,7 @@ import pytest
 from overtime_core import art, overlay
 from overtime_roster.app import boost, emufile, gamesetup, packdownload, setup_controller as SC
 
+from test_gamesetup import EMU_BYTES
 from test_setup_controller import sc, world  # noqa: F401  (fixtures)
 
 PROGRAM = emufile.name()                        # shadPS4.exe, shadps4.AppImage or shadps4 (emufile.NAMES)
@@ -178,7 +179,7 @@ def test_play_gets_overtime_native_v2_by_default_and_keeps_the_players_own(sc, s
     exe = boost.exe_path('native2')
     assert pathlib.Path(exe).read_bytes() == NATIVE2 and started == [exe]
     assert sc.emulator == exe and sc.boost['emulator'] == own and card_of(sc)['playing'] == 'native2'
-    assert pathlib.Path(own).read_bytes() == b'MZ'                  # a player's exe is never touched
+    assert pathlib.Path(own).read_bytes() == EMU_BYTES              # a player's exe is never touched
     sc.setup_play()                                                 # here and current: no download, starts again
     assert started == [exe, exe]
 

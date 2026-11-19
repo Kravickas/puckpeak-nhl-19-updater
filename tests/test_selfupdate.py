@@ -21,6 +21,10 @@ WIN = sys.platform == 'win32'
 APP = 'OvertimeNHL19.exe' if WIN else selfupdate.LINUX_ASSET    # this system's release file
 
 
+# the swap of the running program: Windows' exe and Linux's AppImage; a Mac is told of a newer app and gets it itself
+installs = pytest.mark.skipif(sys.platform == 'darwin', reason='macOS does not install an update itself')
+
+
 def feed(version, **kw):
     """latest.json as the release host writes it: the Windows fields, and the same under "linux" off Windows."""
     body = {'version': version, 'exe': APP, **kw}
@@ -148,6 +152,7 @@ def test_release_url_override(monkeypatch):
     assert selfupdate.release_url() == 'http://127.0.0.1:1/app/latest.json'
 
 
+@installs
 def test_latest_only_when_newer(release_site):
     url, _site = release_site
     r = selfupdate.latest('0.1.0', url)
@@ -175,6 +180,7 @@ def test_every_start_looks(home):
 
 
 # --- replacing the exe ------------------------------------------------------------------------------
+@installs
 def test_install_swaps_the_exe(release_site, exe):
     url, _site = release_site
     release = selfupdate.latest('0.1.0', url)
@@ -187,6 +193,7 @@ def test_install_swaps_the_exe(release_site, exe):
     assert not os.path.exists(exe + '.old') and open(exe, 'rb').read() == NEW
 
 
+@installs
 def test_install_refuses_a_bad_sha256(release_site, exe):
     url, site = release_site
     (site / APP).write_bytes(NEW + b'tampered')
@@ -253,6 +260,7 @@ class Host:
         self.lines.extend(lines)
 
 
+@installs
 def test_window_update_check_asks_then_swaps_and_quits(release_site, exe, monkeypatch):
     url, _site = release_site
     monkeypatch.setenv('OVERTIME_RELEASE_URL', url)
@@ -310,6 +318,7 @@ def test_window_server_queue_is_roomy():
     assert server.AppServer.request_queue_size == 64
 
 
+@installs
 def test_window_update_check_refused_while_the_emulator_runs(release_site, exe, monkeypatch):
     url, _site = release_site
     monkeypatch.setenv('OVERTIME_RELEASE_URL', url)
@@ -321,6 +330,7 @@ def test_window_update_check_refused_while_the_emulator_runs(release_site, exe, 
     assert open(exe, 'rb').read() == OLD and not quits
 
 
+@installs
 def test_window_update_check_from_source_only_tells(release_site, monkeypatch):
     url, _site = release_site
     monkeypatch.setenv('OVERTIME_RELEASE_URL', url)
@@ -329,6 +339,7 @@ def test_window_update_check_from_source_only_tells(release_site, monkeypatch):
     assert '9.1.0' in host.lines[0]
 
 
+@installs
 def test_update_now_cli(release_site, exe, monkeypatch, home):
     url, site = release_site
     monkeypatch.setenv('OVERTIME_RELEASE_URL', url)
@@ -430,6 +441,7 @@ def test_cli_exe_without_its_file_cannot_install(release_site):
     assert release is not None and not release.can_install()
 
 
+@installs
 def test_emulator_started_during_the_download(release_site, exe):
     url, _site = release_site
     release = selfupdate.latest('0.1.0', url)
@@ -440,6 +452,7 @@ def test_emulator_started_during_the_download(release_site, exe):
     assert not os.path.exists(exe + '.new') and not os.path.exists(exe + '.old')
 
 
+@installs
 def test_download_size_must_match_latest_json(release_site, exe):
     url, site = release_site
     (site / 'latest.json').write_text(json.dumps(feed('9.1.0', size=len(NEW) - 1)))
@@ -449,6 +462,7 @@ def test_download_size_must_match_latest_json(release_site, exe):
     assert open(exe, 'rb').read() == OLD and not os.path.exists(exe + '.new')
 
 
+@installs
 def test_download_stops_at_the_limit(release_site, exe, monkeypatch):
     url, _site = release_site
     release = selfupdate.latest('0.1.0', url)
@@ -485,6 +499,7 @@ def test_update_waits_for_a_running_job(release_site, exe, monkeypatch):
     assert selfupdate.due() and open(exe, 'rb').read() == OLD      # not marked: asked again at the next tick
 
 
+@installs
 def test_job_started_while_the_box_was_open(release_site, exe, monkeypatch):
     url, _site = release_site
     _frozen(monkeypatch, url, exe)
@@ -497,6 +512,7 @@ def test_job_started_while_the_box_was_open(release_site, exe, monkeypatch):
     assert ctl.busy == 'Patching...' and open(exe, 'rb').read() == OLD and selfupdate.due()
 
 
+@installs
 def test_update_holds_the_busy_flag_until_quit(release_site, exe, monkeypatch):
     url, _site = release_site
     _frozen(monkeypatch, url, exe)
@@ -506,6 +522,7 @@ def test_update_holds_the_busy_flag_until_quit(release_site, exe, monkeypatch):
     assert flags and flags[0].startswith('Updating') and open(exe, 'rb').read() == NEW
 
 
+@installs
 def test_failed_update_gives_the_busy_flag_back(release_site, exe, monkeypatch):
     url, site = release_site
     _frozen(monkeypatch, url, exe)
@@ -557,6 +574,7 @@ class Unsaved(Ctl):
         self.n, self.parts, self.shell = n, {'save': Save()}, Shell()
 
 
+@installs
 def test_update_waits_for_unsaved_edits(release_site, exe, monkeypatch):
     url, _site = release_site
     _frozen(monkeypatch, url, exe)
@@ -697,6 +715,7 @@ def test_default_db_switch_needs_its_files(home):
     assert 'needs --rosters' in (home / 'logs' / 'default-db.txt').read_text()
 
 
+@installs
 def test_start_offer_is_the_apps_own_question_with_progress(release_site, exe, monkeypatch):
     url, _site = release_site
     _frozen(monkeypatch, url, exe)
@@ -715,6 +734,7 @@ def test_start_offer_is_the_apps_own_question_with_progress(release_site, exe, m
     assert len(offered) == 1                                            # a skipped version is not offered again
 
 
+@installs
 def test_signed_exe_only_takes_an_update_of_the_same_publisher(release_site, exe, monkeypatch):
     url, _site = release_site
     _frozen(monkeypatch, url, exe)

@@ -621,8 +621,14 @@ def selftest_window(timeout=120.0):
                          + (' (it asked for its data)' if startlog.ready_called.is_set() else ' (it never asked)'))
         except Exception as err:  # noqa: BLE001
             lines.append(f'FAIL  the window did not start: {err!r}')
+    left = sorted(t.name for t in threading.enumerate() if t is not threading.current_thread() and not t.daemon)
+    if left:        # Python waits for these before the process ends
+        lines.append('info  threads still running: ' + ', '.join(left))
     lines.append('PASS' if ok else 'FAIL')
     _report(lines, 'selftest-window.txt')
+    if getattr(sys, 'frozen', False) and not HEADLESS:
+        import faulthandler     # a process that does not end after its report says where each thread stands, then ends
+        faulthandler.dump_traceback_later(30, exit=True)
     return 0 if ok else 1
 
 
