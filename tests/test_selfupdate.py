@@ -4,6 +4,7 @@ import functools
 import hashlib
 import json
 import os
+import sys
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +17,14 @@ from overtime_roster.window import webview2
 
 NEW = b'MZ new exe ' * 1000
 OLD = b'MZ old exe ' * 900
+WIN = sys.platform == 'win32'
+APP = 'OvertimeNHL19.exe' if WIN else selfupdate.LINUX_ASSET    # this system's release file
+
+
+def feed(version, **kw):
+    """latest.json as the release host writes it: the Windows fields, and the same under "linux" off Windows."""
+    body = {'version': version, 'exe': APP, **kw}
+    return body if WIN else {**body, 'linux': body}
 
 
 @pytest.fixture(autouse=True)
@@ -36,9 +45,9 @@ def release_site(tmp_path):
     (latest.json URL, folder) so a test can spoil a file."""
     site = tmp_path / 'site' / 'app'
     site.mkdir(parents=True)
-    (site / 'OvertimeNHL19.exe').write_bytes(NEW)
-    (site / 'SHA256SUMS.txt').write_text(f'{hashlib.sha256(NEW).hexdigest()}  OvertimeNHL19.exe\n')
-    (site / 'latest.json').write_text(json.dumps({'version': '9.1.0', 'exe': 'OvertimeNHL19.exe', 'notes': 'Seattle'}))
+    (site / APP).write_bytes(NEW)
+    (site / 'SHA256SUMS.txt').write_text(f'{hashlib.sha256(NEW).hexdigest()}  {APP}\n')
+    (site / 'latest.json').write_text(json.dumps(feed('9.1.0', notes='Seattle')))
     server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=str(site.parent)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f'http://127.0.0.1:{server.server_address[1]}/app/latest.json', site
@@ -50,7 +59,7 @@ def release_site(tmp_path):
 def exe(tmp_path):
     folder = tmp_path / 'install'
     folder.mkdir()
-    path = folder / 'OvertimeNHL19.exe'
+    path = folder / APP
     path.write_bytes(OLD)
     return str(path)
 
@@ -180,7 +189,7 @@ def test_install_swaps_the_exe(release_site, exe):
 
 def test_install_refuses_a_bad_sha256(release_site, exe):
     url, site = release_site
-    (site / 'OvertimeNHL19.exe').write_bytes(NEW + b'tampered')
+    (site / APP).write_bytes(NEW + b'tampered')
     release = selfupdate.latest('0.1.0', url)
     with pytest.raises(ValueError):
         selfupdate.install(release, exe=exe, start=False, emulator=lambda: False)
@@ -210,10 +219,11 @@ def test_swap_puts_the_old_exe_back_when_the_new_one_cannot_move(tmp_path, exe):
 
 
 def test_restart_environment_is_fresh(monkeypatch):
-    monkeypatch.setattr(selfupdate.sys, '_MEIPASS', r'C:\Temp\_MEI123', raising=False)
-    monkeypatch.setenv('PATH', os.pathsep.join([r'C:\Temp\_MEI123', r'C:\Windows']))
+    base, system_dir = (r'C:\Temp\_MEI123', r'C:\Windows') if WIN else ('/tmp/_MEI123', '/usr/bin')
+    monkeypatch.setattr(selfupdate.sys, '_MEIPASS', base, raising=False)
+    monkeypatch.setenv('PATH', os.pathsep.join([base, system_dir]))
     env = selfupdate.clean_environment()
-    assert env['PYINSTALLER_RESET_ENVIRONMENT'] == '1' and env['PATH'] == r'C:\Windows'
+    assert env['PYINSTALLER_RESET_ENVIRONMENT'] == '1' and env['PATH'] == system_dir
 
 
 def test_a_child_on_linux_gets_the_library_path_from_before_the_start(monkeypatch):
@@ -324,9 +334,9 @@ def test_update_now_cli(release_site, exe, monkeypatch, home):
     monkeypatch.setenv('OVERTIME_RELEASE_URL', url)
     monkeypatch.setattr(selfupdate, 'running_exe', lambda: exe)
     monkeypatch.setattr(selfupdate, 'emulator_running', lambda: False)
-    (site / 'latest.json').write_text(json.dumps({'version': '0.0.9'}))
+    (site / 'latest.json').write_text(json.dumps(feed('0.0.9')))
     assert app_main.entry(['--update']) == 3
-    (site / 'latest.json').write_text(json.dumps({'version': '9.1.0'}))
+    (site / 'latest.json').write_text(json.dumps(feed('9.1.0')))
     assert app_main.entry(['--update']) == 0 and open(exe, 'rb').read() == NEW
     assert 'installed' in (home / 'logs' / 'update.txt').read_text()
 
@@ -383,6 +393,7 @@ def test_headless_browser_mode_stops_on_ok(monkeypatch, tmp_path):
 
 
 # --- review fixes: the console exe's own file, busy jobs, shadPS4 during the download, sizes, the fallback's quit ---
+@pytest.mark.windows_only
 def test_cli_exe_takes_its_own_file(release_site, tmp_path, monkeypatch):
     url, site = release_site
     assert selfupdate.asset_for(r'C:\x\OvertimeNHL19-cli.exe', 'win32') == 'OvertimeNHL19-cli.exe'
@@ -431,7 +442,7 @@ def test_emulator_started_during_the_download(release_site, exe):
 
 def test_download_size_must_match_latest_json(release_site, exe):
     url, site = release_site
-    (site / 'latest.json').write_text(json.dumps({'version': '9.1.0', 'size': len(NEW) - 1}))
+    (site / 'latest.json').write_text(json.dumps(feed('9.1.0', size=len(NEW) - 1)))
     release = selfupdate.latest('0.1.0', url)
     with pytest.raises(ValueError):
         selfupdate.install(release, exe=exe, start=False, emulator=lambda: False)
@@ -498,7 +509,7 @@ def test_update_holds_the_busy_flag_until_quit(release_site, exe, monkeypatch):
 def test_failed_update_gives_the_busy_flag_back(release_site, exe, monkeypatch):
     url, site = release_site
     _frozen(monkeypatch, url, exe)
-    (site / 'OvertimeNHL19.exe').write_bytes(NEW + b'tampered')
+    (site / APP).write_bytes(NEW + b'tampered')
     ctl = Ctl()
     assert app_main.update_check(Host(), lambda: pytest.fail('quit'), ask=lambda *a, **k: True, ctl=ctl) == 'failed'
     assert ctl.busy is None and open(exe, 'rb').read() == OLD
@@ -728,7 +739,7 @@ def test_unsigned_exe_has_nothing_to_compare(tmp_path):
         selfupdate.check_signature('new', 'old', who=lambda path: 'CN=A' if path == 'old' else None)
 
 
-@pytest.mark.skipif(os.name != 'nt', reason='Authenticode is Windows')
+@pytest.mark.windows_only
 def test_signer_reads_windows_signatures(tmp_path):
     system = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'WindowsPowerShell', 'v1.0',
                           'powershell.exe')

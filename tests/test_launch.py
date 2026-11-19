@@ -28,13 +28,15 @@ def test_parse_tasklist_keeps_game_processes_only():
 
 def test_game_processes_reads_tasklist_or_says_unknown():
     seen = []
+    win = sys.platform == 'win32'
 
     def run(cmd, **kw):
         seen.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout=TASKLIST)
+        return subprocess.CompletedProcess(cmd, 0, stdout=TASKLIST if win else PS)
 
-    assert launch.game_processes(run) == [(4242, 'shadps419.exe'), (4343, 'shadps4.exe')]
-    assert seen == [['tasklist', '/FO', 'CSV', '/NH']]
+    want = [(4242, 'shadps419.exe'), (4343, 'shadps4.exe')] if win else [(4242, 'shadps4'), (4343, 'shadps4'), (4444, 'shadps4-sdl.app')]
+    assert launch.game_processes(run) == want
+    assert seen == [['tasklist', '/FO', 'CSV', '/NH'] if win else ['ps', '-A', '-o', 'pid=,comm=']]
 
     def broken(cmd, **kw):
         raise OSError('no tasklist')
@@ -367,6 +369,7 @@ class FakeKernel32:
         self.calls.append(('close', handle))
 
 
+@pytest.mark.windows_only
 def test_full_speed_turns_power_throttling_off_and_never_raises():
     k = FakeKernel32()
     assert launch.full_speed(1234, k) is True

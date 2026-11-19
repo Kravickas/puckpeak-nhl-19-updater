@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 
 import pytest
@@ -15,6 +16,7 @@ def pytest_configure(config):
     ends after its test cannot write the owner's settings, backups or saves (Legacy round 46). Tests that read the
     real saves use SAVE_DIR above, taken before this ran."""
     global RUN_DIR
+    config.addinivalue_line('markers', 'windows_only: tests the Windows-only code (skipped elsewhere)')
     RUN_DIR = tempfile.mkdtemp(prefix='overtime-tests-')
     os.environ['OVERTIME_ROSTER_HOME'] = os.path.join(RUN_DIR, 'home')
     os.environ['OVERTIME_SAVE_DIR'] = os.path.join(RUN_DIR, 'savedata')
@@ -35,6 +37,14 @@ def _skip_without_nhl_data():
         if os.path.dirname(os.path.abspath(str(err.filename or ''))) == NHL_DATA:
             pytest.skip(f'no NHL.com sample {os.path.basename(err.filename)} in tests/data')
         raise
+
+
+def pytest_collection_modifyitems(config, items):
+    if sys.platform == 'win32':
+        return
+    for item in items:
+        if item.get_closest_marker('windows_only'):
+            item.add_marker(pytest.mark.skip(reason='Windows only'))
 
 
 @pytest.hookimpl(wrapper=True)
@@ -86,6 +96,16 @@ def no_running_emulator(monkeypatch):
 def no_real_art_packs(monkeypatch):
     """The art switch is on by default: no test may pick up the owner's real packs/ (a test sets its own folder)."""
     monkeypatch.setenv('OVERTIME_ART_PACKS', 'off')
+
+
+@pytest.fixture(autouse=True)
+def no_machine_preflight(request, monkeypatch):
+    """The Linux and macOS first-run report reads this machine (Vulkan, glibc, disk): empty for every test except
+    test_preflight, which calls the probes itself."""
+    if os.path.basename(str(request.node.fspath)) == 'test_preflight.py':
+        return
+    from overtime_roster.app import preflight
+    monkeypatch.setattr(preflight, 'cached', lambda system=None: [])
 
 
 @pytest.fixture(autouse=True)

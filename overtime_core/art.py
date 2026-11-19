@@ -647,7 +647,7 @@ def cached_alternates(cache_dir, families=None):
     try:
         names = sorted((n for n in os.listdir(cache_dir) if n.startswith('kitlayers_') and n.endswith('.zip')
                         and (families is None or n[len('kitlayers_'):-4] in families)),
-                       key=lambda n: families.index(n[len('kitlayers_'):-4]) if families else 0)
+                       key=lambda n: (families.index(n[len('kitlayers_'):-4]) if families else 0, n))   # not dir order
     except OSError:
         return out
     for name in names:

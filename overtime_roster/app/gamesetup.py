@@ -32,6 +32,7 @@ TITLE_ID, APP_VER = TITLE_IDS[0], '01.60'
 _active = [TITLE_ID]    # the title id of the game folder in use: it names the save folder, the custom config, files.json
 EMULATOR_URL = 'https://github.com/shadps4-emu/shadps4-qtlauncher/releases'   # for a player with no shadPS4 yet
 LAUNCHER_DATA = 'shadPS4QtLauncher'     # QtLauncher's folder in %APPDATA%: qt_ui.ini, versions.json, versions\
+LAUNCHER_FILE = 'shadPS4QtLauncher.exe' if sys.platform == 'win32' else 'shadPS4QtLauncher'   # the program file here
 LOCAL_VERSION = 2                       # versions.json: a version added by hand (0 stable, 1 Pre-release)
 PATCH_FOLDER, PATCH_FILE = 'Overtime', 'overtime.xml'
 NETWORK = {'connected_to_network': True, 'shad_net_enabled': True}  # custom_configs\CUSA11126.json, "General"

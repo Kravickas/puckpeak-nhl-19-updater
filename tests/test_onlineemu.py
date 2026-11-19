@@ -5,21 +5,24 @@ import zipfile
 
 import pytest
 
-from overtime_roster.app import gamesetup, onlineemu, packdownload
+from overtime_roster.app import emufile, gamesetup, onlineemu, packdownload
+
+HEAD = emufile.MAGIC[emufile.system_of()][0]    # the first bytes of a program on this system
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv('OVERTIME_ROSTER_HOME', str(tmp_path / 'apphome'))
     monkeypatch.setenv('APPDATA', str(tmp_path / 'appdata'))
+    monkeypatch.setattr(emufile, 'extract', lambda appimage, run=None: None)   # Linux: no AppImage is run here
     return tmp_path
 
 
-def _pack(folder, body=b'MZ online'):
+def _pack(folder, body=HEAD + b' online'):
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, packdownload.EMULATOR_PACK)
     with zipfile.ZipFile(path, 'w') as z:
-        z.writestr('shadps4/shadPS4.exe', body)
+        z.writestr('shadps4/' + emufile.name(), body)
     with open(path, 'rb') as f:
         return path, hashlib.sha256(f.read()).hexdigest()
 
@@ -37,7 +40,7 @@ def test_ensure_unpacks_once_and_reuses(home, monkeypatch):
     calls = []
     _serve(monkeypatch, pack, sha, calls)
     exe, got = onlineemu.ensure(str(home / 'cache'))
-    assert got == sha and open(exe, 'rb').read() == b'MZ online'
+    assert got == sha and open(exe, 'rb').read() == HEAD + b' online'
     assert onlineemu.ready(sha) == exe
     exe2, _ = onlineemu.ensure(str(home / 'cache'), want=sha)
     assert exe2 == exe and len(calls) == 1          # here already: no download
@@ -66,8 +69,8 @@ def test_exe_path_refuses_a_name_that_is_not_a_sha(home):
 def test_old_builds_are_pruned_to_two(home, monkeypatch):
     cache = str(home / 'cache')
     shas = []
-    for i, body in enumerate((b'MZ 1', b'MZ 2', b'MZ 3')):
-        pack, sha = _pack(os.path.join(cache, str(i)), body)
+    for i, body in enumerate((b' 1', b' 2', b' 3')):
+        pack, sha = _pack(os.path.join(cache, str(i)), HEAD + body)
         _serve(monkeypatch, pack, sha, [])
         onlineemu.ensure(cache)
         old = os.path.dirname(onlineemu.exe_path(sha))
@@ -92,18 +95,30 @@ def test_start_dir_follows_the_players_own_data(home, monkeypatch):
 
 def test_the_pack_follows_the_servers_pin(monkeypatch):
     """0.90.2: lobbies play whichever pack the server pins. 0.92.0 (owner 2026-11-13): with no pin or an unknown
-    digest it is the Overtime Native pack (Kravickas before)."""
+    digest it is the Overtime Native pack (Kravickas before). Every pack this system serves is pinnable."""
+    class Rel:
+        def __init__(self, digest):
+            self.digest = digest
+    digests = {name: hashlib.sha256(name.encode()).hexdigest() for name in onlineemu.PACKS}
+    table = {name: Rel(digest.upper()) for name, digest in digests.items()}
+    for name, digest in digests.items():
+        assert onlineemu.pack_for(digest, table) == name
+    assert onlineemu.pack_for('c' * 64, table) == onlineemu.PACK == packdownload.NATIVE2_PACK   # v2: the default
+    assert onlineemu.pack_for(None, table) == onlineemu.PACK
+    assert onlineemu.pack_for('b' * 64, {}) == onlineemu.PACK
+
+
+@pytest.mark.windows_only
+def test_the_pack_pins_of_the_windows_builds(monkeypatch):
     class Rel:
         def __init__(self, digest):
             self.digest = digest
     table = {packdownload.EMULATOR_PACK: Rel('a' * 64), packdownload.NIGHTLY_PACK: Rel('B' * 64)}
     assert onlineemu.pack_for('b' * 64, table) == packdownload.NIGHTLY_PACK
     assert onlineemu.pack_for('a' * 64, table) == packdownload.EMULATOR_PACK
-    assert onlineemu.pack_for('c' * 64, table) == onlineemu.PACK == packdownload.NATIVE2_PACK   # v2: the default
-    assert onlineemu.pack_for(None, table) == onlineemu.PACK
-    assert onlineemu.pack_for('b' * 64, {}) == onlineemu.PACK
 
 
+@pytest.mark.windows_only
 def test_a_nightly_pin_unpacks_the_nightly_zip_with_its_exe_at_the_root(home, monkeypatch):
     folder = str(home / 'cache')
     os.makedirs(folder, exist_ok=True)

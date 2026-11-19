@@ -147,6 +147,7 @@ def test_a_failed_extract_leaves_nothing_and_says_the_tools_reason(home):
     assert sorted(os.listdir(home)) == ['g.pkg']
 
 
+@pytest.mark.windows_only
 def test_the_tool_is_downloaded_once_and_checked(tmp_path, monkeypatch):
     monkeypatch.setenv('OVERTIME_ROSTER_HOME', str(tmp_path / 'apphome'))
     buf = io.BytesIO()
@@ -170,6 +171,7 @@ def test_the_tool_is_downloaded_once_and_checked(tmp_path, monkeypatch):
 
 def test_another_tool_file_is_not_used(tmp_path, monkeypatch):
     monkeypatch.setenv('OVERTIME_ROSTER_HOME', str(tmp_path / 'apphome'))
+    monkeypatch.setattr(pkginstall, 'TOOL_URL', 'https://example.test/pkg_extractor')   # macOS has no tool in the release
     monkeypatch.setattr(pkginstall, 'TOOL_SIZE', 10)
     with pytest.raises(pkginstall.PkgError, match='not the one Overtime knows'):
         pkginstall.ensure_tool(opener=lambda url: io.BytesIO(b'0123456789'))
@@ -200,7 +202,7 @@ def test_on_linux_the_tool_is_one_program_file(tmp_path, monkeypatch):
     exe = pkginstall.ensure_tool(opener=opener)
     with open(exe, 'rb') as f:
         assert f.read() == data and exe.endswith('pkg_extractor.AppImage')
-    assert os.listdir(os.path.dirname(exe)) == ['pkg_extractor.AppImage', 'sha256.txt']
+    assert sorted(os.listdir(os.path.dirname(exe))) == ['pkg_extractor.AppImage', 'sha256.txt']
     assert pkginstall.ensure_tool(opener=opener) == exe and opened == [url]
     env = pkginstall._environment(exe)
     assert env['APPIMAGE_EXTRACT_AND_RUN'] == '1' and 'APPIMAGE_EXTRACT_AND_RUN' not in pkginstall._environment('x.exe')

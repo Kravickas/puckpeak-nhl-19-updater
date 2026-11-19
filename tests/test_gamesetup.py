@@ -1,11 +1,18 @@
 import json
 import os
 import subprocess
+import sys
 
 import pytest
 
 from overtime_core import sfo, xmlpatch
 from overtime_roster.app import gamesetup, launch
+
+# the shadPS4 program files as this system names them (gamesetup._program) and the first bytes they are written with
+WIN = sys.platform == 'win32'
+EMU_NAME = 'shadPS419.exe' if WIN else 'shadPS419' if sys.platform == 'darwin' else 'shadPS419.AppImage'
+LAUNCHER_NAME = 'shadPS4QtLauncher.exe' if WIN else 'shadPS4QtLauncher'
+EMU_BYTES = b'MZ' if WIN else b'\x7fELF'
 
 
 def _sfo(title_id='CUSA11126', app_ver='01.60'):
@@ -32,9 +39,9 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv('USERPROFILE', str(tmp_path / 'home'))
     emu_dir = tmp_path / 'PS4' / 'PS4 Emulator'
     emu_dir.mkdir(parents=True)
-    emu = emu_dir / 'shadPS419.exe'
-    emu.write_bytes(b'MZ')
-    (emu_dir / 'shadPS4QtLauncher.exe').write_bytes(b'MZ')
+    emu = emu_dir / EMU_NAME
+    emu.write_bytes(EMU_BYTES)
+    (emu_dir / LAUNCHER_NAME).write_bytes(EMU_BYTES)
     game = _game(tmp_path / 'PS4')
     cfg = {'General': {'install_dirs': [{'enabled': True, 'path': str(tmp_path / 'PS4')}],
                        'connected_to_network': False}, 'GPU': {'full_screen': True}}
@@ -43,7 +50,7 @@ def world(tmp_path, monkeypatch):
                                  'shadnet_npid': 'skater', 'shadnet_email': 'a@b.c', 'shadnet_password': 'hunter2',
                                  'shadnet_token': 'tok'}]}}
     (user / 'users.json').write_text(json.dumps(users), encoding='utf-8')
-    return {'tmp': tmp_path, 'user': user, 'emu': emu, 'game': game}
+    return {'tmp': tmp_path, 'user': user, 'emu': emu, 'game': game, 'emu_name': EMU_NAME, 'launcher_name': LAUNCHER_NAME}
 
 
 def _tree(root):
@@ -53,7 +60,7 @@ def _tree(root):
 def test_finds_emulator_and_game(world):
     assert gamesetup.emu_user_dir(str(world['emu'])) == str(world['user'])
     emus = gamesetup.find_emulators()
-    assert [os.path.basename(e) for e in emus] == ['shadPS419.exe']  # not the Qt launcher
+    assert [os.path.basename(e) for e in emus] == [EMU_NAME]  # not the Qt launcher
     games = gamesetup.find_games(str(world['user']))
     assert [g['path'] for g in games] == [str(world['game'])] and games[0]['ok']
 
@@ -91,9 +98,9 @@ def test_shadps4_is_found_beside_the_game_picked(tmp_path, monkeypatch):
     """Nothing in %APPDATA% (a tester: "search from the folder i point to"): shadPS4 next to the game is found."""
     monkeypatch.setenv('APPDATA', str(tmp_path / 'empty'))
     monkeypatch.setenv('USERPROFILE', str(tmp_path / 'home'))
-    emu = tmp_path / 'Emu' / 'shadPS4' / 'shadPS4.exe'
+    emu = tmp_path / 'Emu' / 'shadPS4' / EMU_NAME
     emu.parent.mkdir(parents=True)
-    emu.write_bytes(b'MZ')
+    emu.write_bytes(EMU_BYTES)
     game = _game(tmp_path / 'Emu', 'NHL 19')
     assert gamesetup.find_emulators() == []
     assert gamesetup.find_emulators(near=gamesetup.around(str(game))) == [str(emu)]
@@ -106,8 +113,8 @@ def test_a_testers_portable_layout(tmp_path, monkeypatch):
     monkeypatch.setenv('USERPROFILE', str(tmp_path / 'home'))
     root = tmp_path / 'V' / 'ShadPS4'
     (root / 'user').mkdir(parents=True)
-    emu = root / 'shadPS4.exe'
-    emu.write_bytes(b'MZ')
+    emu = root / EMU_NAME
+    emu.write_bytes(EMU_BYTES)
     game = _game(root / 'game installs', 'CUSA11126')
     cfg = {'General': {'install_dirs': [{'enabled': True, 'path': str(root / 'game installs')}],
                        'home_dir': str(root / 'user' / 'home')}}
@@ -121,9 +128,9 @@ def test_a_testers_portable_layout(tmp_path, monkeypatch):
 
 def test_game_is_found_beside_a_portable_shadps4(tmp_path, monkeypatch):
     monkeypatch.setenv('APPDATA', str(tmp_path / 'empty'))
-    emu = tmp_path / 'Emu' / 'shadPS4' / 'shadPS4.exe'
+    emu = tmp_path / 'Emu' / 'shadPS4' / EMU_NAME
     (emu.parent / 'user').mkdir(parents=True)          # portable, its config lists no game folder
-    emu.write_bytes(b'MZ')
+    emu.write_bytes(EMU_BYTES)
     game = _game(tmp_path / 'Emu', 'NHL 19')
     user = gamesetup.emu_user_dir(str(emu))
     assert gamesetup.find_games(user) == []
@@ -654,38 +661,39 @@ def _launcher(tmp_path, monkeypatch, selected=True):
     data = tmp_path / 'roaming' / 'shadPS4QtLauncher'
     for name in ('v0.19.0', 'Pre-release'):
         (data / 'versions' / name).mkdir(parents=True)
-        (data / 'versions' / name / 'shadPS4.exe').write_bytes(b'MZ')
+        (data / 'versions' / name / EMU_NAME).write_bytes(EMU_BYTES)
     ini = '[version_manager]\n'
     if selected:
-        ini += f"versionSelected={(data / 'versions').as_posix()}/Pre-release\\\\shadPS4.exe\n"
+        chosen = str(data / 'versions' / 'Pre-release' / EMU_NAME)       # Qt doubles a Windows backslash
+        ini += f'versionSelected={chosen.replace(chr(92), chr(92) * 2)}\n'
     (data / 'qt_ui.ini').write_text(ini, encoding='utf-8')
     folder = tmp_path / 'PS4 Emulator'
     folder.mkdir()
-    (folder / 'shadPS4QtLauncher.exe').write_bytes(b'MZ')
-    return data / 'versions' / 'Pre-release' / 'shadPS4.exe', folder
+    (folder / LAUNCHER_NAME).write_bytes(EMU_BYTES)
+    return data / 'versions' / 'Pre-release' / EMU_NAME, folder
 
 
 def test_the_launcher_or_its_folder_leads_to_the_selected_shadps4(tmp_path, monkeypatch):
     exe, folder = _launcher(tmp_path, monkeypatch)
     assert os.path.samefile(gamesetup.launcher_emulators()[0], exe)
     assert os.path.samefile(gamesetup.resolve_emulator(str(folder)), exe)
-    assert os.path.samefile(gamesetup.resolve_emulator(str(folder / 'shadPS4QtLauncher.exe')), exe)
+    assert os.path.samefile(gamesetup.resolve_emulator(str(folder / LAUNCHER_NAME)), exe)
     assert os.path.samefile(gamesetup.find_emulators()[0], exe)     # the app finds it with no pick at all
 
 
 def test_a_launcher_with_nothing_selected_takes_a_version_it_has(tmp_path, monkeypatch):
     exe, folder = _launcher(tmp_path, monkeypatch, selected=False)
-    assert os.path.basename(gamesetup.resolve_emulator(str(folder))) == 'shadPS4.exe'
+    assert os.path.basename(gamesetup.resolve_emulator(str(folder))) == EMU_NAME
 
 
 def test_a_folder_or_any_shadps4_exe_is_taken(tmp_path, monkeypatch):
     monkeypatch.setenv('APPDATA', str(tmp_path / 'roaming'))
     (tmp_path / 'emu' / 'inner').mkdir(parents=True)
-    exe = tmp_path / 'emu' / 'inner' / 'shadPS419.exe'
-    exe.write_bytes(b'MZ')
+    exe = tmp_path / 'emu' / 'inner' / EMU_NAME
+    exe.write_bytes(EMU_BYTES)
     assert gamesetup.resolve_emulator(str(tmp_path / 'emu')) == str(exe)
     assert gamesetup.resolve_emulator(str(exe)) == str(exe)
-    other = tmp_path / 'emu' / 'notes.exe'
+    other = tmp_path / 'emu' / ('notes' + os.path.splitext(EMU_NAME)[1])
     other.write_bytes(b'MZ no version block here')
     assert gamesetup.resolve_emulator(str(other)) == ''
     assert gamesetup.resolve_emulator(str(tmp_path / 'gone')) == ''
@@ -697,9 +705,9 @@ def test_a_folder_or_any_shadps4_exe_is_taken(tmp_path, monkeypatch):
 def test_a_launcher_with_no_version_is_not_taken(tmp_path, monkeypatch):
     monkeypatch.setenv('APPDATA', str(tmp_path / 'roaming'))
     (tmp_path / 'emu').mkdir()
-    (tmp_path / 'emu' / 'shadPS4QtLauncher.exe').write_bytes(b'MZ')
+    (tmp_path / 'emu' / LAUNCHER_NAME).write_bytes(EMU_BYTES)
     assert gamesetup.resolve_emulator(str(tmp_path / 'emu')) == ''
-    assert gamesetup.resolve_emulator(str(tmp_path / 'emu' / 'shadPS4QtLauncher.exe')) == ''
+    assert gamesetup.resolve_emulator(str(tmp_path / 'emu' / LAUNCHER_NAME)) == ''
 
 
 def test_network_section_of_a_newer_shadps4_is_switched_too(world):

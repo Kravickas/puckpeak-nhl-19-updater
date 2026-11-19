@@ -2,11 +2,12 @@
 import json
 import os
 import re
+import sys
 
 import pytest
 
 from overtime_core import gamefiles, xmlpatch
-from overtime_roster.app import gamesetup, launch, matchsetup, onlinetag
+from overtime_roster.app import crossplay, gamesetup, launch, matchsetup, onlinetag
 
 from test_gamesetup import _versioninfo, world  # noqa: F401 (the fixture)
 
@@ -27,6 +28,15 @@ def game(world, monkeypatch):  # noqa: F811
     world['patch'] = patch
     world['ini'] = os.path.join(gamefiles.mods_dir(str(world['game'])), *gamesetup.VERSION_DIR, 'na_versioninfo.ini')
     return world
+
+
+def _pool_remark(inp):
+    """why() on this system: '' on Windows; on Linux and macOS the one remark that players meet their own kind."""
+    if not inp['pool']:
+        return ''
+    name = crossplay.NAMES[sys.platform]
+    return ('Online you meet only players with the same setup: ' + f'{name} players meet {name} players for now (a match '
+            'with Windows players has to be played through first; it is switched on from the server, without an update).')
 
 
 def _key(user, on):
@@ -59,9 +69,14 @@ def test_the_lobby_takes_the_tag():
 def test_math_class_puts_intel_with_the_key_on_the_trusted_build_with_amd():
     assert onlinetag.math_class('0' * 64, 'amd', False) == 'amd'
     assert onlinetag.math_class(TRUSTED, 'intel', True) == 'amd'
-    assert onlinetag.math_class(TRUSTED, 'intel', False) == 'intel/nokey'
+    assert onlinetag.math_class(TRUSTED, 'intel', False, 'win32') == 'intel/nokey'
     assert onlinetag.math_class('0' * 64, 'intel', True) == 'intel/key'
-    assert onlinetag.math_class(TRUSTED, '?', False) == '?/nokey'
+    assert onlinetag.math_class(TRUSTED, '?', False, 'win32') == '?/nokey'
+
+
+def test_an_intel_pc_on_a_trusted_linux_build_meets_amd_without_the_key():
+    assert onlinetag.math_class(TRUSTED, 'intel', False, 'linux') == 'amd'      # Linux's pass needs no key
+    assert onlinetag.math_class('0' * 64, 'intel', False, 'linux') == 'intel/nokey'
 
 
 def test_both_kravickas_builds_are_trusted_and_an_intel_pc_on_either_meets_amd():
@@ -80,7 +95,8 @@ def test_both_kravickas_builds_are_trusted_and_an_intel_pc_on_either_meets_amd()
                                                       'upstream shadPS4 nightly 4788f0b']
     for sha in onlinetag.TRUSTED_EXES:
         assert len(sha) == 64 and sha == sha.lower()
-        assert onlinetag.math_class(sha, 'intel', True) == 'amd' and onlinetag.math_class(sha, 'intel', False) != 'amd'
+        assert onlinetag.math_class(sha, 'intel', True) == 'amd'
+        assert onlinetag.math_class(sha, 'intel', False, 'win32') != 'amd'
     new, old, krav_test, ours_gc, v2, ours, smooth, nightly = sorted(onlinetag.TRUSTED_EXES, key=onlinetag.TRUSTED_EXES.get)
     # owner 2026-11-16: Overtime Native v2 is the online build (v1, ours_gc, from 2026-11-13); every other trusted exe is
     # another tag
@@ -98,7 +114,7 @@ def test_apply_writes_the_tag_and_the_game_reads_it(game):
     own = (game['game'] / 'nhl' / 'data' / 'kettle' / 'config' / 'na_versioninfo.ini').read_bytes()
     t, inp = onlinetag.apply(emu, gd)
     assert t and t == onlinetag.tag(inp) == onlinetag.sent(onlinetag.start_inputs(emu, gd))
-    assert inp['crossvendor'] and inp['math'] == 'amd' and onlinetag.why(inp) == ''
+    assert inp['crossvendor'] and inp['math'] == 'amd' and onlinetag.why(inp) == _pool_remark(inp)
     assert gamesetup.online_version(gd) == ('na', t)
     assert gamesetup.online_version(gd, mods=False) == ('na', 'NHL19_1.60')    # the base stays the game's own
     with open(game['ini'], 'rb') as f:
@@ -180,7 +196,7 @@ def test_only_overtime_native_is_the_online_build(game, monkeypatch):
     # their own build, and nobody is sent to Kravickas any more
     gd, emu = str(game['game']), str(game['emu'])
     native = onlinetag.start_inputs(emu, gd)
-    assert onlinetag.why(native) == ''
+    assert onlinetag.why(native) == _pool_remark(native)
     krav = next(s for s, n in onlinetag.TRUSTED_EXES.items() if n == 'Kravickas nhl-test d334436')
     monkeypatch.setattr(onlinetag, 'exe_sha', lambda path: krav)
     other = onlinetag.start_inputs(emu, gd)
@@ -189,6 +205,7 @@ def test_only_overtime_native_is_the_online_build(game, monkeypatch):
     assert 'does not run the Overtime Native v2 build' in said and 'Nightly' not in said and 'choose' not in said
 
 
+@pytest.mark.windows_only
 def test_intel_meets_amd_only_with_the_key_on_the_trusted_build(game, monkeypatch):
     gd, emu = str(game['game']), str(game['emu'])
     amd = onlinetag.tag(onlinetag.start_inputs(emu, gd))
@@ -236,7 +253,7 @@ def test_text_with_keeps_the_line_ends_and_skips_comments():
 def test_launch_start_writes_the_tag_and_refuses_when_a_stale_one_cannot_go(game, monkeypatch):
     gd, emu = str(game['game']), str(game['emu'])
     launch.start(emu, gd, running=lambda: False, popen=lambda cmd, **kw: 'proc')
-    assert re.fullmatch(r'NHL19_1\.60-[0-9A-Za-z]{4}', gamesetup.online_version(gd)[1])
+    assert re.fullmatch(r'NHL19_1\.6' + (crossplay.pool() or '0') + r'-[0-9A-Za-z]{4}', gamesetup.online_version(gd)[1])
 
     def broken(*a, **k):
         raise OSError('denied')

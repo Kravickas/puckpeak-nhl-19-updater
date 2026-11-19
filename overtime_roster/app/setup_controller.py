@@ -27,7 +27,7 @@ from overtime_core import gamefiles, overlay, rosterupdate, tdb, xmlpatch
 
 from .. import SITE, VERSION
 from . import (boost, cachemove, cpucheck, crashreport, emuinput, emusettings, gamesetup, jobs, launch, packdownload,
-               patch, patch_ctl, paths, pkginstall, preflight, selfupdate)
+               emufile, patch, patch_ctl, paths, pkginstall, preflight, selfupdate)
 from .registry import Part
 from .shell import friendly_date
 
@@ -583,7 +583,7 @@ class SetupController(Part):
         if picked and not path:
             name = os.path.basename(picked.rstrip('\\/')) or picked
             text = (f'No shadPS4 found in {name}. Point Find game at NHL 19\'s eboot.bin or its PKG (Overtime gets '
-                    'shadPS4 by itself), or at shadPS4QtLauncher.exe or shadPS4.exe.')
+                    f'shadPS4 by itself), or at {gamesetup.LAUNCHER_FILE} or {emufile.name()}.')
             self.ctl.say(text, 'bad')
             return {'error': text}
         with self.ctl.lock:
@@ -2211,7 +2211,7 @@ class SetupController(Part):
         if first:
             return {'tone': 'info', 'get': False,
                     'text': 'Press Find game and pick NHL 19: its eboot.bin, or its PKG files to install it. No shadPS4? '
-                            'Overtime gets it by itself. Have one? Pick shadPS4.exe or QtLauncher instead.'}
+                            f'Overtime gets it by itself. Have one? Pick {emufile.name()} or QtLauncher instead.'}
         if self.checking or self.found is None:
             return {'tone': 'info', 'text': 'Checking shadPS4, NHL 19, ShadNet and the Overtime server...',
                     'get': False}

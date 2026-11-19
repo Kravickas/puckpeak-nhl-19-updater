@@ -110,6 +110,7 @@ def _card(**over):
     return data
 
 
+@pytest.mark.windows_only
 def test_the_result_card_swaps_the_icon_on_a_rank_up():
     from overtime_roster.hud import anim, cards
     from overtime_roster.hud.native import hexcolor
@@ -133,6 +134,7 @@ def test_icon_tier_is_the_tier_below_until_the_flash_on_a_rank_up():
     assert placing.icon_tier(1.0) == UNRANKED
 
 
+@pytest.mark.windows_only
 def test_a_failing_gdi_plus_call_never_stops_the_card():
     from overtime_roster.hud import anim, cards
     cards.draw_result(FakeGfx(fail=True), anim.Result(_card(), 0.0), 3.0, 1.0)   # no exception
