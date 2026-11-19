@@ -42,6 +42,8 @@ env:
   RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
   RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
   NODATA: ${{ inputs.data && ' ' || '--nodata' }}
+  # apt with its own time limits: GitHub's Ubuntu mirror went silent on 2026-11-19 and a step waited 91 minutes
+  APT: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120
   # the emulator the packs are built from: Overtime Native v2 (GPL-2.0-or-later, its sources are that repository)
   EMU_REPO: MatusRiedl/shadPS4
   EMU_COMMIT: d1d3168adf53cfd38e53fed61e463d1b5319a3d8
@@ -61,10 +63,11 @@ jobs:
         with:
           python-version: '3.13'
       - name: Qt's libraries
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
+          $APT update
           sound=$(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2)
-          sudo apt-get install -y --no-install-recommends $QT_LIBS $sound libwayland-server0   # bundle.json "libraries"
+          $APT install -y --no-install-recommends $QT_LIBS $sound libwayland-server0   # bundle.json "libraries"
       - name: The private data
         if: inputs.data
         env:
@@ -109,10 +112,11 @@ jobs:
           name: linux
           path: dist
       - name: Qt's libraries
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
+          $APT update
           sound=$(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2)
-          sudo apt-get install -y --no-install-recommends $QT_LIBS $sound
+          $APT install -y --no-install-recommends $QT_LIBS $sound
       - name: The download unpacks to a program that starts, and its window draws the page
         env:
           QT_QPA_PLATFORM: offscreen            # no screen here
@@ -243,10 +247,11 @@ jobs:
           ref: ${{ env.EMU_COMMIT }}
           submodules: recursive
       - name: Compiler and libraries
+        timeout-minutes: 20
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-19 || { wget -qO "$RUNNER_TEMP/llvm.sh" https://apt.llvm.org/llvm.sh && sudo bash "$RUNNER_TEMP/llvm.sh" 19; }
-          sudo apt-get install -y build-essential cmake mold libfuse2 libx11-dev libxext-dev libwayland-dev libdecor-0-dev libxkbcommon-dev libglfw3-dev libgles2-mesa-dev libasound2-dev libpulse-dev libopenal-dev libudev-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev
+          $APT update
+          $APT install -y clang-19 || { wget -qO "$RUNNER_TEMP/llvm.sh" https://apt.llvm.org/llvm.sh && sudo bash "$RUNNER_TEMP/llvm.sh" 19; }
+          $APT install -y build-essential cmake mold libfuse2 libx11-dev libxext-dev libwayland-dev libdecor-0-dev libxkbcommon-dev libglfw3-dev libgles2-mesa-dev libasound2-dev libpulse-dev libopenal-dev libudev-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold

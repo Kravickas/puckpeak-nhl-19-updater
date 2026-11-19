@@ -65,12 +65,22 @@ TRUSTED_EXES = {'fe88293d67e4e9ab6d0799ac6dcff84644def7806ff0d03b028967cbfdf0e99
                 # (upstream f048bb74) + v1's commits + six speed items (docs/notes/native-v2.md). cpu_patches, the linker
                 # and memory_patcher are v1's (git diff dab14f34..d1d3168a: none); the build of d1d3168a with symbols
                 'e162fada7fcafe705d0062e2d9a647f63228e708f202e6c10e4f5609bf6725d9':
-                    'Overtime Native v2 d1d3168a (Kravickas nhl-perf-test d0b7ac91)'}
+                    'Overtime Native v2 d1d3168a (Kravickas nhl-perf-test d0b7ac91)',
+                # 2026-11-19, the same commit built for Linux (the AppImage) and macOS (x86_64): the public
+                # repository's build-desktop run 44474023475, input emulator (docs/notes/linux-support.md)
+                '6223c21befb3889003b6a8061bbd179c5089b9cccfadee644bed9f4c3d0884db':
+                    'Overtime Native v2 d1d3168a, Linux AppImage',
+                '0899d8360bb70f02afb09ca3a3a099859debf69435c554884185cb98e2e4d797':
+                    'Overtime Native v2 d1d3168a, macOS x86_64'}
 # The online build: Overtime Native v2 on Setup's card (owner 2026-11-16; v1 from 0.92.0), the default and what every
 # lobby starts. The exe's sha is in the tag, so a player on another trusted build (v1, Kravickas, an older one) has
 # another tag (why()).
 ONLINE_EXES = {'e162fada7fcafe705d0062e2d9a647f63228e708f202e6c10e4f5609bf6725d9':
-               'Overtime Native v2 d1d3168a (Kravickas nhl-perf-test d0b7ac91)'}
+               'Overtime Native v2 d1d3168a (Kravickas nhl-perf-test d0b7ac91)',
+               '6223c21befb3889003b6a8061bbd179c5089b9cccfadee644bed9f4c3d0884db':
+               'Overtime Native v2 d1d3168a, Linux AppImage',
+               '0899d8360bb70f02afb09ca3a3a099859debf69435c554884185cb98e2e4d797':
+               'Overtime Native v2 d1d3168a, macOS x86_64'}
 MARK ='; Overtime Roster: matchmaking tag (only games that stay in step meet). Unpatch removes this file.'
 TMP = '.overtime-tmp'
 
