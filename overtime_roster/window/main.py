@@ -748,28 +748,35 @@ def update_now():
 WEBVIEW_THREADS = ('(_call)', '(process_request_thread)')   # pywebview's own: a page call's answer, a file request
 
 
-def leave(code, grace=5.0, system=None, end=os._exit):
-    """The process ends with `code`. Windows: as Python ends it. Linux and macOS: pywebview's own threads are not
-    daemons, and on macOS a page call that answers after its window is gone waits for ever (CI, 2026-11-19: the
-    process stayed after the window closed). So the app's own threads are waited for as Python would, pywebview's get
-    `grace` seconds, and then the process ends."""
+def leave(code, grace=5.0, system=None, end=os._exit, tick=0.2):
+    """Returns `code` for sys.exit: Python ends the process as it always does. Linux and macOS get a watcher besides:
+    pywebview's own threads are not daemons, and on macOS a page call that answers after its window is gone waits for
+    ever (CI, 2026-11-19: the process stayed after the window closed). Once the only threads Python still waits for
+    are pywebview's and `grace` seconds have passed, the watcher ends the process. The app's own threads are never
+    cut short."""
     if (system or sys.platform) == 'win32':
         return code
-    me = threading.current_thread()
-    left = [t for t in threading.enumerate() if t is not me and not t.daemon]
-    for t in left:
-        if not t.name.endswith(WEBVIEW_THREADS):
-            t.join()
-    until = time.monotonic() + grace
-    for t in left:
-        if t.name.endswith(WEBVIEW_THREADS):
-            t.join(max(0.0, until - time.monotonic()))
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.flush()
-        except Exception:  # noqa: BLE001 (a closed stream has nothing to flush)
-            pass
-    end(code)
+    main = threading.current_thread()
+
+    def watch():
+        since = None
+        while True:
+            left = [t for t in threading.enumerate() if t is not main and not t.daemon and t.is_alive()]
+            if not left:
+                return
+            if not all(t.name.endswith(WEBVIEW_THREADS) for t in left):
+                since = None
+            elif since is None:
+                since = time.monotonic()
+            elif time.monotonic() - since >= grace:
+                for stream in (sys.stdout, sys.stderr):
+                    try:
+                        stream.flush()
+                    except Exception:  # noqa: BLE001 (a closed stream has nothing to flush)
+                        pass
+                return end(code)
+            time.sleep(tick)
+    threading.Thread(target=watch, daemon=True, name='leave').start()
     return code
 
 

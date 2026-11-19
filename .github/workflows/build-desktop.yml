@@ -10,6 +10,9 @@
 # macOS signing (optional): with the MACOS_CERT_P12 (base64), MACOS_CERT_PASSWORD and MACOS_SIGN_IDENTITY secrets the
 #   app and the dmg are signed with that Developer ID, and with APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD the dmg
 #   is notarized too. Without them the app is signed ad hoc: a Mac asks its owner to allow it once.
+# emulator = on: no app is built. The run builds shadPS4 for Linux and macOS from the commit pinned below (EMU_REPO,
+#   EMU_COMMIT: the emulator's own sources and its own AppImage script, checked out here, never copied into this
+#   repository). The artifacts are what the emulator packs are made of; the summary gives each program's sha256.
 name: build-desktop
 
 on:
@@ -24,6 +27,10 @@ on:
         type: choice
         options: [macos-26-intel, macos-26]
         default: macos-26-intel
+      emulator:
+        description: 'Build shadPS4 for Linux and macOS (the pinned commit) instead of the app'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,6 +42,9 @@ env:
   RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
   RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
   NODATA: ${{ inputs.data && ' ' || '--nodata' }}
+  # the emulator the packs are built from: Overtime Native v2 (GPL-2.0-or-later, its sources are that repository)
+  EMU_REPO: MatusRiedl/shadPS4
+  EMU_COMMIT: d1d3168adf53cfd38e53fed61e463d1b5319a3d8
   # what a desktop system has and a build machine may lack: the libraries Qt's window and its web view load
   QT_LIBS: >-
     libegl1 libgl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
@@ -43,6 +53,7 @@ env:
 
 jobs:
   linux:
+    if: ${{ !inputs.emulator }}
     runs-on: ubuntu-22.04     # the oldest system the app itself starts on (glibc 2.35); the emulator asks for 2.39
     steps:
       - uses: actions/checkout@v7
@@ -124,6 +135,7 @@ jobs:
           echo "$(cut -d: -f2 missing.txt | sort -u | wc -l) library names missing"
 
   macos:
+    if: ${{ !inputs.emulator }}
     runs-on: ${{ inputs.mac_runner }}
     steps:
       - uses: actions/checkout@v7
@@ -220,3 +232,75 @@ jobs:
       - name: The app's own report files
         if: always()
         run: cat ~/Library/Application\ Support/OvertimeRoster/logs/selftest*.txt 2>/dev/null || true
+
+  emulator-linux:
+    if: ${{ inputs.emulator }}
+    runs-on: ubuntu-24.04     # the emulator's floor: glibc 2.39
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.EMU_REPO }}
+          ref: ${{ env.EMU_COMMIT }}
+          submodules: recursive
+      - name: Compiler and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19 || { wget -qO "$RUNNER_TEMP/llvm.sh" https://apt.llvm.org/llvm.sh && sudo bash "$RUNNER_TEMP/llvm.sh" 19; }
+          sudo apt-get install -y build-essential cmake mold libfuse2 libx11-dev libxext-dev libwayland-dev libdecor-0-dev libxkbcommon-dev libglfw3-dev libgles2-mesa-dev libasound2-dev libpulse-dev libopenal-dev libudev-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold
+          cmake --build build --parallel "$(nproc)"
+      - name: The AppImage (the emulator's own script)
+        run: bash .github/workflows/scripts/linux-appimage-sdl.sh
+      - name: What was built
+        run: |
+          {
+            echo "### shadPS4 for Linux, $EMU_REPO @ $EMU_COMMIT"
+            echo '```'
+            sha256sum Shadps4-sdl.AppImage
+            ls -l Shadps4-sdl.AppImage
+            echo "newest glibc asked for: $(objdump -T build/shadps4 | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shadps4-linux
+          path: Shadps4-sdl.AppImage
+          if-no-files-found: error
+
+  emulator-macos:
+    if: ${{ inputs.emulator }}
+    runs-on: macos-26         # builds for Intel (x86_64): Apple chips run it through Rosetta
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.EMU_REPO }}
+          ref: ${{ env.EMU_COMMIT }}
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+      - name: Build tools
+        run: |
+          brew install cmake meson pkg-config llvm spirv-tools spirv-llvm-translator
+          pip3 install --break-system-packages mako packaging pyyaml
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON
+          cmake --build build --parallel "$(sysctl -n hw.ncpu)"
+      - name: The program and the files beside it
+        run: |
+          mkdir out
+          cp build/shadps4 build/libvulkan.dylib build/libvulkan_kosmickrisp.dylib build/kosmickrisp_mesa_icd.json out/
+          {
+            echo "### shadPS4 for macOS, $EMU_REPO @ $EMU_COMMIT"
+            echo '```'
+            (cd out && shasum -a 256 * && ls -l && file shadps4)
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shadps4-macos
+          path: out/
+          if-no-files-found: error

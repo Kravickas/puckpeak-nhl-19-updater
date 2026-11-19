@@ -267,18 +267,38 @@ def test_first_open_waits_for_the_page_and_never_raises(monkeypatch):
 
 
 def test_windows_ends_as_python_ends_it():
+    before = threading.active_count()
     assert app_main.leave(3, system='win32', end=lambda code: pytest.fail('the process was ended by hand')) == 3
+    assert threading.active_count() == before
 
 
 def test_a_page_call_stuck_after_the_window_closed_does_not_keep_the_app_alive():
-    stuck, work, ended = threading.Event(), threading.Event(), []
-    call = threading.Thread(target=stuck.wait, name='Thread-54 (_call)')           # pywebview's, waits for ever
-    job = threading.Thread(target=lambda: (time.sleep(0.2), work.set()), name='save')  # the app's own, ends by itself
+    stuck, work, ended = threading.Event(), threading.Event(), threading.Event()
+    seen = []
+
+    def end(code):
+        seen.append((code, work.is_set()))
+        ended.set()
+    call = threading.Thread(target=stuck.wait, name='Thread-54 (_call)')       # pywebview's, waits for ever
+    job = threading.Thread(target=work.wait, name='save')                      # the app's own, still at work
     call.start()
     job.start()
     try:
-        assert app_main.leave(0, grace=0.1, system='darwin', end=ended.append) == 0
-        assert ended == [0] and work.is_set() and call.is_alive()      # the job was waited for, the stuck call was not
+        assert app_main.leave(0, grace=0.05, system='darwin', end=end, tick=0.01) == 0   # Python goes on to shut down
+        assert not ended.wait(0.3)          # the app's own thread is never cut short
+        work.set()
+        assert ended.wait(5) and seen == [(0, True)] and call.is_alive()
     finally:
+        work.set()
         stuck.set()
         call.join()
+        job.join()
+
+
+def test_an_app_with_no_thread_left_is_ended_by_python_alone():
+    ended = []
+    assert app_main.leave(0, grace=0, system='linux', end=ended.append, tick=0.01) == 0
+    watcher = next((t for t in threading.enumerate() if t.name == 'leave'), None)
+    if watcher:
+        watcher.join(5)
+    assert ended == []
