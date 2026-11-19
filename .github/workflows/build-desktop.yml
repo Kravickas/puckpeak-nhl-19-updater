@@ -113,6 +113,14 @@ jobs:
       - name: The app's own report files
         if: always()
         run: cat ~/.local/share/OvertimeRoster/logs/selftest*.txt 2>/dev/null || true
+      - name: Libraries the app's files ask for and this system does not have
+        if: always()
+        run: |
+          cd run && ./OvertimeNHL19-x86_64.AppImage --appimage-extract >/dev/null
+          export LD_LIBRARY_PATH=$(find squashfs-root -type d \( -name lib -o -name _internal -o -name PySide6 \) | paste -sd:)
+          find squashfs-root -type f \( -name '*.so' -o -name '*.so.*' -o -name QtWebEngineProcess \) -print0 |
+            xargs -0 -n1 sh -c 'ldd "$0" 2>/dev/null | grep "not found" | sed "s|^|$0:|"' | sort -u | tee missing.txt
+          echo "$(cut -d: -f2 missing.txt | sort -u | wc -l) library names missing"
 
   macos:
     runs-on: ${{ inputs.mac_runner }}

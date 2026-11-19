@@ -64,6 +64,9 @@ def prepare_toolkit(gui, env=None):
         env.setdefault('QTWEBENGINE_DISABLE_SANDBOX', '1')
 
 
+TOOLKIT_ERROR = []      # why have_pywebview() last said no (the self-test's report names it)
+
+
 def have_pywebview():
     """Can the app draw its own window? pywebview, and on Linux the Qt it draws with."""
     try:
@@ -72,7 +75,8 @@ def have_pywebview():
             os.environ.setdefault('QT_API', 'pyside6')
             import qtpy  # noqa: F401
             import PySide6.QtWebEngineWidgets  # noqa: F401
-    except Exception:  # noqa: BLE001 (an ImportError, or a Qt that cannot load a system library)
+    except Exception as err:  # noqa: BLE001 (an ImportError, or a Qt that cannot load a system library)
+        TOOLKIT_ERROR[:] = [repr(err)]
         return False
     return True
 
@@ -592,7 +596,8 @@ def selftest_window(timeout=120.0):
              f'toolkit={window_toolkit() or "system"}']
     ok = False
     if not have_pywebview():
-        lines.append('FAIL  the window toolkit is not there (pywebview, and on Linux PySide6 with QtWebEngine)')
+        lines.append('FAIL  the window toolkit is not there (pywebview, and on Linux PySide6 with QtWebEngine)'
+                     + (f': {TOOLKIT_ERROR[0]}' if TOOLKIT_ERROR else ''))
     else:
         try:
             import webview
