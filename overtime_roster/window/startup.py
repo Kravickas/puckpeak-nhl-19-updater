@@ -41,6 +41,8 @@ def mark(name):
 
 
 def close_splash():
+    if 'pyi_splash' not in sys.modules and '_PYI_SPLASH_IPC' not in os.environ:    # no splash here: importing it only
+        return                                  # writes a traceback to stderr (Linux, macOS, source runs)
     try:
         import pyi_splash  # the bootloader's splash (only in a build made with --splash)
         pyi_splash.close()

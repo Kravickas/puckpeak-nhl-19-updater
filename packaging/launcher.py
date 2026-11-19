@@ -16,4 +16,4 @@ if sys.stdout is None or sys.stderr is None:        # a windowed exe has nowhere
     sys.stdout = sys.stdout or open(os.devnull, 'w', encoding='utf-8')
     sys.stderr = sys.stderr or open(os.devnull, 'w', encoding='utf-8')
 
-sys.exit(window.entry())
+sys.exit(window.leave(window.entry()))

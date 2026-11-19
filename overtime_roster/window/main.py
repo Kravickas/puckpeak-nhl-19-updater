@@ -626,9 +626,6 @@ def selftest_window(timeout=120.0):
         lines.append('info  threads still running: ' + ', '.join(left))
     lines.append('PASS' if ok else 'FAIL')
     _report(lines, 'selftest-window.txt')
-    if getattr(sys, 'frozen', False) and not HEADLESS:
-        import faulthandler     # a process that does not end after its report says where each thread stands, then ends
-        faulthandler.dump_traceback_later(30, exit=True)
     return 0 if ok else 1
 
 
@@ -746,6 +743,34 @@ def update_now():
         return 1
     _report([f'{APP_NAME} {release.text} installed in {exe}.'], 'update.txt')
     return 0
+
+
+WEBVIEW_THREADS = ('(_call)', '(process_request_thread)')   # pywebview's own: a page call's answer, a file request
+
+
+def leave(code, grace=5.0, system=None, end=os._exit):
+    """The process ends with `code`. Windows: as Python ends it. Linux and macOS: pywebview's own threads are not
+    daemons, and on macOS a page call that answers after its window is gone waits for ever (CI, 2026-11-19: the
+    process stayed after the window closed). So the app's own threads are waited for as Python would, pywebview's get
+    `grace` seconds, and then the process ends."""
+    if (system or sys.platform) == 'win32':
+        return code
+    me = threading.current_thread()
+    left = [t for t in threading.enumerate() if t is not me and not t.daemon]
+    for t in left:
+        if not t.name.endswith(WEBVIEW_THREADS):
+            t.join()
+    until = time.monotonic() + grace
+    for t in left:
+        if t.name.endswith(WEBVIEW_THREADS):
+            t.join(max(0.0, until - time.monotonic()))
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001 (a closed stream has nothing to flush)
+            pass
+    end(code)
+    return code
 
 
 def entry(argv=None):

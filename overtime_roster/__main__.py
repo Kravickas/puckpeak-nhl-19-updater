@@ -19,4 +19,5 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    from .window.main import leave
+    sys.exit(leave(main()))
