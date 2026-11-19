@@ -79,6 +79,7 @@ def data_pairs(spec, inputs):
     BuildError when a listed source is not there."""
     pairs = [(os.path.join(ROOT, *src.split('/')), dst) for src, dst in spec['data']]
     if inputs:
+        inputs = os.path.abspath(inputs)    # PyInstaller reads a relative --add-data from its spec folder
         pairs += [(os.path.join(inputs, *src.split('/')), dst) for src, dst in spec['private']]
     for src, _dst in pairs:
         if not os.path.exists(src):

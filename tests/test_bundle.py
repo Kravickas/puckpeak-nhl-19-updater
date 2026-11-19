@@ -91,6 +91,15 @@ def test_the_private_data_goes_in_only_with_inputs(tmp_path):
     assert full[-1][0] == str(tmp_path / 'packs' / 'nhl27.json.gz')
 
 
+def test_a_relative_inputs_folder_reaches_pyinstaller_as_a_full_path(tmp_path, monkeypatch):
+    (tmp_path / 'inputs' / 'defaults').mkdir(parents=True)          # PyInstaller reads a relative path from its spec
+    (tmp_path / 'inputs' / 'packs').mkdir()                         # folder, not from where the build was started
+    (tmp_path / 'inputs' / 'packs' / 'nhl27.json.gz').write_bytes(b'')
+    monkeypatch.chdir(tmp_path)
+    private = build_unix.data_pairs(_spec(), 'inputs')[-2:]
+    assert all(os.path.isabs(src) and os.path.exists(src) for src, _dst in private)
+
+
 def test_pyinstaller_gets_each_systems_own_list(tmp_path):
     spec = _spec()
     pairs = build_unix.data_pairs(spec, '')
