@@ -160,7 +160,13 @@ def emu_user_dir(emu_exe):
 
 
 def appdata_dir():
-    return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'shadPS4')
+    """shadPS4's own data folder on this system (%APPDATA%\\shadPS4; paths.data_root for Linux and macOS)."""
+    return os.path.join(paths.data_root(), 'shadPS4')
+
+
+def data_label():
+    """appdata_dir() as a message names it: %APPDATA%\\shadPS4, ~/.local/share/shadPS4."""
+    return paths.data_root_label() + ('\\' if sys.platform == 'win32' else '/') + 'shadPS4'
 
 
 def reachable_data_dir(path):
@@ -185,18 +191,26 @@ def start_dir(emu_exe):
     return None
 
 
-def _is_emulator(name):
+def _program(name, platform=None):
+    """`name` is a shadPS4 program file on this system: shadPS4*.exe on Windows; on Linux and macOS a file with no
+    ending (shadps4, shadPS4QtLauncher) or an .AppImage (Shadps4-sdl.AppImage)."""
     low = name.lower()
-    return low.startswith('shadps4') and low.endswith('.exe') and 'launcher' not in low
+    if not low.startswith('shadps4'):
+        return False
+    ending = os.path.splitext(low)[1]
+    return ending == '.exe' if (platform or sys.platform) == 'win32' else ending in ('', '.appimage')
 
 
-def _is_launcher(name):
-    low = name.lower()
-    return low.startswith('shadps4') and low.endswith('.exe') and 'launcher' in low
+def _is_emulator(name, platform=None):
+    return _program(name, platform) and 'launcher' not in name.lower()
+
+
+def _is_launcher(name, platform=None):
+    return _program(name, platform) and 'launcher' in name.lower()
 
 
 def _launcher_data():
-    return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), LAUNCHER_DATA)
+    return os.path.join(paths.data_root(), LAUNCHER_DATA)
 
 
 def _write_keeping(path, text):
@@ -944,6 +958,14 @@ def vendor_of(text):
     return 'intel' if t.startswith('intel') else 'amd' if t.startswith('amd') else '?'
 
 
+def _sysctl(key, run=subprocess.run):
+    """macOS: the value of one sysctl key, '' when there is none."""
+    try:
+        return (run(['sysctl', '-n', key], capture_output=True, text=True, timeout=10).stdout or '').strip()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
 def cpu_vendor():
     """Who made this PC's CPU: 'intel' | 'amd' | '?'. shadPS4 runs the game's x86 as it is, and Intel's rcpps/rsqrtps
     give other low bits than AMD's (a PS4 is AMD): an AMD and an Intel PC desync in lockstep play unless shadPS4 puts
@@ -957,6 +979,8 @@ def cpu_vendor():
                     text = str(winreg.QueryValueEx(k, 'VendorIdentifier')[0])
             except OSError:
                 pass
+        elif vendor_of(text) == '?' and sys.platform == 'darwin':
+            text = _sysctl('machdep.cpu.vendor')        # an Intel Mac; Apple's own chips have no such key: '?'
         elif vendor_of(text) == '?':
             try:
                 with open('/proc/cpuinfo', encoding='utf-8', errors='replace') as f:
@@ -980,6 +1004,8 @@ def cpu_name():
                 import winreg
                 with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'HARDWARE\DESCRIPTION\System\CentralProcessor\0') as k:
                     text = str(winreg.QueryValueEx(k, 'ProcessorNameString')[0])
+            elif sys.platform == 'darwin':
+                text = _sysctl('machdep.cpu.brand_string')      # 'Apple M2', 'Intel(R) Core(TM) i7-...'
             else:
                 with open('/proc/cpuinfo', encoding='utf-8', errors='replace') as f:
                     text = next((ln.split(':', 1)[1] for ln in f if ln.startswith('model name')), '')

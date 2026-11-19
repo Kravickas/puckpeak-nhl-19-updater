@@ -27,7 +27,7 @@ from overtime_core import gamefiles, overlay, rosterupdate, tdb, xmlpatch
 
 from .. import SITE, VERSION
 from . import (boost, cachemove, cpucheck, crashreport, emuinput, emusettings, gamesetup, jobs, launch, packdownload,
-               patch, patch_ctl, paths, pkginstall, selfupdate)
+               patch, patch_ctl, paths, pkginstall, preflight, selfupdate)
 from .registry import Part
 from .shell import friendly_date
 
@@ -885,6 +885,9 @@ class SetupController(Part):
                     self.ctl.patch_running = False
             if exited:
                 self.ctl.changed('setup', 'patch', 'app')
+                mp = getattr(self.ctl, 'multiplayer', None)
+                if mp is not None and sys.platform != 'win32':
+                    mp.first_run(emu, self.ctl.game_dir)     # Linux, macOS, opted in: once per build (firstrun.py)
                 return
             if reading or was != 'running':
                 self.ctl.changed('setup', 'app')
@@ -989,15 +992,16 @@ class SetupController(Part):
                 return None, (f'No NHL 19 in {path}. Pick the game folder: the one holding eboot.bin and sce_sys.')
             return os.path.abspath(game), None
         if key == 'data':
+            own = gamesetup.data_label()
             if not gamesetup.is_data_dir(path):
-                return None, (f'No config.json in {path}. Pick shadPS4\'s data folder: "user" beside shadPS4.exe, or '
-                              '%APPDATA%\\shadPS4.')
+                return None, (f'No config.json in {path}. Pick shadPS4\'s data folder: "user" beside shadPS4, or '
+                              f'{own}.')
             if not gamesetup.reachable_data_dir(path):
                 return None, (f'shadPS4 cannot use {path}: it reads the "user" folder inside the folder it starts '
-                              'from, or %APPDATA%\\shadPS4. Pick a folder named "user", or %APPDATA%\\shadPS4.')
+                              f'from, or {own}. Pick a folder named "user", or {own}.')
             if self._boosted() and os.path.normcase(os.path.abspath(path)) != os.path.normcase(
                     gamesetup.emu_user_dir(boost.exe_path())):
-                return None, ("Overtime's shadPS4 builds use %APPDATA%\\shadPS4. To use another data folder, pick "
+                return None, (f"Overtime's shadPS4 builds use {own}. To use another data folder, pick "
                               'your own shadPS4 with Find game first.')
             return os.path.abspath(path), None
         if key == 'cache':
@@ -2201,6 +2205,9 @@ class SetupController(Part):
 
     def _state(self, first, checks, roster_open):
         """The line under the tiles: what is wrong, or what to do next."""
+        missing = preflight.worst(preflight.cached())       # Linux, macOS: what this computer lacks comes first
+        if missing:
+            return {'tone': 'bad', 'text': missing['text'], 'get': False, 'fix': missing['fix']}
         if first:
             return {'tone': 'info', 'get': False,
                     'text': 'Press Find game and pick NHL 19: its eboot.bin, or its PKG files to install it. No shadPS4? '

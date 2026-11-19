@@ -246,6 +246,26 @@ def pack(template, t, data):
     return bytes(head) + data
 
 
+def scaled(template, k):
+    """`template`'s header for a texture k times as wide and high (k a power of two): the same format, tiling and
+    mip chain down to 1 x 1 when the template's goes there, the pitch k times. Its data is zeros; gnf.make fills it
+    (NHL 27's 2048 numbers on NHL 19's 1024 slot). The game reads a texture's size from this header."""
+    t = Gnf(template).texture
+    if k < 1 or k & (k - 1):
+        raise GnfError(f'scale {k} is not a power of two')
+    if t.tile != TILE_THIN_1D or t.base_level:
+        raise GnfError('only thin 1D textures from mip 0 are scaled')
+    w = list(t.w)
+    full = t.last_level >= max(t.width, t.height).bit_length() - 1
+    extra = k.bit_length() - 1
+    w[2] = (w[2] & ~0xfffffff) | ((t.width * k - 1) & 0x3fff) | (((t.height * k - 1) & 0x3fff) << 14)
+    if full:
+        w[3] = (w[3] & ~(0xf << 16)) | ((t.last_level + extra) << 16)
+    w[4] = (w[4] & ~(0x3fff << 13)) | (((t.pitch * k - 1) & 0x3fff) << 13)
+    nt = Texture(w)
+    return pack(template, nt, bytes(sum(n for *_, n in mip_layout(nt))))
+
+
 def from_mips(template, mips, fmt=None, num=None):
     """A GNF shaped like `template` (size, mips, tiling) holding `mips` (linear BCn bytes, largest first)."""
     t = Gnf(template).texture.with_format(fmt, num)

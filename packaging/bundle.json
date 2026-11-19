@@ -1,0 +1,36 @@
+{
+  "about": "What goes into the app's program file on every system: read by packaging/build_unix.py (Linux, macOS); packaging/build.ps1 (Windows) names the same data, and tests/test_bundle.py fails when the two differ.",
+  "name": "OvertimeNHL19",
+  "mac_name": "Overtime NHL19",
+  "mac_id": "com.puckpeak.overtime.nhl19",
+  "entry": "packaging/launcher.py",
+  "data": [
+    ["overtime_roster/web", "overtime_roster/web"],
+    ["overtime_roster/assets", "overtime_roster/assets"],
+    ["client/textpack", "client/textpack"]
+  ],
+  "private": [
+    ["defaults", "overtime_roster/defaults"],
+    ["packs/nhl27.json.gz", "overtime_roster/packs"]
+  ],
+  "collect": {
+    "win32": ["webview", "pythonnet", "clr_loader"],
+    "linux": ["webview"],
+    "darwin": ["webview"]
+  },
+  "hidden": {
+    "win32": [],
+    "linux": ["qtpy", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineCore", "PySide6.QtWebChannel", "PySide6.QtNetwork"],
+    "darwin": []
+  },
+  "exclude": {
+    "win32": [],
+    "linux": ["pythonnet", "clr_loader", "clr", "tkinter"],
+    "darwin": ["pythonnet", "clr_loader", "clr", "tkinter"]
+  },
+  "requirements": {
+    "all": ["pyinstaller==6.22.3", "pywebview==6.2.1", "certifi", "pillow==12.1.1", "numpy==2.5.4"],
+    "linux": ["QtPy==2.4.3", "PySide6-Essentials==6.12.0", "PySide6-Addons==6.12.0", "PySide6-WebEngine==6.12.0.140"],
+    "darwin": []
+  }
+}

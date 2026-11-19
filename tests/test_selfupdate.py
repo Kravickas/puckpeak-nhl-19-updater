@@ -89,15 +89,15 @@ def test_beta_versions_sort_before_their_release():
 def test_v0_50_0_is_offered_to_every_beta_and_0_10_0():
     from overtime_roster import VERSION
     v = selfupdate.parse_version(VERSION)
-    assert str(v) == '0.96.0'
+    assert str(v) == '0.97.0'
     assert v > selfupdate.parse_version('0.1.0-beta4') and v > selfupdate.parse_version('0.1.0')
-    assert v > selfupdate.parse_version('0.1.0-beta3') and v > selfupdate.parse_version('0.20.0') and v > selfupdate.parse_version('0.80.0') and v > selfupdate.parse_version('0.80.1') and v > selfupdate.parse_version('0.81.0') and v > selfupdate.parse_version('0.82.0') and v > selfupdate.parse_version('0.83.0') and v > selfupdate.parse_version('0.90.0') and v > selfupdate.parse_version('0.90.1') and v > selfupdate.parse_version('0.90.2') and v > selfupdate.parse_version('0.91.0') and v > selfupdate.parse_version('0.91.1') and v > selfupdate.parse_version('0.92.0') and v > selfupdate.parse_version('0.93.0') and v > selfupdate.parse_version('0.94.0') and v > selfupdate.parse_version('0.95.0') and v > selfupdate.parse_version('0.95.1') and v < selfupdate.parse_version('0.96.1') and v < selfupdate.parse_version('0.97.0')
+    assert v > selfupdate.parse_version('0.1.0-beta3') and v > selfupdate.parse_version('0.20.0') and v > selfupdate.parse_version('0.80.0') and v > selfupdate.parse_version('0.80.1') and v > selfupdate.parse_version('0.81.0') and v > selfupdate.parse_version('0.82.0') and v > selfupdate.parse_version('0.83.0') and v > selfupdate.parse_version('0.90.0') and v > selfupdate.parse_version('0.90.1') and v > selfupdate.parse_version('0.90.2') and v > selfupdate.parse_version('0.91.0') and v > selfupdate.parse_version('0.91.1') and v > selfupdate.parse_version('0.92.0') and v > selfupdate.parse_version('0.93.0') and v > selfupdate.parse_version('0.94.0') and v > selfupdate.parse_version('0.95.0') and v > selfupdate.parse_version('0.95.1') and v > selfupdate.parse_version('0.96.0') and v < selfupdate.parse_version('0.97.1') and v < selfupdate.parse_version('0.98.0')
     url = 'https://ot.puckpeak.com/app/latest.json'
     pages = {url: json.dumps({'version': VERSION, 'exe': 'OvertimeNHL19.exe'}),
              'https://ot.puckpeak.com/app/SHA256SUMS.txt': f"{'ab' * 32}  OvertimeNHL19.exe"}
     r = selfupdate.latest('0.1.0-beta4', url, pages.__getitem__, selfupdate.EXE_ASSET)
-    assert r is not None and r.text == '0.96.0'
-    assert selfupdate.latest('0.20.0', url, pages.__getitem__, selfupdate.EXE_ASSET).text == '0.96.0'
+    assert r is not None and r.text == '0.97.0'
+    assert selfupdate.latest('0.20.0', url, pages.__getitem__, selfupdate.EXE_ASSET).text == '0.97.0'
     assert selfupdate.latest(VERSION, url, pages.__getitem__, selfupdate.EXE_ASSET) is None
 
 
@@ -214,6 +214,25 @@ def test_restart_environment_is_fresh(monkeypatch):
     monkeypatch.setenv('PATH', os.pathsep.join([r'C:\Temp\_MEI123', r'C:\Windows']))
     env = selfupdate.clean_environment()
     assert env['PYINSTALLER_RESET_ENVIRONMENT'] == '1' and env['PATH'] == r'C:\Windows'
+
+
+def test_a_child_on_linux_gets_the_library_path_from_before_the_start(monkeypatch):
+    """PyInstaller points LD_LIBRARY_PATH at the app's own folder: shadPS4 would load our libraries, not the system's."""
+    monkeypatch.setattr(selfupdate.sys, '_MEIPASS', '/tmp/_MEI123', raising=False)
+    monkeypatch.setattr(selfupdate.os, 'name', 'posix')
+    monkeypatch.setenv('LD_LIBRARY_PATH', '/tmp/_MEI123')
+    monkeypatch.setenv('LD_LIBRARY_PATH_ORIG', '/usr/local/lib')
+    env = selfupdate.clean_environment()
+    assert env['LD_LIBRARY_PATH'] == '/usr/local/lib' and 'LD_LIBRARY_PATH_ORIG' not in env
+    monkeypatch.delenv('LD_LIBRARY_PATH_ORIG')
+    assert 'LD_LIBRARY_PATH' not in selfupdate.clean_environment()
+
+
+def test_run_from_source_the_library_path_is_left_alone(monkeypatch):
+    monkeypatch.delattr(selfupdate.sys, '_MEIPASS', raising=False)
+    monkeypatch.setattr(selfupdate.os, 'name', 'posix')
+    monkeypatch.setenv('LD_LIBRARY_PATH', '/home/pat/lib')
+    assert selfupdate.clean_environment()['LD_LIBRARY_PATH'] == '/home/pat/lib'
 
 
 class Host:
@@ -366,8 +385,8 @@ def test_headless_browser_mode_stops_on_ok(monkeypatch, tmp_path):
 # --- review fixes: the console exe's own file, busy jobs, shadPS4 during the download, sizes, the fallback's quit ---
 def test_cli_exe_takes_its_own_file(release_site, tmp_path, monkeypatch):
     url, site = release_site
-    assert selfupdate.asset_for(r'C:\x\OvertimeNHL19-cli.exe') == 'OvertimeNHL19-cli.exe'
-    assert selfupdate.asset_for(r'C:\x\OvertimeNHL19.exe') == 'OvertimeNHL19.exe'
+    assert selfupdate.asset_for(r'C:\x\OvertimeNHL19-cli.exe', 'win32') == 'OvertimeNHL19-cli.exe'
+    assert selfupdate.asset_for(r'C:\x\OvertimeNHL19.exe', 'win32') == 'OvertimeNHL19.exe'
     cli_new = b'MZ new cli ' * 500
     (site / 'OvertimeNHL19-cli.exe').write_bytes(cli_new)
     (site / 'SHA256SUMS.txt').write_text(f'{hashlib.sha256(NEW).hexdigest()}  OvertimeNHL19.exe\n'

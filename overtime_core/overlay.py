@@ -235,18 +235,18 @@ LIST_NEW = LIST_ANCHOR + (
 # order of the list: the list puts the expansion team where Utah stood (slot 22, Pacific) and Utah last (slot 31,
 # Central), as Franchise does, so each plays the real 2026-27 calendar of its own place (lab 2026-11-01: slot 22 =
 # Seattle with 28 Pacific games, slot 31 = Utah with 28 Central games).
+# Every start sets the list (2026-11-18): bap32's init32 makes 32 NHL slots whichever start is picked, and a start that
+# never reaches NHL Choose Team (Start in the CHL, Memorial Cup) left 499 appended at slot 31 with affiliate 0 (Anaheim,
+# whose own roster then sat on no team; a tester's CHL career crashed on every sim from 2018-10-03). With bap32 off the
+# stock builder ignores the list (run b5), and the league layer keeps bap32 and expansion32 on or off together.
 BAP_FLOW_PATH = 'nhl/ui/features/beapro/services/creationflow/bapcreationflowservice.lua'
 BAP_TEAM_PATH = 'nhl/ui/features/beapro/vvms/beaprocreationteam/beaprocreationteam.lua'
 BAP_PATHS = (BAP_FLOW_PATH, BAP_TEAM_PATH)
 BAP_FLOW_ANCHOR = b'function BapCreationFlowService:_CreateLeague(data, callback)\r\n'
 BAP_FLOW_NEW = b'''\
--- Overtime 2026 patch: with the expansion team picked from Choose Team, the league gets the 32-team list
+-- Overtime 2026 patch: every start (Choose Team, Start in the CHL, Memorial Cup) gives the league the 32-team list
 function BapCreationFlowService:_CreateLeague(data, callback)
-    if self.mTeamInfo ~= nil and self.mTeamInfo.Expansion32 then
-        self:_SetExpansionTeams(function() self:_AddLeague(data, callback) end)
-    else
-        self:_AddLeague(data, callback)
-    end
+    self:_SetExpansionTeams(function() self:_AddLeague(data, callback) end)
 end
 
 function BapCreationFlowService:_DataRequest(urn, input, callback)
@@ -347,14 +347,20 @@ def _shadps4_processes():
     return [n.lower() for n in names if n.lower().startswith('shadps4')]
 
 
+def launcher_process(name):
+    """A shadPS4 process name is QtLauncher's, not the emulator's. Linux lists a name cut to 15 characters
+    (shadPS4QtLaunch), so "launch" is the mark."""
+    return 'launch' in name.lower()
+
+
 def emulator_running():
     """True while a shadPS4 emulator process runs (any build: shadPS4.exe, shadPS419.exe, ...)."""
-    return any('launcher' not in n for n in _shadps4_processes())    # not the Qt launcher
+    return any(not launcher_process(n) for n in _shadps4_processes())    # not the Qt launcher
 
 
 def launcher_running():
     """True while QtLauncher runs."""
-    return any('launcher' in n for n in _shadps4_processes())
+    return any(launcher_process(n) for n in _shadps4_processes())
 
 
 def _sha256(path, tick=None):

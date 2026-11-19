@@ -15,6 +15,11 @@ whether two games play the same math:
 A setup that would drift apart then waits for its own kind instead of desyncing. 0.80 apps send the bare `NHL19_1.60`,
 which no tag equals.
 
+Linux and macOS (0.97.0, crossplay.py): the first part ends in the system's letter (NHL19_1.6L-xxxx), so such a game
+meets only its own system, until the server's cross-play map names its shadPS4: then the tag is the one of the Windows
+build named there. Off Windows shadPS4's static pass always runs (src/core/module.cpp), so a trusted Linux build
+plays AMD's math with or without the key.
+
 launch.start writes it before every start (apply), the lobby Ready sends the same value from the same inputs
 (start_inputs / match_inputs, then sent), Unpatch removes it (remove). Writes go through a temp file and os.replace:
 in a lobby match the `-mods` folder is a view of hardlinks (matchsetup.py), and a replace swaps only the view's link.
@@ -23,10 +28,11 @@ A start from outside the app (QtLauncher) keeps the last tag written. Standard l
 import hashlib
 import json
 import os
+import sys
 
 from overtime_core import gamefiles, xmlpatch
 
-from . import gamesetup
+from . import crossplay, gamesetup
 
 TAG_MAX, BASE_MAX, HASH_CHARS = 15, 10, 4
 DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
@@ -107,10 +113,11 @@ def key_on(user_dir):
         return False
 
 
-def math_class(sha, vendor, key):
-    """'amd' when the game plays AMD's math (an AMD CPU; an Intel one on a trusted build with the key on), else
-    '<vendor>/key' or '<vendor>/nokey': its own class."""
-    if vendor == 'amd' or (sha in TRUSTED_EXES and key):
+def math_class(sha, vendor, key, system=None):
+    """'amd' when the game plays AMD's math (an AMD CPU; an Intel one on a trusted build with the key on, or on a
+    trusted Linux build: its pass needs no key), else '<vendor>/key' or '<vendor>/nokey': its own class. macOS goes
+    by the key like Windows: what Apple's chips make of the pass is not known, so they stay a class of their own."""
+    if vendor == 'amd' or (sha in TRUSTED_EXES and (key or (system or sys.platform) == 'linux')):
         return 'amd'
     return f'{vendor or "?"}/{"key" if key else "nokey"}'
 
@@ -127,8 +134,10 @@ def fingerprint(text):
 
 def inputs(game_dir, run_exe, patch_text, key):
     """What the tag is made of, for the game in `game_dir` started with `run_exe`, the patch `patch_text` and the AMD
-    math key `key`: {'base', 'fingerprint', 'sha', 'vendor', 'key', 'math', 'crossvendor', 'foreign'}. 'foreign': the
-    onlineVersion of another mod's versioninfo.ini in `-mods` (left as it is, so the game sends that), else None."""
+    math key `key`: {'base', 'fingerprint', 'sha', 'vendor', 'key', 'math', 'crossvendor', 'foreign', 'pool', 'as'}.
+    'foreign': the onlineVersion of another mod's versioninfo.ini in `-mods` (left as it is, so the game sends that),
+    else None. 'pool': this system's letter ('' on Windows). 'as': the Windows build's sha256 the server's cross-play
+    map gives this shadPS4, else None (crossplay.py)."""
     base = gamesetup.online_version(game_dir, mods=False)[1] if game_dir else '?'
     sha = exe_sha(run_exe) if run_exe else '?'
     vendor = gamesetup.cpu_vendor()
@@ -136,8 +145,10 @@ def inputs(game_dir, run_exe, patch_text, key):
         cross = bool(patch_text) and xmlpatch.has_crossvendor(patch_text)
     except xmlpatch.PatchError:
         cross = False
+    stands = crossplay.stands_for(sha)      # a build the server names is as trusted as the Windows one it stands for
     return {'base': base, 'fingerprint': fingerprint(patch_text), 'sha': sha, 'vendor': vendor, 'key': bool(key),
-            'math': math_class(sha, vendor, bool(key)), 'crossvendor': cross,
+            'math': math_class(stands or sha, vendor, bool(key)), 'crossvendor': cross,
+            'pool': crossplay.pool(), 'as': stands,
             'foreign': gamesetup.online_version(game_dir)[1] if game_dir and _foreign(game_dir) else None}
 
 
@@ -156,7 +167,10 @@ def tag(inp):
     to copy) or there is no patch (an unpatched game reaches no Overtime server)."""
     if inp['base'] in ('', '?') or inp['fingerprint'] == 'none':
         return None
-    return compute(inp['base'], inp['fingerprint'], inp['sha'], inp['math'])
+    if inp.get('as'):       # switched to Windows' pool: that build's tag, no letter
+        return compute(inp['base'], inp['fingerprint'], inp['as'], inp['math'])
+    return compute(crossplay.pooled(inp['base'], inp.get('pool') or '', BASE_MAX), inp['fingerprint'], inp['sha'],
+                   inp['math'])
 
 
 def sent(inp):
@@ -197,7 +211,11 @@ def why(inp):
     if inp.get('foreign'):
         return (f"Another mod's versioninfo.ini in the NHL 19-mods folder sets your online version "
                 f"({inp['foreign']}), so Overtime's matchmaking tag is not used: you meet only games with that one.")
-    if inp['sha'] in ONLINE_EXES:
+    if inp.get('pool') and not inp.get('as'):
+        system = crossplay.NAMES.get(sys.platform, 'this system')
+        reasons.append(f'{system} players meet {system} players for now (a match with Windows players has to be '
+                       'played through first; it is switched on from the server, without an update)')
+    if (inp.get('as') or inp['sha']) in ONLINE_EXES:
         pass
     elif inp['sha'] in TRUSTED_EXES:
         reasons.append('it does not run the Overtime Native v2 build, so open matchmaking pairs it with players on '

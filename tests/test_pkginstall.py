@@ -174,3 +174,39 @@ def test_another_tool_file_is_not_used(tmp_path, monkeypatch):
     with pytest.raises(pkginstall.PkgError, match='not the one Overtime knows'):
         pkginstall.ensure_tool(opener=lambda url: io.BytesIO(b'0123456789'))
     assert not os.path.exists(pkginstall.tool_exe())
+
+
+def test_the_tool_per_system():
+    """Windows: the zip pinned since 0.90. Linux: the same release's AppImage. macOS: the release has none."""
+    win, linux = pkginstall.tool_for('win32'), pkginstall.tool_for('linux')
+    assert win[0].endswith('-windows.zip') and win[1].startswith('a6a6dee8') and win[2:] == (1026861, 'pkg_extractor.exe')
+    assert linux[0].endswith('-linux.AppImage') and len(linux[1]) == 64 and linux[3] == 'pkg_extractor.AppImage'
+    assert pkginstall.tool_for('darwin') is None and pkginstall.tool_for('freebsd14') == linux
+
+
+def test_on_linux_the_tool_is_one_program_file(tmp_path, monkeypatch):
+    monkeypatch.setenv('OVERTIME_ROSTER_HOME', str(tmp_path / 'apphome'))
+    data = bytes([0x7F]) + b'ELF the AppImage'
+    url, _sha, _size, name = pkginstall.tool_for('linux')
+    monkeypatch.setattr(pkginstall, 'TOOL_URL', url)
+    monkeypatch.setattr(pkginstall, 'TOOL_EXE', name)
+    monkeypatch.setattr(pkginstall, 'TOOL_SHA256', hashlib.sha256(data).hexdigest())
+    monkeypatch.setattr(pkginstall, 'TOOL_SIZE', len(data))
+    opened = []
+
+    def opener(u):
+        opened.append(u)
+        return io.BytesIO(data)
+    exe = pkginstall.ensure_tool(opener=opener)
+    with open(exe, 'rb') as f:
+        assert f.read() == data and exe.endswith('pkg_extractor.AppImage')
+    assert os.listdir(os.path.dirname(exe)) == ['pkg_extractor.AppImage', 'sha256.txt']
+    assert pkginstall.ensure_tool(opener=opener) == exe and opened == [url]
+    env = pkginstall._environment(exe)
+    assert env['APPIMAGE_EXTRACT_AND_RUN'] == '1' and 'APPIMAGE_EXTRACT_AND_RUN' not in pkginstall._environment('x.exe')
+
+
+def test_macos_refuses_a_pkg_in_words(monkeypatch):
+    monkeypatch.setattr(pkginstall, 'TOOL_URL', None)
+    with pytest.raises(pkginstall.PkgError, match='cannot unpack a PKG on this system yet'):
+        pkginstall.ensure_tool(opener=lambda url: io.BytesIO(b''))

@@ -109,6 +109,22 @@ def test_game_textures_round_trip(game_dir):
     assert os.path.basename(game_dir)
 
 
+def test_a_picture_at_the_templates_size_is_not_resampled():
+    """gnf.make keeps a picture of the template's size as it is (NHL 27's 2048 jerseys on NHL 19's 2048 templates): 1 px
+    black / white rows come back exact from BC1 (two colours a block). A picture of another size is scaled, and the
+    same rows blur."""
+    pil = pytest.importorskip('PIL.Image')
+    np = pytest.importorskip('numpy')
+    rows = np.zeros((64, 64, 3), np.uint8)
+    rows[::2] = 255
+    img = pil.fromarray(rows, 'RGB')
+    out = np.asarray(gnf.to_image(gnf.make(template(64, 64, 'BC1'), img)).convert('RGB'))
+    assert np.array_equal(out, rows)
+    big = img.resize((100, 100), pil.Resampling.NEAREST)
+    scaled = np.asarray(gnf.to_image(gnf.make(template(64, 64, 'BC1'), big)).convert('RGB'))
+    assert not np.array_equal(scaled, rows)
+
+
 @pytest.mark.parametrize('num', ['SRGB', 'UNORM'])
 def test_mips_are_scaled_like_the_games_own(num):
     """gnf.MIP_FILTER (bicubic in the stored numbers, as NHL 19's own jerseys were mipped): a black / white checkerboard
@@ -156,3 +172,20 @@ def test_tiling_fast_path_is_the_element_loop():
                 assert gnf.detile_thin1d(data, ew, eh, bpe, pitch) == _loop_detile(data, ew, eh, bpe, pitch)
                 lin = rnd.randbytes(max(0, ew * eh * bpe - cut))
                 assert gnf.retile_thin1d(lin, ew, eh, bpe, pitch) == _loop_retile(lin, ew, eh, bpe, pitch)
+
+
+def test_scaled_template_is_k_times_larger():
+    """gnf.scaled: a header for a texture k times the template's size (NHL 27's 2048 numbers on NHL 19's 1024 slot):
+    width, height and pitch times k, a full mip chain one level longer per doubling, a partial chain kept, and
+    gnf.make fills it at that size."""
+    pil = pytest.importorskip('PIL.Image')
+    big = gnf.scaled(template(64, 64, 'BC1', 'SRGB', mips=7), 2)
+    t = gnf.Gnf(big).texture
+    assert (t.width, t.height, t.pitch, t.mips, t.fmt, t.num, t.tile) == (128, 128, 128, 8, 'BC1', 'SRGB', 13)
+    assert gnf.Gnf(big).file_size == len(big) and t.size == sum(n for *_, n in gnf.mip_layout(t))
+    out = gnf.make(big, pil.new('RGB', (128, 128), (10, 120, 250)))
+    assert gnf.to_image(out).size == (128, 128) and gnf.to_image(out, 7).size == (1, 1)
+    odd = gnf.Gnf(gnf.scaled(template(200, 120, 'BC7', pitch=224), 4)).texture
+    assert (odd.width, odd.height, odd.pitch, odd.mips) == (800, 480, 896, 1)
+    with pytest.raises(gnf.GnfError):
+        gnf.scaled(template(64, 64), 3)

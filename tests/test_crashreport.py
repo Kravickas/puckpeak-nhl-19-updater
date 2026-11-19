@@ -282,3 +282,17 @@ def test_wanted_is_false_when_the_server_says_no(server):
 @pytest.mark.parametrize('base, ext', [('http://127.0.0.1:1', 16349), ('http://127.0.0.1:1', 'abc')])
 def test_wanted_never_raises(base, ext):
     assert CR.wanted(base, ext, timeout=2) == (False, None)
+
+
+def test_linux_and_macos_name_the_user_and_the_computer_their_own_way(monkeypatch):
+    monkeypatch.delenv('USERNAME', raising=False)
+    monkeypatch.delenv('COMPUTERNAME', raising=False)
+    monkeypatch.setenv('USER', 'deckard')
+    monkeypatch.setenv('LOGNAME', 'deckard')
+    names = CR._own_names('linux', node=lambda: 'steamdeck.lan')
+    assert names == [('steamdeck.lan', '<pc>'), ('steamdeck', '<pc>'), ('deckard', '<user>')]
+    assert CR._own_names('win32', node=lambda: 'steamdeck.lan') == []
+    monkeypatch.setattr(CR.sys, 'platform', 'linux')
+    monkeypatch.setattr(CR.platform, 'node', lambda: 'steamdeck')
+    monkeypatch.setattr(CR, '_own_names', lambda: names)
+    assert CR.scrub('deckard@steamdeck: /run/media/deckard/x') == '<user>@<pc>: /run/media/<user>/x'

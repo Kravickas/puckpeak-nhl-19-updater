@@ -1,0 +1,25 @@
+# The tests on Linux and macOS (the Windows run is tests.yml). Started by hand from the Actions tab. The default
+# roster, the NHL 27 data pack, the NHL.com samples and the game files are not in git, so the tests that need them
+# are skipped here; the others run.
+name: tests-unix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: python -m pip install pytest pytest-xdist pillow numpy certifi
+      - run: python -m pytest -q -n auto -p no:cacheprovider

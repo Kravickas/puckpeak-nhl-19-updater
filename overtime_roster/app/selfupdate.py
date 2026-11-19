@@ -9,8 +9,14 @@ The release is two files next to each other on the server (or wherever OVERTIME_
 
 Each exe updates only from its own file: OvertimeNHL19-cli.exe from OvertimeNHL19-cli.exe, never from the window exe.
 
-Only the Windows exe replaces itself, and never while shadPS4 runs. Running from source is told that a new version
-exists."""
+The Linux and macOS apps have their own release inside latest.json, so they can come out later than the Windows exe:
+  "linux": {"version": "0.97.0", "exe": "OvertimeNHL19-x86_64.AppImage", "sha256": "...", "size": 1, "page": "..."}
+  "macos": {"version": "0.97.0", "exe": "OvertimeNHL19-macos.dmg", ...}
+("notes" and "page" fall back to the ones above them.) A Windows app never reads those keys, and a Linux or macOS app
+never reads the Windows ones: with no key for its system there is no release for it.
+
+The Windows exe and the Linux AppImage replace themselves, never while shadPS4 runs. The macOS app and a run from
+source are told that a new version exists."""
 import hashlib
 import json
 import os
@@ -29,6 +35,11 @@ from . import paths
 RELEASE_URL = 'https://ot.puckpeak.com/app/latest.json'
 EXE_ASSET = 'OvertimeNHL19.exe'
 CLI_ASSET = 'OvertimeNHL19-cli.exe'
+LINUX_ASSET = 'OvertimeNHL19-x86_64.AppImage'       # the file the running AppImage swaps itself for
+MACOS_ASSET = 'OvertimeNHL19-macos.dmg'             # opened by the player: the app tells, it does not swap
+SYSTEM_KEYS = {'linux': 'linux', 'darwin': 'macos'}   # sys.platform -> that system's release inside latest.json
+SYSTEM_ASSETS = {'linux': LINUX_ASSET, 'darwin': MACOS_ASSET}
+APPIMAGE_ENV = ('APPIMAGE', 'APPDIR', 'ARGV0', 'OWD')     # what an AppImage's runtime sets for the program inside
 MAX_BYTES = 512 << 20               # a download larger than this is not an exe of ours (when latest.json gives no size)
 SUMS_ASSET = 'SHA256SUMS.txt'
 STATE_FILE = 'selfupdate.json'      # its own file: the controller rewrites settings.json whole
@@ -117,21 +128,32 @@ def digest_from_sums(text, name):
     return None
 
 
-def asset_for(exe):
-    """Which release file replaces `exe`: the console exe (...-cli.exe) has its own."""
+def asset_for(exe, system=None):
+    """Which release file replaces `exe`: the console exe (...-cli.exe) has its own, Linux and macOS have theirs."""
+    system = system or sys.platform
+    if system in SYSTEM_ASSETS:
+        return SYSTEM_ASSETS[system]
     stem = os.path.splitext(os.path.basename(exe or ''))[0].lower()
     return CLI_ASSET if stem.endswith('-cli') else EXE_ASSET
 
 
 def from_json(data, base, fetch_text=None, asset=EXE_ASSET):
-    """A Release of `asset` from latest.json (read at `base`); None for nonsense. The exe's sha256 comes from
-    SHA256SUMS.txt; when latest.json names one too, both must agree, else the release cannot be installed."""
+    """A Release of `asset` from latest.json (read at `base`); None for nonsense, and for a Linux or macOS file when
+    latest.json has no release for that system. The exe's sha256 comes from SHA256SUMS.txt; when latest.json names
+    one too, both must agree, else the release cannot be installed."""
     if not isinstance(data, dict):
         return None
+    system = next((s for s, a in SYSTEM_ASSETS.items() if a == asset), None)
+    if system:
+        own = data.get(SYSTEM_KEYS[system])
+        if not isinstance(own, dict):
+            return None
+        data = {'notes': data.get('notes'), 'page': data.get('page'), 'sums': data.get('sums'),
+                **{k: v for k, v in own.items() if v is not None}}
     version = parse_version(data.get('version'))
     if version is None:
         return None
-    main = asset == EXE_ASSET
+    main = asset == EXE_ASSET or bool(system)        # "exe", "sha256" and "size" describe this file
     name = (data.get('exe') if main else data.get('cli')) or asset
     exe_url = urllib.parse.urljoin(base, name) if isinstance(name, str) else None
     digest = None
@@ -231,8 +253,15 @@ def set_check_updates(on):
 
 # --- replacing the exe ------------------------------------------------------------------------------
 def running_exe():
-    """The path of the exe that runs, or None when this is not the Windows exe (running from source)."""
-    return os.path.abspath(sys.executable) if os.name == 'nt' and getattr(sys, 'frozen', False) else None
+    """The path of the program file that runs and can be swapped: the Windows exe, or the Linux AppImage (its
+    runtime gives its path in APPIMAGE). None for a run from source, the macOS app (a bundle, replaced by the player
+    from the .dmg) and a Linux app unpacked out of its AppImage."""
+    if not getattr(sys, 'frozen', False):
+        return None
+    if os.name == 'nt':
+        return os.path.abspath(sys.executable)
+    image = os.environ.get('APPIMAGE') if sys.platform == 'linux' else None
+    return os.path.abspath(image) if image and os.path.isfile(image) else None
 
 
 def emulator_running():
@@ -339,6 +368,8 @@ def swap(new_path, exe):
     except OSError:
         pass
     durable.flush(new_path)     # the new exe whole on the disk before the old one gives up its name
+    if os.name != 'nt':
+        os.chmod(new_path, 0o755)   # a download has no exec bit; Linux lets a running file be renamed too
     os.replace(exe, old)
     try:
         os.replace(new_path, exe)
@@ -350,13 +381,26 @@ def swap(new_path, exe):
 def clean_environment():
     """The environment for a program started from the exe (a new exe, shadPS4): a fresh PyInstaller start, without this
     one's unpacked folder on PATH, or the program loads our copies of its DLLs and stops ("vcruntime140.dll incorrectly
-    installed" in Legacy)."""
+    installed" in Legacy). On Linux the frozen app runs with LD_LIBRARY_PATH on its own folder, so a child would load
+    our libraries (our libstdc++, our Qt) in place of the system's: the value from before the start
+    (LD_LIBRARY_PATH_ORIG, kept by PyInstaller) goes back, or the variable goes away. Run from its AppImage, the app
+    also has APPIMAGE, APPDIR, ARGV0 and OWD naming its own file and mount: a child that is an AppImage unpacked
+    (shadPS4's AppRun, the PKG tool) would take them for its own and look for its files in ours, so they go too."""
     env = dict(os.environ)
+    if os.name != 'nt':
+        for name in APPIMAGE_ENV:
+            env.pop(name, None)
     env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
     base = getattr(sys, '_MEIPASS', None)
     if base and env.get('PATH'):
         env['PATH'] = os.pathsep.join(p for p in env['PATH'].split(os.pathsep)
                                       if not os.path.normcase(p).startswith(os.path.normcase(base)))
+    if base and os.name != 'nt':
+        before = env.pop('LD_LIBRARY_PATH_ORIG', None)
+        if before is not None:
+            env['LD_LIBRARY_PATH'] = before
+        else:
+            env.pop('LD_LIBRARY_PATH', None)
     return env
 
 
@@ -365,7 +409,9 @@ def restart(exe, args=()):
     flags = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
     kw = dict(close_fds=True, creationflags=flags, cwd=os.path.dirname(exe), env=clean_environment())
     base = getattr(sys, '_MEIPASS', None)
-    if os.name != 'nt' or not base:
+    if os.name != 'nt':
+        return subprocess.Popen([exe, *args], start_new_session=True, **kw)
+    if not base:
         return subprocess.Popen([exe, *args], **kw)
     import ctypes
     k32 = ctypes.windll.kernel32

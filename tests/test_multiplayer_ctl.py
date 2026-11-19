@@ -1357,6 +1357,22 @@ def test_consent_on_sends_a_crash_report(mp, tmp_path, monkeypatch):
     assert mp.report == {'busy': False, 'note': 'Report sent (id rid1).', 'error': ''}
 
 
+def test_linux_sends_the_first_run_report_only_with_consent(mp, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(MC.crossplay, 'pool', lambda system=None: 'L')
+    monkeypatch.setattr(MC.firstrun, 'run', lambda emu, game_dir, text, base: calls.append((emu, text)) or 'rid9')
+    Sent(monkeypatch)
+    _game(mp, monkeypatch, tmp_path, CLEAN, reports=False)
+    assert calls == []
+    _game(mp, monkeypatch, tmp_path, CLEAN, reports=True)
+    assert calls == [('shadPS4.exe', CLEAN)]
+    monkeypatch.setattr(MC.firstrun, 'run', lambda *a: (_ for _ in ()).throw(CR.ReportError('no')))
+    mp.first_run('shadPS4.exe', 'game')                 # a refusal is logged, never raised
+    monkeypatch.setattr(MC.crossplay, 'pool', lambda system=None: '')
+    monkeypatch.setattr(MC.firstrun, 'run', lambda *a: pytest.fail('Windows sends no first-run report'))
+    mp.first_run('shadPS4.exe', 'game')
+
+
 def test_a_report_leaves_out_the_players_shadnet_details(mp, tmp_path, monkeypatch):
     sent = Sent(monkeypatch)
     user = tmp_path / 'user'
@@ -1487,6 +1503,21 @@ def test_the_servers_link_figures_go_to_the_corner_only_while_a_match_runs(mp):
     assert rec.calls[-1] == ('link', None) and rec.calls[-2] == ('link', link)
     assert mp.ctl.prefs['multiplayer']['link'] is True and MC.MultiplayerCtl(mp.ctl).show_link is True
 
+
+
+def test_a_server_chat_line_goes_over_the_game_once_with_no_match_running(mp):
+    # 2026-11-18 refused-position pop-up: the server writes a lobby chat line with who = -1 (lobby.SERVER_WHO)
+    rec = RecordingHud()
+    mp.hud_ok, mp.make_hud = (lambda: True), (lambda: rec)
+    mp.code, mp.token = 'ABCDE', 'tok'
+    hello = {'n': 1, 'who': 1, 'name': 'Bo', 'text': 'hi'}
+    told = {'n': 2, 'who': -1, 'name': 'Overtime', 'text': 'Ann: G on Home is taken by Bo. Back out, pick another position, then Play.'}
+    mp._apply({'state': 'full', 'you': 0, 'players': [], 'chat': [hello]})
+    assert rec.calls == []                                   # the first look only sets the mark
+    mp._apply({'state': 'full', 'you': 0, 'players': [], 'chat': [hello, told]})
+    assert rec.calls == [('chat', 'Overtime', told['text'])]  # no game running: still handed to the overlay
+    mp._apply({'state': 'full', 'you': 0, 'players': [], 'chat': [hello, told]})
+    assert len(rec.calls) == 1                               # once
 
 
 def test_quick_phrase_hotkeys_send_nothing_while_chat_is_off(mp):

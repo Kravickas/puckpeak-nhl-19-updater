@@ -11,6 +11,7 @@ import csv
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -18,7 +19,7 @@ import time
 
 from overtime_core import gamefiles, overlay
 
-from . import gamesetup, onlinetag, selfupdate
+from . import emufile, gamesetup, onlinetag, selfupdate
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,8 @@ class LaunchError(RuntimeError):
 
 def command(emu_exe, game_dir, patch_file=None):
     """shadPS4 starts the base game's eboot.bin and lays its `-UPDATE` / `-patch` and `-mods` folders over it."""
-    cmd = [os.path.abspath(emu_exe), '-g', os.path.join(gamefiles.roots(game_dir)[0], 'eboot.bin')]
+    program = emufile.program(os.path.abspath(emu_exe))[0]      # an unpacked AppImage: its AppRun
+    cmd = [program, '-g', os.path.join(gamefiles.roots(game_dir)[0], 'eboot.bin')]
     if patch_file:
         cmd += ['-p', os.path.abspath(patch_file)]
     return cmd
@@ -56,8 +58,8 @@ def start(emu_exe, game_dir, patch_file=None, running=None, popen=subprocess.Pop
     cwd = gamesetup.start_dir(emu_exe)
     if not cwd:
         raise LaunchError(f'shadPS4 cannot use the data folder {gamesetup.emu_user_dir(emu_exe)}: it reads the "user" '
-                          'folder inside the folder it starts from, or %APPDATA%\\shadPS4. Pick one of those in Setup, '
-                          'Folders, shadPS4 data.')
+                          f'folder inside the folder it starts from, or {gamesetup.data_label()}. Pick one of those in '
+                          'Setup, Folders, shadPS4 data.')
     try:        # the matchmaking tag of this very start: only games that stay in step meet (onlinetag.py)
         onlinetag.apply(emu_exe, game_dir, patch_file, exe)
     except onlinetag.TagError as err:
@@ -69,8 +71,10 @@ def start(emu_exe, game_dir, patch_file=None, running=None, popen=subprocess.Pop
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | ABOVE_NORMAL
     env = selfupdate.clean_environment()
     env['OVERTIME_WINDOW_TITLE'] = WINDOW_TITLE     # a fork build may show it as the whole title (none does yet)
+    env.update(emufile.program(os.path.abspath(run))[1])    # an AppImage where FUSE is missing unpacks itself
+    more = {} if sys.platform == 'win32' else {'start_new_session': True}   # the game outlives the app, as on Windows
     proc = popen(command(run, game_dir, patch_file), cwd=cwd,
-                 creationflags=flags, close_fds=True, env=env)
+                 creationflags=flags, close_fds=True, env=env, **more)
     if popen is subprocess.Popen and sys.platform == 'win32':
         full_speed(proc.pid)
         from . import gameicon      # NHL 19's icon on the emulator's window, not shadPS4's (owner 2026-11-12)
@@ -138,14 +142,35 @@ def parse_tasklist(text):
     return found
 
 
+def parse_ps(text):
+    """[(pid, lower-case name)] of the shadPS4 game processes in `ps -A -o pid=,comm=` output (Linux, macOS). macOS
+    prints the whole path as the name, so the last part counts. Linux cuts a name to 15 characters, so QtLauncher is
+    listed as shadPS4QtLaunch: "launch" marks it, else the name rule is parse_tasklist's."""
+    found = []
+    for line in text.splitlines():
+        pid, _, name = line.strip().partition(' ')
+        name = os.path.basename(name.strip()).lower()
+        if not name.startswith('shadps4') or overlay.launcher_process(name):
+            continue
+        try:
+            found.append((int(pid), name))
+        except ValueError:
+            continue
+    return found
+
+
 def game_processes(run=subprocess.run):
-    """[(pid, name)] of the running shadPS4 game processes (Windows), or None when tasklist could not be read."""
+    """[(pid, name)] of the running shadPS4 game processes, or None when the process list could not be read
+    (tasklist on Windows, ps elsewhere)."""
     try:
-        out = run(['tasklist', '/FO', 'CSV', '/NH'], capture_output=True, text=True, timeout=30,
-                  creationflags=_no_window()).stdout
+        if sys.platform == 'win32':
+            out = run(['tasklist', '/FO', 'CSV', '/NH'], capture_output=True, text=True, timeout=30,
+                      creationflags=_no_window()).stdout
+            return parse_tasklist(out or '')
+        out = run(['ps', '-A', '-o', 'pid=,comm='], capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
         return None
-    return parse_tasklist(out or '')
+    return parse_ps(out or '')
 
 
 class Windows:
@@ -245,6 +270,29 @@ def _taskkill(pid, run=subprocess.run):
         pass                                            # the process list after it decides
 
 
+class Signals:
+    """Linux and macOS: no window handles to post WM_CLOSE to, so a process is asked to end by SIGTERM (SDL turns it
+    into its quit event: shadPS4 shuts down as if its window was closed). The "windows" are the pids themselves, so
+    stop_emulator runs the same steps as with Windows."""
+
+    def visible_of(self, pids):
+        return sorted(pids)
+
+    def close(self, pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return False                                # gone already, or not ours: the process list decides
+        return True
+
+
+def _sigkill(pid):
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass                                            # the process list after it decides
+
+
 def _wait_gone(pids, seconds, processes, sleep, clock):
     """Poll until none of `pids` runs or `seconds` pass; returns the pids still running (an unreadable list keeps
     the last known ones)."""
@@ -261,12 +309,11 @@ def _wait_gone(pids, seconds, processes, sleep, clock):
 
 
 def stop_emulator(grace=10, *, processes=None, windows=None, kill=None, sleep=time.sleep, clock=time.monotonic):
-    """Close the running shadPS4 game so lobby Ready can restart NHL 19 with the match setup. WM_CLOSE to its windows
-    first so the game can shut down cleanly, up to `grace` seconds, then terminate what is left (taskkill /T /F).
-    Returns 'none' (nothing ran), 'closed', 'killed', 'failed' (still running, or the process list was unreadable), or
-    'unsupported' off Windows (nothing is done there; the player closes NHL 19)."""
-    if sys.platform != 'win32':
-        return 'unsupported'
+    """Close the running shadPS4 game so lobby Ready can restart NHL 19 with the match setup. It is asked to close
+    first so the game can shut down cleanly (Windows: WM_CLOSE to its windows; Linux and macOS: SIGTERM), up to `grace`
+    seconds, then what is left is terminated (taskkill /T /F; SIGKILL). Returns 'none' (nothing ran), 'closed',
+    'killed', or 'failed' (still running, or the process list was unreadable)."""
+    win32 = sys.platform == 'win32'
     processes = processes or game_processes
     found = processes()
     if found is None:
@@ -276,7 +323,7 @@ def stop_emulator(grace=10, *, processes=None, windows=None, kill=None, sleep=ti
         return 'none'
     asked = 0
     try:
-        win = windows if windows is not None else Windows()
+        win = windows if windows is not None else Windows() if win32 else Signals()
         for hwnd in win.visible_of(pids):
             asked += bool(win.close(hwnd))
     except Exception:                                   # no window API: terminating is the fallback
@@ -285,7 +332,7 @@ def stop_emulator(grace=10, *, processes=None, windows=None, kill=None, sleep=ti
     if not left:
         return 'closed'
     for pid in sorted(left):
-        (kill or _taskkill)(pid)
+        (kill or (_taskkill if win32 else _sigkill))(pid)
     return 'failed' if _wait_gone(left, KILL_WAIT, processes, sleep, clock) else 'killed'
 
 

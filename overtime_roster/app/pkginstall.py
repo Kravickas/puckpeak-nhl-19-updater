@@ -7,6 +7,10 @@ re-hosted by Overtime, and run as a program of its own. The base game goes into 
 layout shadPS4 mounts over the base and Overtime reads (gamefiles.roots). Nothing in an existing folder is changed:
 each PKG is extracted into a fresh scratch folder on the target drive, then moved to its place in one rename.
 Standard library only.
+
+Linux (0.97.0): the same release's AppImage, run with APPIMAGE_EXTRACT_AND_RUN (no FUSE needed). macOS: that release
+has no build for it, so a PKG is refused there in words until Overtime builds the tool from its source
+(docs/notes/macos-support.md); an extracted game folder works as everywhere.
 """
 import hashlib
 import http.client
@@ -14,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -21,13 +26,29 @@ import zipfile
 
 from overtime_core import gamefiles, overlay
 
-from . import gamesetup, packdownload, paths
+from . import gamesetup, packdownload, paths, selfupdate
 
-TOOL_URL = ('https://github.com/AzaharPlus/shadPS4Plus/releases/download/PKG_EXTRACTOR_1_1/'
-            'ShadPs4Plus-PkgExtractor-1.1-windows.zip')
-TOOL_SHA256 = 'a6a6dee84c1283949245c868e580ff8d0049d0e73df9de3096460ee26c6f04d7'
-TOOL_SIZE = 1026861
-TOOL_EXE = 'pkg_extractor.exe'
+_RELEASE = 'https://github.com/AzaharPlus/shadPS4Plus/releases/download/PKG_EXTRACTOR_1_1/'
+# the release's file per system: (file, sha256, size, the program's name in the app's folder). sha256 and size are
+# GitHub's own for each asset (its API's "digest", read 2026-11-18; the Windows one is the value pinned since 0.90)
+TOOLS = {
+    'win32': ('ShadPs4Plus-PkgExtractor-1.1-windows.zip',
+              'a6a6dee84c1283949245c868e580ff8d0049d0e73df9de3096460ee26c6f04d7', 1026861, 'pkg_extractor.exe'),
+    'linux': ('ShadPs4Plus-PkgExtractor-1.1-linux.AppImage',
+              'b360bc691aa3d89071aa707224155f6eade348d314cf7798ac550e31c11a7bcc', 2415096, 'pkg_extractor.AppImage'),
+}
+NO_TOOL = ('Overtime cannot unpack a PKG on this system yet. Extract the game on a Windows or Linux PC (or with '
+           "shadPS4Plus's PKG extractor), copy the folder here, then pick that folder.")
+
+
+def tool_for(system=None):
+    """(download URL, sha256, size, program name) of the PKG tool for this system, or None (macOS: no build)."""
+    system = system or sys.platform
+    found = TOOLS.get(system if system in ('win32', 'darwin') else 'linux')
+    return (_RELEASE + found[0], *found[1:]) if found else None
+
+
+TOOL_URL, TOOL_SHA256, TOOL_SIZE, TOOL_EXE = tool_for() or (None, None, 0, 'pkg_extractor')
 SOURCE = 'https://github.com/AzaharPlus/shadPS4Plus/tree/PKG_EXTRACTOR_1_1/extractor'     # GPL-2.0, its source
 BASE, UPDATE, DLC = 101, 102, 103      # pkg_extractor --check-type's exit codes; 0 = not a PKG it reads
 MAGIC = b'\x7fCNT'                     # a PS4 PKG's first four bytes; the content id is at 0x40 (36 bytes)
@@ -96,8 +117,24 @@ def _download(part, progress=None, opener=None):
         raise PkgError('The PKG tool downloaded is not the one Overtime knows, so it was not used.')
 
 
+class _NoZip:
+    """ensure_tool's stand-in for the zip when the download is the program itself: nothing to unpack."""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    @staticmethod
+    def infolist():
+        return ()
+
+
 def ensure_tool(progress=None, opener=None):
-    """pkg_extractor.exe in the app's folder, downloaded (the first time) from the shadPS4Plus release and checked."""
+    """The PKG tool in the app's folder, downloaded (the first time) from the shadPS4Plus release and checked: a zip
+    holding pkg_extractor.exe on Windows, one AppImage on Linux. PkgError where the release has no build (macOS)."""
+    if not TOOL_URL:
+        raise PkgError(NO_TOOL)
     exe, stamp = tool_exe(), _stamp()
     try:
         with open(stamp, encoding='ascii') as f:
@@ -109,7 +146,10 @@ def ensure_tool(progress=None, opener=None):
     part = os.path.join(folder, 'tool.zip.part')
     try:
         _download(part, progress, opener)
-        with zipfile.ZipFile(part) as z:
+        if not TOOL_URL.lower().endswith('.zip'):       # one program file (Linux: the AppImage), not a zip
+            os.chmod(part, 0o755)
+            os.replace(part, exe)
+        with zipfile.ZipFile(part) if os.path.exists(part) else _NoZip() as z:
             for info in z.infolist():
                 name = os.path.basename(info.filename.replace('\\', '/'))
                 if info.is_dir() or not name or name in ('.', '..'):
@@ -130,11 +170,20 @@ def ensure_tool(progress=None, opener=None):
     return exe
 
 
+def _environment(exe):
+    """The tool's environment: the one from before this program; an AppImage is told to unpack itself for the run,
+    so it starts with or without FUSE (a Steam Deck's Game Mode has none)."""
+    env = selfupdate.clean_environment()
+    if exe.lower().endswith('.appimage'):
+        env['APPIMAGE_EXTRACT_AND_RUN'] = '1'
+    return env
+
+
 def _popen(args, popen=subprocess.Popen):
     try:
         return popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                      cwd=os.path.dirname(args[0]), text=True, encoding='utf-8', errors='replace',
-                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), env=_environment(args[0]))
     except OSError as err:
         raise PkgError(f'The PKG tool did not start ({err.strerror or err}). Your antivirus may have stopped it.') \
             from err

@@ -72,6 +72,17 @@ def test_default_carries_the_block_and_an_unknown_eboot_does_not():
     assert bent != xmlpatch.build(*SERVER) and not xmlpatch.has_crossvendor(bent)
 
 
+def test_a_5_05_backport_gets_the_block_at_the_next_start():
+    # live 2026-11-18: an EU tester's eboot.bin backported to SDK 5.05 (the same code, docs/notes/eboot-variants.md) was
+    # left without the block, so its tag (NHL19_1.60-Qn8K) never met the v1.60 players' (UvSP). Ready and Play repoint
+    # the installed patch with for_eboot's features, so the block comes in without Patch.
+    backport = '3b9211311e41a88a51fae78ff8f666141a41106254bac2516cdf66e43ac585fc'
+    assert backport in crossvendor.EBOOT_SHA256 and xmlpatch.for_eboot(backport) == xmlpatch.DEFAULT
+    old = xmlpatch.build(*SERVER, features=xmlpatch.NO_CROSSVENDOR)
+    new = xmlpatch.repoint(old, *SERVER, features=xmlpatch.for_eboot(backport))
+    assert new == xmlpatch.build(*SERVER) and xmlpatch.has_crossvendor(new)       # the v1.60 players' patch
+
+
 def test_repoint_brings_an_080_file_up_and_keeps_the_gate():
     for newline in ('\r\n', '\n'):
         for earlier in (xmlpatch.EARLIER[2], xmlpatch.EARLIER[3]):     # 0.80.0's file, the 0.81.0 candidate's

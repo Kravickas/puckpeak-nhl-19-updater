@@ -16,6 +16,7 @@ PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(PACKAGE, 'assets')
 PACKS = os.path.join(PACKAGE, 'packs')      # the build's packs/: the NHL 27 data pack only (absent from source)
 ICON = os.path.join(ASSETS, 'app.ico')
+ICON_PNG = os.path.join(ASSETS, 'app.png')  # made of the .ico by a Linux or macOS build (absent from source)
 TABS = ('setup', 'patch', 'update', 'roster', 'lines', 'strategy', 'jerseys', 'calendar', 'office',
         'multiplayer')   # web/js/main.js
 NEEDED = [os.path.join(WEB, *p) for p in (
@@ -33,12 +34,55 @@ WIDTH, HEIGHT = 1080, 780   # at least this where the screen has room (Legacy's 
 HEADLESS = False            # the windowed exe has no console: browser mode then shows a box to stop it (launcher.py)
 
 
+def window_toolkit(system=None):
+    """pywebview's `gui` for this system. None lets it choose (Windows: WebView2, macOS: Cocoa's WKWebView). Linux is
+    Qt (PySide6 with QtWebEngine, which the AppImage carries), never GTK: its WebKit comes from the system and is not
+    on every one."""
+    return 'qt' if (system or sys.platform) == 'linux' else None
+
+
+def qt_flags(env=None):
+    """Chromium's flags for the Qt window (QTWEBENGINE_CHROMIUM_FLAGS), the player's own kept: no GPU drawing, as on
+    Windows (OVERTIME_GPU=1 undoes it), and no sandbox when the app runs from an AppImage. Ubuntu 24.04 and newer
+    refuse a program started from an AppImage's mount the user namespace the sandbox is made of, and the window would
+    not come up; the page it shows is the app's own."""
+    env = os.environ if env is None else env
+    flags = (env.get('QTWEBENGINE_CHROMIUM_FLAGS') or '').split()
+    want = ([] if env.get('OVERTIME_GPU') == '1' else ['--disable-gpu']) + (
+        ['--no-sandbox'] if env.get('APPIMAGE') or env.get('APPDIR') else [])
+    return ' '.join(flags + [f for f in want if f not in flags])
+
+
+def prepare_toolkit(gui, env=None):
+    """What must be in the environment before pywebview starts that toolkit."""
+    env = os.environ if env is None else env
+    if gui != 'qt':
+        return
+    env.setdefault('QT_API', 'pyside6')         # qtpy's choice among the Qt bindings: the one in the AppImage
+    env['QTWEBENGINE_CHROMIUM_FLAGS'] = qt_flags(env)
+    if '--no-sandbox' in env['QTWEBENGINE_CHROMIUM_FLAGS'].split():
+        env.setdefault('QTWEBENGINE_DISABLE_SANDBOX', '1')
+
+
 def have_pywebview():
+    """Can the app draw its own window? pywebview, and on Linux the Qt it draws with."""
     try:
         import webview  # noqa: F401
-    except ImportError:
+        if window_toolkit() == 'qt':
+            os.environ.setdefault('QT_API', 'pyside6')
+            import qtpy  # noqa: F401
+            import PySide6.QtWebEngineWidgets  # noqa: F401
+    except Exception:  # noqa: BLE001 (an ImportError, or a Qt that cannot load a system library)
         return False
     return True
+
+
+def window_icon():
+    """The window's icon: the PNG a Linux or macOS build makes of it when it is there, else Windows' .ico."""
+    for path in ((ICON_PNG, ICON) if os.name != 'nt' else (ICON,)):
+        if os.path.exists(path):
+            return path
+    return None
 
 
 def missing_files():
@@ -221,6 +265,19 @@ def start_match_restore(host):
 
 
 # --- the two ways to show the app -------------------------------------------------------------------
+def no_console(frozen=None, system=None, stream=None):
+    """Linux and macOS: was the app started with a double-click? Then its output goes nowhere a player sees (it is
+    not None as in the Windows exe, so HEADLESS does not say it)."""
+    frozen = getattr(sys, 'frozen', False) if frozen is None else frozen
+    if (system or sys.platform) == 'win32' or not frozen:
+        return False
+    stream = sys.stdout if stream is None else stream
+    try:
+        return not stream.isatty()
+    except (AttributeError, ValueError):
+        return True
+
+
 def run_browser(host, api, port=0, open_browser=True, ready=None, quit=None):
     from .server import AppServer
     startup.close_splash()
@@ -233,7 +290,9 @@ def run_browser(host, api, port=0, open_browser=True, ready=None, quit=None):
         threading.Timer(0.3, webbrowser.open, (url,)).start()
     if quit is not None:
         quit.fn = lambda: os._exit(0)
-    if HEADLESS:            # no console to press Ctrl+C in: a box is the way to stop
+    # no console to press Ctrl+C in: a box is the way to stop. A Linux desktop without kdialog or zenity has no box
+    # either: there the app stays up until the page's own Quit
+    if HEADLESS or (no_console() and webview2.can_box()):
         server.serve_background()
         webview2.message(APP_NAME, f'{APP_NAME} is open in your browser:\n{url}\n\n'
                                    'Keep this box open while you use it. Press OK to close the app.', info=True)
@@ -345,6 +404,8 @@ def run_window(host, api, quit=None, ctl=None):
         flags = os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '')
         if '--disable-gpu' not in flags:
             os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (flags + ' --disable-gpu').strip()
+    gui = window_toolkit()
+    prepare_toolkit(gui)
     width, height, x, y = window_box(webview)
     window = webview.create_window(f'{APP_NAME} {VERSION}', os.path.join(WEB, 'index.html'), js_api=api,
                                    width=width, height=height, x=x, y=y, min_size=MIN_SIZE,
@@ -372,12 +433,45 @@ def run_window(host, api, quit=None, ctl=None):
     if quit is not None:
         quit.fn = window.destroy
     dog.start()
-    webview.start(http_server=True, private_mode=True, storage_path=watchdog.browser_folder(),
-                  debug=os.environ.get('OVERTIME_DEVTOOLS') == '1', icon=ICON if os.path.exists(ICON) else None)
+    if ctl is not None and os.name != 'nt' and getattr(sys, 'frozen', False):
+        threading.Thread(target=first_open, args=(host,), daemon=True, name='first-open').start()
+    webview.start(http_server=True, private_mode=True, storage_path=watchdog.browser_folder(), gui=gui,
+                  debug=os.environ.get('OVERTIME_DEVTOOLS') == '1', icon=window_icon())
     if dog.outcome == 'browser':
         host.remove_transport(send)
         return run_browser(host, api, quit=quit)
     return 0
+
+
+def first_open(host, ask=None, wait=startlog.page_up.wait):
+    """Linux and macOS, once the page is up: the one-time offers that make the app a program like any other. Linux, run
+    from its AppImage: the app menu's entry (on SteamOS with the steps for Gaming Mode), written anew by itself when
+    the file has moved. An Apple-chip Mac without Rosetta: Apple's own installer for it, since shadPS4 is an Intel
+    program. Each is asked once; No is remembered. Never raises."""
+    from ..app import desktopentry, preflight
+    ask = ask or webview2.message
+    try:
+        if not wait(120):
+            return
+        exe = desktopentry.appimage()
+        if exe and desktopentry.refresh(exe, window_icon()):
+            host.log(f'The app menu entry now points at {exe}.')
+        elif desktopentry.wanted(exe):
+            deck = desktopentry.steamos()
+            yes = ask(APP_NAME, f'Add {APP_NAME} to your app menu, so it starts like any other program?'
+                      + (f'\n\n{desktopentry.STEAM_STEPS}' if deck else ''), ask=True)
+            done = desktopentry.answer(yes, exe, window_icon())
+            if yes:
+                host.log(f'{APP_NAME} is in the app menu.' if done else 'The app menu entry could not be written.')
+        rosetta = next((r for r in preflight.cached() if r['fix'] == 'install_rosetta' and r['ok'] is False), None)
+        if rosetta and ask(APP_NAME, f"{rosetta['text']}\n\nInstall Rosetta now? It is Apple's own, takes a minute and "
+                                     'needs no restart.', ask=True):
+            ok = preflight.install_rosetta()
+            preflight.refresh()
+            host.log('Rosetta is installed.' if ok else 'Rosetta could not be installed. In Terminal: '
+                     + ' '.join(preflight.ROSETTA_COMMAND))
+    except Exception as err:  # noqa: BLE001 (an offer must never take the app down)
+        startlog.note(f'first open: {err}')
 
 
 def main(browser=False, port=0, open_browser=True, game_dir=None, save_dir=None):
@@ -488,6 +582,43 @@ def selftest():
     lines.append('PASS' if not bad else f'FAIL ({bad})')
     _report(lines, 'selftest.txt')
     return 0 if not bad else 1
+
+
+def selftest_window(timeout=120.0):
+    """--selftest-window: the app's real window starts, hidden, and the page loads and draws its data, as at a
+    player's start. 0 then; 1 when the toolkit is not there, the window did not start, or the page was not up within
+    `timeout` seconds. For a build's smoke run; on a machine with no screen, Linux takes QT_QPA_PLATFORM=offscreen."""
+    lines = [f'{APP_NAME} {VERSION} selftest-window  frozen={bool(getattr(sys, "frozen", False))}  '
+             f'toolkit={window_toolkit() or "system"}']
+    ok = False
+    if not have_pywebview():
+        lines.append('FAIL  the window toolkit is not there (pywebview, and on Linux PySide6 with QtWebEngine)')
+    else:
+        try:
+            import webview
+            roomy_server()
+            web_types()
+            gui = window_toolkit()
+            prepare_toolkit(gui)
+            host, _controller, api = build(reopen=False)
+            window = webview.create_window(f'{APP_NAME} {VERSION}', os.path.join(WEB, 'index.html'), js_api=api,
+                                           width=WIDTH, height=HEIGHT, hidden=True, background_color=BACKGROUND)
+            host.add_transport(lambda text: window.evaluate_js(f'window.OT && window.OT.receive({text})'))
+            seen = {}
+
+            def watch():
+                seen['up'] = startlog.page_up.wait(timeout)
+                window.destroy()
+            webview.start(watch, http_server=True, private_mode=True, storage_path=watchdog.browser_folder(), gui=gui)
+            ok = bool(seen.get('up'))
+            lines.append('ok    the window started and the page drew its data' if ok else
+                         f'FAIL  the page was not up within {timeout:.0f} s'
+                         + (' (it asked for its data)' if startlog.ready_called.is_set() else ' (it never asked)'))
+        except Exception as err:  # noqa: BLE001
+            lines.append(f'FAIL  the window did not start: {err!r}')
+    lines.append('PASS' if ok else 'FAIL')
+    _report(lines, 'selftest-window.txt')
+    return 0 if ok else 1
 
 
 def _pack_lines(lines):
@@ -610,8 +741,10 @@ def entry(argv=None):
     """The exe's entry: --selftest, --update, --download-kits, --default-db, or the app (`python -m overtime_roster`
     arguments)."""
     argv = sys.argv[1:] if argv is None else list(argv)
-    if any(a in argv for a in ('--selftest', '--update', '--download-kits', '--default-db')):
+    if any(a in argv for a in ('--selftest', '--selftest-window', '--update', '--download-kits', '--default-db')):
         startup.close_splash()          # no window comes: the splash goes now
+    if '--selftest-window' in argv:
+        return selftest_window()
     if '--selftest' in argv:
         return selftest()
     if '--update' in argv:

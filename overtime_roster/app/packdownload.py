@@ -31,15 +31,16 @@ import urllib.request
 
 from overtime_core import art, clubart, durable, kitcompose
 
-from . import defaultdb, paths, selfupdate, sources
+from . import crossplay, defaultdb, emufile, paths, selfupdate, sources
 from .patch import (ART_ENV, ART_PACKS, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACKS, KITS_PACK, PEOPLE_PACK,
                     PHOTOS_PACK, mark_checked)
 
 # name -> what a player reads, and whether the patch needs it for the art (core; until v0.10.0 the one click fetched those)
 EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
-EMULATOR_EXE = 'shadPS4.exe'
+EMULATOR_EXE = emufile.name()           # shadPS4.exe; shadps4.AppImage on Linux, shadps4 on macOS (emufile.py)
 NIGHTLY_PACK = 'shadps4_nightly.zip'    # not art: Overtime Native v1 (boost.py 'nightly')
-NATIVE2_PACK = 'shadps4_native2.zip'    # not art: Overtime Native v2 (boost.py 'native2')
+# not art: Overtime Native v2 (boost.py 'native2'); shadps4_native2_linux.zip / _macos.zip on those systems
+NATIVE2_PACK = emufile.pack_name('shadps4_native2.zip')
 CPUTEST_PACK = 'cpu_estimates.zip'      # not art: tools/cpu_estimates.py as an exe, Check my CPU (cpucheck.py)
 CPUTEST_EXE = 'cpu-estimates.exe'
 TOOL_PACKS = (EMULATOR_PACK, NIGHTLY_PACK, NATIVE2_PACK, CPUTEST_PACK)   # the program packs: each one exe, not in PACKS (no art)
@@ -121,6 +122,7 @@ def _read(url, fetch_text):
         return None
     with _lock:
         _news[url] = data.get('emulator') if isinstance(data.get('emulator'), dict) else None
+    crossplay.remember(data.get('crossplay'))      # the server's switch for Linux / macOS cross-play (none: off)
     listed = data.get('packs') if isinstance(data.get('packs'), dict) else {}
     sums = None
     if any(isinstance(listed.get(name), dict) for name in KNOWN):
@@ -634,7 +636,7 @@ def exe_entry(z, exe_name):
 
 
 def emulator_entry(z):
-    """The one shadPS4.exe in the ZipFile z. ArtError otherwise."""
+    """The one shadPS4 program file of this system in the ZipFile z (emufile.NAMES). ArtError otherwise."""
     return exe_entry(z, EMULATOR_EXE)
 
 
@@ -649,8 +651,12 @@ def _check_exe(path, exe_name):
 
 
 def check_emulator(path):
-    """The emulator pack holds one shadPS4.exe and that reads as a Windows program. ArtError otherwise."""
-    _check_exe(path, EMULATOR_EXE)
+    """The emulator pack holds one shadPS4 program file and that reads as a program of this system (Windows:
+    shadPS4.exe; a pack made for another system is refused). ArtError otherwise."""
+    try:
+        emufile.check(path)
+    except emufile.EmuFileError as err:
+        raise art.ArtError(str(err)) from err
 
 
 def check_cputest(path):

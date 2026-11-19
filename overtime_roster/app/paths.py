@@ -12,10 +12,30 @@ def default_game_dir():
     return os.environ.get('OVERTIME_GAME_DIR', GAME_DIR)
 
 
+def data_root():
+    """The folder programs keep their data in, as shadPS4 picks it (src/common/path_util.cpp): %APPDATA% on Windows,
+    ~/Library/Application Support on macOS, else $XDG_DATA_HOME or ~/.local/share. A set APPDATA wins on every
+    system (the tests point it into their own folder)."""
+    if os.environ.get('APPDATA'):
+        return os.environ['APPDATA']
+    if sys.platform == 'darwin':
+        return os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
+    if sys.platform != 'win32':
+        return os.environ.get('XDG_DATA_HOME') or os.path.join(os.path.expanduser('~'), '.local', 'share')
+    return os.path.expanduser('~')
+
+
+def data_root_label():
+    """data_root() as the player reads it in a message."""
+    if sys.platform == 'win32':
+        return '%APPDATA%'
+    return '~/Library/Application Support' if sys.platform == 'darwin' else '~/.local/share'
+
+
 def default_save_dir(title='CUSA11126'):
     if 'OVERTIME_SAVE_DIR' in os.environ:
         return os.environ['OVERTIME_SAVE_DIR']
-    return os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), SAVE_SUBDIR, title)
+    return os.path.join(data_root(), SAVE_SUBDIR, title)
 
 
 def temporary(path):
@@ -31,9 +51,8 @@ def temporary(path):
 
 
 def app_home():
-    """%APPDATA%\\OvertimeRoster (or OVERTIME_ROSTER_HOME)."""
-    home = os.environ.get('OVERTIME_ROSTER_HOME') or os.path.join(
-        os.environ.get('APPDATA', os.path.expanduser('~')), 'OvertimeRoster')
+    """%APPDATA%\\OvertimeRoster (or OVERTIME_ROSTER_HOME); off Windows, OvertimeRoster in data_root()."""
+    home = os.environ.get('OVERTIME_ROSTER_HOME') or os.path.join(data_root(), 'OvertimeRoster')
     os.makedirs(home, exist_ok=True)
     return home
 

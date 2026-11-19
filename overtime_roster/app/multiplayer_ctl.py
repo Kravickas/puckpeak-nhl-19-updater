@@ -28,7 +28,7 @@ import webbrowser
 from overtime_core import history as H, overlay, rules as RU, xmlpatch
 
 from .. import VERSION, hud
-from . import (boost, crashreport as CR, emusettings, gamesetup, history_view as HV, hostroster, jobs, keypress, launch,
+from . import (boost, crashreport as CR, crossplay, emusettings, firstrun, gamesetup, history_view as HV, hostroster, jobs, keypress, launch,
                lobby_client as LC, matchsetup, onlineemu, onlinetag, patch_ctl, paths, shadnet)
 from .registry import Part
 
@@ -1659,7 +1659,21 @@ class MultiplayerCtl(Part):
         if not self.reports or not emu:
             return
         text, game_dir, ext = self._game_log(emu), self.ctl.game_dir, self.ext()[0]
-        self._run_report(lambda: self._auto_job(emu, game_dir, text, ext))
+        self._run_report(lambda: (self.first_run(emu, game_dir, text), self._auto_job(emu, game_dir, text, ext)))
+
+    def first_run(self, emu, game_dir, text=None):
+        """Linux and macOS, opted in: the one report of the first game on this shadPS4 build (firstrun.py). Called
+        after a lobby game and after Setup's Play; never raises."""
+        if not self.reports or not emu or not crossplay.pool():
+            return
+        try:
+            rid = firstrun.run(emu, game_dir, self._game_log(emu) if text is None else text, self.url())
+            if rid:
+                self.ctl.host.log(f'First-run report sent ({rid}). Thank you.')
+        except (CR.ReportError, LC.LobbyRefused) as err:
+            self.ctl.host.log(f'The first-run report was not sent ({err})')
+        except Exception as err:    # noqa: BLE001 (a report must never break the end of a game)
+            jobs.log_block(err, 'First-run report')
 
     def _auto_job(self, emu, game_dir, text, ext):
         reason = None

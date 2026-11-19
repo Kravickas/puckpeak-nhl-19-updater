@@ -10,14 +10,31 @@ the local server's event stream in browser mode. The status slice comes first in
 """
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 
-from ..app import jobs
+from ..app import jobs, selfupdate
 
 PUSH_EVERY = 0.04
 KEEP_LINES = 5000
 QUICK = ('status', 'question')  # slices whose snapshot takes no controller lock (the quick pusher sends them)
+
+
+def open_file(path, popen=subprocess.Popen):
+    """Open `path` with the system's own program for it: Explorer's choice on Windows, `open` on macOS, `xdg-open`
+    on Linux (started with the environment from before this program, so a packed app's libraries stay out of it).
+    False when the system has no opener."""
+    if sys.platform == 'win32':
+        os.startfile(path)  # noqa: S606 (Windows desktop app)
+        return True
+    try:
+        popen(['open' if sys.platform == 'darwin' else 'xdg-open', path], env=selfupdate.clean_environment(),
+              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+    except OSError:
+        return False
+    return True
 
 
 class WebHost:
@@ -72,7 +89,7 @@ class WebHost:
 
     def open_path(self, path):
         if path and os.path.exists(path):
-            os.startfile(path)  # noqa: S606 (Windows desktop app)
+            open_file(path)
 
     def pick(self, folder, start='', kinds=()):
         """Windows' picker for a folder (folder True) or a file of `kinds` ('shadPS4 (*.exe)'): the path, ''

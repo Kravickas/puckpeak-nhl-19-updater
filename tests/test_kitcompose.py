@@ -101,6 +101,28 @@ def test_cover_plain_rows_copy_the_given_row_of_the_same_columns(pil):
     assert after[:12 * row] == before[:12 * row] and after[14 * row:] == before[14 * row:]
 
 
+def test_a_picture_at_the_templates_size_takes_the_masks_size_cover(pil):
+    """A layer pack's jersey picture at the template's own size (NHL 27's 2048 on NHL 19's 2048; 128 here), its cover
+    mask at K.SIZE: the picture's 1 px rows stay exact where nothing is covered, and the masked block rows take the
+    mirrored rows' blocks as made."""
+    np = pytest.importorskip('numpy')
+    rows = np.full((128, 128, 3), 255, np.uint8)
+    rows[::2] = 0
+    rows[96:] = 255                               # plain white below: the rows the mask covers
+    raw = template(128, 128, 'BC1')
+    made_ = K.run({'op': 'make', 'picture': 'p'}, raw, lambda m: pil.fromarray(rows, 'RGB'))
+    mask = pil.new('L', (K.SIZE, K.SIZE), 0)
+    mask.paste(255, (0, 800, K.SIZE, 900))        # block rows 25-27 of 32 (below MIRROR_Y) <- mirrored rows 6, 5, 4
+    out = K.run({'op': 'cover', 'mask': 'm'}, made_, lambda m: mask)
+    t = gnf.Gnf(out).texture
+    img = np.asarray(gnf.to_image(out).convert('RGB'))
+    assert (t.width, t.height) == (128, 128) and len(out) == len(raw)
+    assert np.array_equal(img[:100], rows[:100])  # untouched rows: the picture as it was, no resample
+    for by, src in ((25, 6), (26, 5), (27, 4)):
+        assert np.array_equal(img[4 * by:4 * by + 4], rows[4 * src:4 * src + 4])
+    assert np.array_equal(img[112:], rows[112:])
+
+
 def test_flat_normals_are_zero_and_keep_the_shape():
     raw = template(64, 64, 'BC5', 'SNORM', mips=3)
     out = K.flat(raw[:K.HEAD])                  # the header is enough

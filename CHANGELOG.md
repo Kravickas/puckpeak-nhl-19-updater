@@ -2,6 +2,37 @@
 
 What changed in each version, for players.
 
+## 0.97.0 (2026-11-19)
+
+### New
+
+- **Sharper NHL 27 jerseys**: jerseys are now made from NHL 27's full-size pictures, so crests, stripes and numbers
+  look clearly sharper than in 0.96. The 32 NHL main kits also keep NHL 27's size for numbers and socks. Thirds,
+  international and club jerseys get the sharper jersey too.
+- **The Seattle Kraken's own centre ice**: Seattle's home rink shows the Kraken logo at centre ice instead of a blank
+  ring.
+- **Utah's Mammoth crest** in the match preview before the game and in the scorebug, instead of the "UTAH EST. 2024"
+  wordmark.
+
+### Fixed
+
+- **Be a Pro with 32 teams in every start**: a Start in the CHL or Memorial Cup career no longer crashes at the first
+  NHL sim. Seattle is in the league with Coachella Valley as its farm team. Press Patch once; a career saved with the
+  crash needs a new career.
+- **Cross-CPU fix for more copies of the game**: an eboot.bin of v1.60 backported to firmware 5.05 now gets the
+  Cross-CPU fix too, so lobbies with players on the plain v1.60 eboot are no longer refused. It comes in at the next
+  Ready or Play, no Patch needed.
+
+### How to get it
+
+- The app updates itself. Then Setup marks five packs "newer": the pack card fetches the jerseys and the art, and the
+  three alternates rows (NHL, international, clubs) each need their own Download. Then press Patch.
+
+### Known limits
+
+- Classic Franchise and NHL Season still build 31 clubs; 32 teams there come later.
+- The code now has groundwork for Linux, Steam Deck and macOS, but there is no Linux or Mac download yet.
+
 ## 0.96.0 (2026-11-17)
 
 ### New

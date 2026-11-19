@@ -22,7 +22,8 @@ import json
 import os
 import zipfile
 
-from overtime_core import art, clubart, durable, gamefiles, kitcompose, menus, overlay, photos, rosterupdate, teams
+from overtime_core import (art, clubart, durable, gamefiles, kitcompose, menus, overlay, photos, rosterupdate, tdb,
+                           teams)
 
 from . import sources, update
 from .session import RosterSession
@@ -32,9 +33,48 @@ class PatchFailed(RuntimeError):
     pass
 
 
-# Seattle's centre ice from its own logo (teams.seattle_center_ice, WS7's ice_centerlogo_10499_cm): off until WS7's
-# runs show Seattle still in Play Now with it.
-SEATTLE_CENTER_ICE = False
+# Seattle's own centre ice (teams.seattle_center_ice: logo art 147, NHL 27's Kraken ring in looks.zip). On since
+# v0.97.0 (lab run kraken-t0: Seattle home in Play Now drew it). The online roster takes it through weekly_roster.
+SEATTLE_CENTER_ICE = True
+
+
+def seattle_ice(raw, schema, own, log=lambda msg: None):
+    """`raw` (a default nhl_game.db) as the one click serves it: Seattle on its own centre ice when `own` (its
+    picture is in the art served: ring_served), else on the custom ring as before v0.97.0. Without the picture the
+    game would draw NHL 19's own for that art, Peoria's ring. So every default goes through here at Patch: the
+    verified default the exe carries and one kept from an Update before v0.97.0 lack the rows, one built by
+    updated_default has them. The verified default with them is byte for byte the database lab run kraken-t0
+    played (art.md). Untouched with SEATTLE_CENTER_ICE off, and when the rows are as wanted."""
+    if not SEATTLE_CENTER_ICE:
+        return raw
+    db = tdb.Database.parse(raw, schema)
+    try:
+        changed = teams.seattle_center_ice(db, own)
+    except (KeyError, StopIteration):       # a database without Seattle's rows: nothing to set
+        return raw
+    if not changed:
+        return raw
+    log(f"Seattle's centre ice: {changed} team rows on " +
+        ('its own logo' if own else 'the custom ring (its own picture is not in the art served)'))
+    return db.to_bytes()
+
+
+def ring_served(want, cache_dir=None, game_dir=None):
+    """The art the one click serves with the switches `want` draws Seattle's centre ice: the pack that wins
+    teams.SEATTLE_ICE_FILE (the last one holding it, art_pack_paths order) is looks.zip, which has NHL 27's Kraken
+    ring there since v0.97.0. False with the art switched off, with an older looks.zip, and when another pack wins the
+    file: ice_all.zip holds NHL 19's own picture of that art id (Peoria's ring)."""
+    if not want.get('art', True):
+        return False
+    paths, _problems = art_pack_paths(cache_dir, game_dir, **_art_choice(want))
+    winner = None
+    for path in paths:
+        try:
+            if teams.SEATTLE_ICE_FILE in art.pack_sizes(path):
+                winner = path
+        except art.ArtError:
+            pass
+    return winner is not None and os.path.basename(winner) == SEATTLE_ICE_PACK
 
 
 def updated_default(game, gathered, per32=None, log=lambda msg: None, seattle_ice=None):
@@ -116,6 +156,7 @@ OLD_ALT_PACKS = ('alts_nhl.zip', 'alts_intl.zip', 'alts_ahl.zip', 'alts_chl.zip'
 # the packs with a switch of their own (Game patch, More jerseys and ice): each downloads when it is switched on
 EXTRA_PACKS = {ICE_PACK: 'Centre ice of every league', RINK_PACK: 'IIHF centre ice and puck, pucks, board ads and league logos',
                **KITLAYER_PACKS}
+SEATTLE_ICE_PACK = 'looks.zip'  # the pack with Seattle's own centre ice (ring_served)
 ART_PACKS = (LOOKS32_PACK, ICE_PACK, RINK_PACK, KITS_PACK, PHOTOS_PACK, PEOPLE_PACK, 'looks.zip')   # looks.zip (Utah, Seattle: kits, arena) last: wins
 # the photos the people pack lacks, drawn by Update on this PC (overtime_core.photos): only in the app's cache, no
 # download, served with the photos; its art ids are the people pack's free ones, so no other pack's file is replaced

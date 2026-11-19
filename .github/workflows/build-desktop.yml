@@ -1,0 +1,213 @@
+# The Linux AppImage and the macOS app (packaging/build_unix.py), built and smoke-run on GitHub's machines. Started by
+# hand from the Actions tab. Nothing is released here: the files are this run's artifacts, and release-<system>.json
+# (in the artifact and the run's summary) is what goes under latest.json's "linux" / "macos" key.
+#
+# data = off (the default): a smoke build without the default roster and the NHL 27 numbers. Its files are named
+#   "-nodata" and must not be released.
+# data = on: the private data comes as a zip (defaults/nhl_game.db, defaults/default.json, packs/nhl27.json.gz, as
+#   packaging/build.ps1 leaves them in build\defaults and packs\) from the address in the DESKTOP_INPUTS_URL secret,
+#   checked against the DESKTOP_INPUTS_SHA256 secret.
+# macOS signing (optional): with the MACOS_CERT_P12 (base64), MACOS_CERT_PASSWORD and MACOS_SIGN_IDENTITY secrets the
+#   app and the dmg are signed with that Developer ID, and with APPLE_ID, APPLE_TEAM_ID and APPLE_APP_PASSWORD the dmg
+#   is notarized too. Without them the app is signed ad hoc: a Mac asks its owner to allow it once.
+name: build-desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      data:
+        description: 'With the private data (needs the DESKTOP_INPUTS_* secrets). Off: a smoke build, never released'
+        type: boolean
+        default: false
+      mac_runner:
+        description: 'The Mac that builds (Intel: the app runs on Intel Macs and, through Rosetta, on Apple chips)'
+        type: choice
+        options: [macos-26-intel, macos-26]
+        default: macos-26-intel
+
+permissions:
+  contents: read
+
+env:
+  # the tools that pack the AppImage, pinned (2026-11-18)
+  APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+  APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+  RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+  RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+  NODATA: ${{ inputs.data && ' ' || '--nodata' }}
+  # what a desktop system has and a build machine may lack: the libraries Qt's window and its web view load
+  QT_LIBS: >-
+    libegl1 libgl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
+    libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libnss3 libxcomposite1 libxdamage1
+    libxrandr2 libxtst6 libxkbfile1 libdbus-1-3 libfontconfig1
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04     # the oldest system the app itself starts on (glibc 2.35); the emulator asks for 2.39
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Qt's libraries
+        run: |
+          sudo apt-get update
+          sound=$(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2)
+          sudo apt-get install -y --no-install-recommends $QT_LIBS $sound
+      - name: The private data
+        if: inputs.data
+        env:
+          URL: ${{ secrets.DESKTOP_INPUTS_URL }}
+          SHA: ${{ secrets.DESKTOP_INPUTS_SHA256 }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$SHA" ]; then
+            echo "::error::data is on: set the DESKTOP_INPUTS_URL and DESKTOP_INPUTS_SHA256 secrets"; exit 1
+          fi
+          curl -fsSL --retry 3 -o inputs.zip "$URL"
+          echo "$SHA  inputs.zip" | sha256sum -c -
+          mkdir inputs && unzip -q inputs.zip -d inputs
+          echo "INPUTS=--inputs inputs" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/runtime" "$RUNTIME_URL"
+          printf '%s  %s\n' "$APPIMAGETOOL_SHA256" "$RUNNER_TEMP/appimagetool" "$RUNTIME_SHA256" "$RUNNER_TEMP/runtime" \
+            | sha256sum -c -
+          python packaging/build_unix.py --requirements > "$RUNNER_TEMP/requirements.txt"
+          python -m pip install -r "$RUNNER_TEMP/requirements.txt"
+          python packaging/build_unix.py --appimagetool "$RUNNER_TEMP/appimagetool" --runtime "$RUNNER_TEMP/runtime" \
+            $INPUTS
+          { echo '### Linux'; echo '```json'; cat dist/release-linux.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: dist/
+          if-no-files-found: error
+
+  smoke-linux:
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux
+          path: dist
+      - name: Qt's libraries
+        run: |
+          sudo apt-get update
+          sound=$(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2)
+          sudo apt-get install -y --no-install-recommends $QT_LIBS $sound
+      - name: The download unpacks to a program that starts, and its window draws the page
+        env:
+          QT_QPA_PLATFORM: offscreen            # no screen here
+          APPIMAGE_EXTRACT_AND_RUN: '1'         # and no FUSE: the AppImage unpacks itself
+        run: |
+          mkdir run && tar -xzf dist/OvertimeNHL19-linux*.tar.gz -C run
+          test -x run/OvertimeNHL19-x86_64.AppImage     # the exec bit came through the download
+          python3 packaging/smoke.py run/OvertimeNHL19-x86_64.AppImage $NODATA
+      - name: The app's own report files
+        if: always()
+        run: cat ~/.local/share/OvertimeRoster/logs/selftest*.txt 2>/dev/null || true
+
+  macos:
+    runs-on: ${{ inputs.mac_runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: The private data
+        if: inputs.data
+        env:
+          URL: ${{ secrets.DESKTOP_INPUTS_URL }}
+          SHA: ${{ secrets.DESKTOP_INPUTS_SHA256 }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$SHA" ]; then
+            echo "::error::data is on: set the DESKTOP_INPUTS_URL and DESKTOP_INPUTS_SHA256 secrets"; exit 1
+          fi
+          curl -fsSL --retry 3 -o inputs.zip "$URL"
+          echo "$SHA  inputs.zip" | shasum -a 256 -c -
+          mkdir inputs && unzip -q inputs.zip -d inputs
+          echo "INPUTS=--inputs inputs" >> "$GITHUB_ENV"
+      - name: The Developer ID, when there is one
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          if [ -z "$P12" ] || [ -z "$IDENTITY" ]; then echo "no Developer ID: the app is signed ad hoc"; exit 0; fi
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          pass=$(uuidgen)
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "SIGN=$IDENTITY" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          python packaging/build_unix.py --requirements > "$RUNNER_TEMP/requirements.txt"
+          python -m pip install -r "$RUNNER_TEMP/requirements.txt"
+          if [ -n "$SIGN" ]; then
+            python packaging/build_unix.py $INPUTS --sign "$SIGN"
+          else
+            python packaging/build_unix.py $INPUTS
+          fi
+      - name: Notarize, when Apple's account is there
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$SIGN" ] || [ -z "$APPLE_ID" ]; then echo "not notarized"; exit 0; fi
+          xcrun notarytool submit dist/OvertimeNHL19-macos*.dmg --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple dist/OvertimeNHL19-macos*.dmg
+          python packaging/build_unix.py --record-only        # the stapled dmg's sum, not the one from before
+      - name: Summary
+        run: |
+          { echo '### macOS'; echo '```json'; cat dist/release-macos.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: dist/
+          if-no-files-found: error
+
+  smoke-macos:
+    needs: macos
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-26-intel]      # Apple chips (an Intel build runs through Rosetta there) and Intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos
+          path: dist
+      - name: Rosetta, as the app asks a player to install it
+        if: runner.arch == 'ARM64'
+        run: softwareupdate --install-rosetta --agree-to-license || true
+      - name: The app from the disk image starts, and its window draws the page
+        run: |
+          hdiutil attach dist/OvertimeNHL19-macos*.dmg -mountpoint "$RUNNER_TEMP/dmg" -nobrowse -readonly
+          cp -R "$RUNNER_TEMP/dmg/Overtime NHL19.app" "$RUNNER_TEMP/"
+          hdiutil detach "$RUNNER_TEMP/dmg"
+          program="$RUNNER_TEMP/Overtime NHL19.app/Contents/MacOS/Overtime NHL19"
+          file "$program"
+          if [ "$(uname -m)" = x86_64 ] && ! lipo -archs "$program" | grep -q x86_64; then
+            echo "an Apple-chip build does not start on an Intel Mac: nothing to run here"; exit 0
+          fi
+          python3 packaging/smoke.py "$RUNNER_TEMP/Overtime NHL19.app/Contents/MacOS/Overtime NHL19" $NODATA
+      - name: The app's own report files
+        if: always()
+        run: cat ~/Library/Application\ Support/OvertimeRoster/logs/selftest*.txt 2>/dev/null || true

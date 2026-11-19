@@ -362,20 +362,29 @@ def drop_throwbacks(db, schema, team=UTAH_SLOT):
     return removed
 
 
-# Centre ice as the NHL teams have it: the team's own logo (art id = team art id, WS7's ice_centerlogo_10499_cm for
-# Seattle), not the generic logo 1000 the game's "NHL 32" copy and the custom team slots use.
-CENTER_ICE_OWN = {'centericelogotype': -1, 'centericelogo': 0}
+# Seattle's own centre ice. The NHL clubs' route (centericelogotype -1: the record of the team's art id) draws Anaheim
+# for Seattle, which has no record (art.md, run n2). With type 0 the logo field picks a centre-ice record by art id
+# (1000 the custom ring, 1001 the Threes rows): Seattle gets art 147 (Peoria's ring, used by no team row or logo
+# field), whose ice_centerlogo_147_cm file looks.zip fills with NHL 27's Kraken centre ice (tools/build_looks.ice).
+# Lab run kraken-t0, 2026-11-18: the Seattle home game drew the Kraken ring. The custom team slots keep logo 1000.
+SEATTLE_ICE_ART = 147
+SEATTLE_ICE_FILE = f'nhl/data/kettle/rendering/stadiums/common/ice_centerlogo_{SEATTLE_ICE_ART}_cm.gnf'
+CENTER_ICE_OWN = {'centericelogotype': 0, 'centericelogo': SEATTLE_ICE_ART}
+CENTER_ICE_CUSTOM = {'centericelogotype': 0, 'centericelogo': 1000}     # Seattle's rows before v0.97.0: the custom ring
 
 
-def seattle_center_ice(db):
-    """Seattle's centre ice from its own logo: exhibitionteams 399 and customteams 499 get CENTER_ICE_OWN; the Creation
-    Zone slots (customteams 400-449) keep logo 1000. Returns the number of team rows changed."""
+def seattle_center_ice(db, own=True):
+    """Seattle's own centre ice: exhibitionteams 399 and customteams 499 get CENTER_ICE_OWN (logo SEATTLE_ICE_ART); the
+    Creation Zone slots (customteams 400-449) keep logo 1000. With `own` false they go back to CENTER_ICE_CUSTOM (a
+    game served without SEATTLE_ICE_FILE would draw NHL 19's own picture of that art, Peoria's ring). Returns the
+    number of team rows changed."""
+    values = CENTER_ICE_OWN if own else CENTER_ICE_CUSTOM
     n = 0
     for name, index in ((TEAMS, SEATTLE_PLAY_NOW), (CUSTOM, SEATTLE)):
         t = db[name]
         row = next(i for i in range(t.count) if t.get(i, 'index') == index)
-        if any(t.get(row, f) != v for f, v in CENTER_ICE_OWN.items()):
-            for f, v in CENTER_ICE_OWN.items():
+        if any(t.get(row, f) != v for f, v in values.items()):
+            for f, v in values.items():
                 t.set(row, f, v)
             n += 1
     return n

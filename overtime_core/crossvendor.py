@@ -12,6 +12,7 @@ SITES, HOOKS = 262, 260
 EBOOT_SHA256 = (
     '91b2359121deaa552548e376fc67b19f6b25357dfa171b492d753c079bfae4f4',  # eboot.bin as dumped (CUSA11126 = CUSA11116)
     '426297a6ad5a16bed648f2f8aa83b73a1eecfcf8e85ef018e11dbe88b4dd4cca',  # the same eboot decrypted (the block source)
+    '3b9211311e41a88a51fae78ff8f666141a41106254bac2516cdf66e43ac585fc',  # its 5.05 backport: same code (provisional)
 )
 LINES_SHA256 = '79015ea0dd0c5761d229d96f2daf87c8d214b7d9c02711005803b2c83ea80343'
 LINES = (

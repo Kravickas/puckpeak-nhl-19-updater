@@ -7,6 +7,7 @@ import threading
 
 import pytest
 
+from overtime_core import overlay
 from overtime_roster.app import gamesetup, launch
 from test_gamesetup import world  # noqa: F401
 
@@ -84,11 +85,78 @@ def windows_only(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'win32')
 
 
-def test_off_windows_nothing_is_done(monkeypatch):
+PS = '''    1 systemd
+ 4242 shadps4
+ 4343 /Users/pat/Library/Application Support/OvertimeRoster/boost/native2/shadps4
+ 5151 shadPS4QtLaunch
+ 5252 /Applications/shadPS4QtLauncher.app/Contents/MacOS/shadPS4QtLauncher
+  999 notshadps4
+  abc shadps4
+ 4444 Shadps4-sdl.App
+'''
+
+
+def test_parse_ps_keeps_game_processes_only():
+    """Linux prints the name cut to 15 characters (QtLauncher is shadPS4QtLaunch: it must not be stopped as the
+    game), macOS the whole path (spaces in it too): the last part is the name."""
+    assert launch.parse_ps(PS) == [(4242, 'shadps4'), (4343, 'shadps4'), (4444, 'shadps4-sdl.app')]
+    assert launch.parse_ps('') == []
+    assert overlay.launcher_process('shadPS4QtLaunch') and overlay.launcher_process('shadPS4QtLauncher.exe')
+    assert not overlay.launcher_process('shadps4') and not overlay.launcher_process('shadPS419.exe')
+
+
+def test_game_processes_reads_ps_off_windows(monkeypatch):
     monkeypatch.setattr(sys, 'platform', 'linux')
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, stdout=PS)
+
+    assert launch.game_processes(run) == [(4242, 'shadps4'), (4343, 'shadps4'), (4444, 'shadps4-sdl.app')]
+    assert seen[0][0] == ['ps', '-A', '-o', 'pid=,comm='] and 'creationflags' not in seen[0][1]
+
+    def broken(cmd, **kw):
+        raise OSError('no ps')
+
+    assert launch.game_processes(broken) is None
+
+
+@pytest.mark.parametrize('platform', ['linux', 'darwin'])
+def test_off_windows_the_game_is_asked_then_killed_by_signal(monkeypatch, platform):
+    """Linux and macOS: SIGTERM first (SDL's quit), SIGKILL for what stays: lobby Ready can restart NHL 19 there too."""
+    import signal
+    monkeypatch.setattr(sys, 'platform', platform)
+    monkeypatch.setattr(signal, 'SIGKILL', 9, raising=False)        # Windows' signal module has no SIGKILL
+    sent = []
+    emu = Emu([4242, 4343])
+
+    def kill(pid, sig):
+        sent.append((pid, sig))
+        if sig == signal.SIGTERM and pid == 4242:
+            emu.running.discard(pid)                # this one closes when asked
+        if sig == signal.SIGKILL:
+            emu.running.discard(pid)
+
+    monkeypatch.setattr(launch.os, 'kill', kill)
+    assert emu.stop(windows=None, kill=None) == 'killed'
+    assert sent == [(4242, signal.SIGTERM), (4343, signal.SIGTERM), (4343, signal.SIGKILL)]
+    assert emu.slept and not emu.running
+
+    sent.clear()
     emu = Emu([4242])
-    assert emu.stop(processes=lambda: pytest.fail('listed processes')) == 'unsupported'
-    assert emu.running == {4242} and not emu.closed and not emu.killed
+    assert emu.stop(windows=None, kill=None) == 'closed' and sent == [(4242, signal.SIGTERM)]
+
+
+def test_off_windows_a_gone_process_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(sys, 'platform', 'linux')
+
+    def kill(pid, sig):
+        raise ProcessLookupError(pid)
+
+    monkeypatch.setattr(launch.os, 'kill', kill)
+    assert launch.Signals().close(4242) is False
+    launch._sigkill(4242) if hasattr(launch.signal, 'SIGKILL') else None
 
 
 def test_nothing_running(windows_only):

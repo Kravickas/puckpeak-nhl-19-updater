@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 
 import pytest
 
@@ -773,6 +774,32 @@ def test_1440p_keeps_a_bigger_dmem_and_a_first_install_at_1440p_is_undone(world)
     assert json.loads(path.read_text())['General']['extra_dmem_in_mbytes'] == gamesetup.DMEM_1440
     gamesetup.remove(running=lambda: False)
     assert 'extra_dmem_in_mbytes' not in json.loads(path.read_text())['General']
+
+
+@pytest.mark.parametrize('answers,vendor,name', [
+    ({'machdep.cpu.vendor': 'GenuineIntel', 'machdep.cpu.brand_string': 'Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz'},
+     'intel', 'Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz'),
+    ({'machdep.cpu.brand_string': 'Apple M2 Pro'}, '?', 'Apple M2 Pro'),        # Apple's chips name no x86 vendor
+    ({}, '?', '')])
+def test_a_mac_names_its_cpu_through_sysctl(monkeypatch, answers, vendor, name):
+    monkeypatch.setattr(gamesetup.sys, 'platform', 'darwin')
+    monkeypatch.delenv('PROCESSOR_IDENTIFIER', raising=False)
+    monkeypatch.setattr(gamesetup, '_VENDOR', [])
+    monkeypatch.setattr(gamesetup, '_CPU_NAME', [])
+    monkeypatch.setattr(gamesetup, '_sysctl', lambda key: answers.get(key, ''))
+    assert (gamesetup.cpu_vendor(), gamesetup.cpu_name()) == (vendor, name)
+
+
+def test_sysctl_reads_one_key_or_nothing():
+    def run(cmd, **kw):
+        assert cmd == ['sysctl', '-n', 'machdep.cpu.vendor']
+        return subprocess.CompletedProcess(cmd, 0, stdout='GenuineIntel\n')
+
+    def broken(cmd, **kw):
+        raise OSError('no sysctl')
+
+    assert gamesetup._sysctl('machdep.cpu.vendor', run) == 'GenuineIntel'
+    assert gamesetup._sysctl('machdep.cpu.vendor', broken) == ''
 
 
 @pytest.mark.parametrize('vendor,windows,own,want', [

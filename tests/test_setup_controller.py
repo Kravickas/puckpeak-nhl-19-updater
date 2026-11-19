@@ -756,10 +756,14 @@ def test_one_click_never_downloads_packs(sc, monkeypatch, tmp_path):
     monkeypatch.setattr(packdownload, 'missing_core', lambda cache, game_dir=None: ['looks32.zip', 'photos.zip'])
     monkeypatch.setattr(packdownload, 'download', lambda *a, **kw: pytest.fail('the patch downloaded a pack'))
     monkeypatch.setattr(SC.SetupController, '_default_roster', lambda self: object())
+    ice = []
+    monkeypatch.setattr(patch, 'seattle_ice', lambda raw, schema, own, log=None: ice.append(own) or raw)
+    sc.ctl.game = types.SimpleNamespace(ok=True, schema=lambda: None)
     sc.ctl.patch_want.update(art=True, roster=True, photos=True)
     sc.setup_refresh()
     sc.setup_patch()
     assert sc.calls['apply'] and 'art' not in sc.calls['apply'][0]     # no pack here: the art switch is off
+    assert ice == [False]       # v0.97.0: so Seattle's centre ice is not its own (no picture of it is served)
     text, tone = next((t, tone) for t, tone in reversed(sc.ctl.said) if t.startswith('Patched'))
     assert tone == 'good' and 'not downloaded' not in text
 

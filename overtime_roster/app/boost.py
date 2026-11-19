@@ -17,11 +17,11 @@ Each one's shadPS4.exe goes into the app's own folder (a player's own exe is nev
 "NHL 19 Boost" entry older apps added stays). Standard library only.
 """
 import os
-import zipfile
+import sys
 
-from overtime_core import durable, overlay
+from overtime_core import overlay
 
-from . import gamesetup, packdownload, paths
+from . import emufile, gamesetup, packdownload, paths
 
 NATIVE2, NIGHTLY, KRAVICKAS = 'native2', 'nightly', 'kravickas'
 DEFAULT = NATIVE2   # 2026-11-16 (owner): Overtime Native v2 is the default and what every lobby plays on
@@ -35,10 +35,13 @@ BUILDS = {      # GPL-2.0: each build's source code; the card's dropdown shows t
     KRAVICKAS: {'pack': packdownload.EMULATOR_PACK, 'label': 'Kravickas', 'folder': ('boost',),
                 'source': 'https://github.com/Kravickas/shadPS4/tree/d3344364003349c2bb35f0c0eb2389a64db4c792'},
 }
-UPDATABLE = (KRAVICKAS,)        # the card's Update button: Overtime Native v1/v2 come with Overtime's releases (Play gets them)
+if sys.platform != 'win32':     # Linux and macOS (0.97.0): Overtime Native v2 is the one build made for them
+    BUILDS = {NATIVE2: BUILDS[NATIVE2]}
+# the card's Update button: Overtime Native v1/v2 come with Overtime's releases (Play gets them)
+UPDATABLE = tuple(b for b in (KRAVICKAS,) if b in BUILDS)
 PACK = packdownload.EMULATOR_PACK       # the Kravickas pack
 LOBBY_PACK = BUILDS[DEFAULT]['pack']    # the lobby build when the server names none (onlineemu), online_boost's
-SOURCE = BUILDS[KRAVICKAS]['source']
+SOURCE = BUILDS.get(KRAVICKAS, BUILDS[DEFAULT])['source']
 ENTRY = 'NHL 19 Boost'      # its name in QtLauncher's Version Manager (apps before 0.90.2)
 
 
@@ -86,18 +89,12 @@ def refused(current, on=True):
 
 
 def unpack(pack, target):
-    """pack's shadPS4.exe as `target`, in one step."""
-    part = target + '.part'
+    """pack's shadPS4 as `target`, in one step (Windows: the exe; Linux: the AppImage, then unpacked beside itself;
+    macOS: the program and its libraries, emufile.unpack)."""
     try:
-        with zipfile.ZipFile(pack) as z, z.open(packdownload.emulator_entry(z)) as src, open(part, 'wb') as out:
-            for block in iter(lambda: src.read(1 << 20), b''):
-                out.write(block)
-        durable.replace(part, target)
-    except zipfile.BadZipFile as err:
-        raise BoostError(f'The shadPS4 build does not read: {err}') from err
-    finally:
-        if os.path.exists(part):
-            os.remove(part)
+        emufile.unpack(pack, target)
+    except emufile.EmuFileError as err:
+        raise BoostError(str(err)) from err
 
 
 def install(build, cache_dir, progress=None, cancelled=None):

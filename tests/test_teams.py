@@ -87,13 +87,16 @@ def test_seattle_kit_is_art_900_byte_exact(game_db):
 
 @pytest.mark.game
 def test_seattle_center_ice_is_its_own_logo(game_db):
-    """Seattle (exhibitionteams 399, customteams 499) gets centre ice as the NHL teams have it; the Creation Zone slots
-    keep the generic logo, and nothing else changes."""
+    """Seattle (exhibitionteams 399, customteams 499) gets type 0 on the spare art id 147 (lab run kraken-t0: the
+    Kraken ring); the NHL clubs keep their own-art route, the Creation Zone slots the generic logo, and nothing else
+    changes."""
     raw, schema = game_db
     db = tdb.Database.parse(raw, schema)
     before = {name: [db[name].row(i) for i in range(db[name].count)] for name in (T.TEAMS, T.CUSTOM)}
     nhl = {(r['centericelogotype'], r['centericelogo']) for r in before[T.TEAMS] if r['index'] in range(31)}
-    assert nhl == {tuple(T.CENTER_ICE_OWN.values())}
+    assert nhl == {(-1, 0)} and T.CENTER_ICE_OWN == {'centericelogotype': 0, 'centericelogo': 147}
+    used = {r['centericelogo'] for name in (T.TEAMS, T.CUSTOM) for r in before[name]}
+    assert T.SEATTLE_ICE_ART not in used                                   # a spare art id: no stock row draws it
     assert T.seattle_center_ice(db) == 2 and T.seattle_center_ice(db) == 0
     for name, index in ((T.TEAMS, T.SEATTLE_PLAY_NOW), (T.CUSTOM, T.SEATTLE)):
         after = [db[name].row(i) for i in range(db[name].count)]
@@ -212,3 +215,57 @@ def test_renamed_ahl_clubs_take_their_2026_records_and_farm_links(game_db):
     blob = db.to_bytes()
     assert tdb.Database.parse(blob, schema).to_bytes() == blob
 
+
+
+@pytest.mark.game
+def test_a_served_default_has_seattles_centre_ice_only_with_its_picture(game_db, monkeypatch):
+    """patch.seattle_ice (the one click's default, v0.97.0): with the Kraken ring in the art served, a default without
+    Seattle's own centre ice comes back with it, exactly as seattle_center_ice writes it; without the picture a default
+    that has it goes back to the custom ring (art 147 alone is NHL 19's Peoria ring). As wanted already, or with the
+    switch off: untouched."""
+    from overtime_roster.app import patch
+    raw, schema = game_db
+    logs = []
+    assert patch.seattle_ice(raw, schema, False, logs.append) is raw and not logs       # the stock rows: the custom ring
+    own = patch.seattle_ice(raw, schema, True, logs.append)
+    expect = tdb.Database.parse(raw, schema)
+    assert T.seattle_center_ice(expect) == 2
+    assert own == expect.to_bytes() != raw and len(logs) == 1 and 'its own logo' in logs[0]
+    assert patch.seattle_ice(own, schema, True, logs.append) is own and len(logs) == 1
+    back = patch.seattle_ice(own, schema, False, logs.append)
+    assert back == raw and 'custom ring' in logs[1]
+    monkeypatch.setattr(patch, 'SEATTLE_CENTER_ICE', False)
+    assert patch.seattle_ice(raw, schema, True) is raw and patch.seattle_ice(own, schema, False) is own
+
+
+def test_the_ring_is_served_with_the_looks_pack_that_holds_it(tmp_path, monkeypatch):
+    """patch.ring_served: Seattle's centre ice file in a pack the art layer serves; not with the art switched off, an
+    older looks.zip or no pack."""
+    import json
+    import zipfile
+    from overtime_roster.app import patch
+    cache = tmp_path / 'cache'
+    cache.mkdir()
+    monkeypatch.setenv(patch.ART_ENV, str(cache))       # the only folder with packs
+    want = {'art': True, 'kits': False, 'photos': False}
+
+    def looks(files):
+        with zipfile.ZipFile(cache / 'looks.zip', 'w') as z:
+            z.writestr('pack.json', json.dumps({'files': {f: {} for f in files}}))
+            for f in files:
+                z.writestr(f, b'gnf')
+    old = T.SEATTLE_ICE_FILE.replace('_147_', '_10499_')
+    assert T.SEATTLE_ICE_FILE.endswith('/ice_centerlogo_147_cm.gnf') and old != T.SEATTLE_ICE_FILE
+    assert patch.ring_served(want, str(cache), None) is False                  # no pack
+    looks([old])
+    assert patch.ring_served(want, str(cache), None) is False                  # 0.96.0's looks.zip
+    with zipfile.ZipFile(cache / patch.ICE_PACK, 'w') as z:     # ice_all.zip has NHL 19's own picture of that art id
+        z.writestr('pack.json', json.dumps({'files': {T.SEATTLE_ICE_FILE: {}}}))
+        z.writestr(T.SEATTLE_ICE_FILE, b'peoria')
+    assert patch.ring_served(dict(want, ice_all=True), str(cache), None) is False      # ... which is not Seattle's
+    looks([T.SEATTLE_ICE_FILE])
+    assert patch.ring_served(want, str(cache), None) is True
+    assert patch.ring_served(dict(want, ice_all=True), str(cache), None) is True       # looks.zip wins over ice_all
+    assert patch.ring_served(dict(want, art=False), str(cache), None) is False
+    (cache / 'looks.zip').write_bytes(b'not a zip')
+    assert patch.ring_served(want, str(cache), None) is False

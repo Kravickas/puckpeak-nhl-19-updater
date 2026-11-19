@@ -12,7 +12,9 @@ import hashlib
 import ipaddress
 import json
 import os
+import platform
 import re
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +24,7 @@ from overtime_core import net
 from .. import VERSION
 from . import crosscpu, gamesetup, launch
 
-REASONS = ('crash', 'early_end', 'manual', 'cpu')
+REASONS = ('crash', 'early_end', 'manual', 'cpu', 'first_run')     # first_run: firstrun.py (Linux, macOS)
 HEAD_LINES, TAIL_LINES = 3000, 20000    # the log's first and last lines (the middle is left out)
 MAX_BODY = 2 << 20                      # the body as sent (gzip), the server's limit
 MAX_RAW = 20 << 20                      # the unpacked JSON, the server's limit
@@ -82,6 +84,26 @@ def _extra(text, extra):
     return text
 
 
+def _own_names(system=None, node=platform.node):
+    """[(the user's or the computer's name, its placeholder)]: Windows names them in USERNAME and COMPUTERNAME; Linux
+    and macOS in USER / LOGNAME and the host name (with and without its domain)."""
+    found = [((os.environ.get('USERNAME') or '').strip(), '<user>'),
+             ((os.environ.get('COMPUTERNAME') or '').strip(), '<pc>')]
+    if (system or sys.platform) != 'win32':
+        found += [((os.environ.get(env) or '').strip(), '<user>') for env in ('USER', 'LOGNAME')]
+        try:
+            host = (node() or '').strip()
+        except OSError:
+            host = ''
+        found += [(host, '<pc>'), (host.split('.')[0], '<pc>')]
+    seen, out = set(), []
+    for name, placeholder in sorted(found, key=lambda p: -len(p[0])):
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            out.append((name, placeholder))
+    return out
+
+
 def scrub(text, extra=()):
     """`text` with the player's home folder, user and computer names, e-mail addresses and IPv4 / IPv6 addresses
     replaced by <home>, <user>, <pc>, <email> and <ip>, and the `extra` (value, placeholder) pairs (own_secrets: the
@@ -92,8 +114,7 @@ def scrub(text, extra=()):
     home = _home_pattern()
     if home is not None:
         text = home.sub('<home>', text)
-    for env, placeholder in (('USERNAME', '<user>'), ('COMPUTERNAME', '<pc>')):
-        name = (os.environ.get(env) or '').strip()
+    for name, placeholder in _own_names():
         if len(name) >= MIN_NAME:
             text = _word(name).sub(placeholder, text)
     text = EMAIL.sub('<email>', text)

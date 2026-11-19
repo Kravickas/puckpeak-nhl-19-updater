@@ -585,6 +585,9 @@ def one_click(setup, then=None):
                 meter.resize('packs', patch.art_layer_work(on, cache, game_dir))   # the packs just made count none
             art = patch.art_layer(on, layers, cache, log=ctl.host.log, game_dir=game_dir,
                                   progress=lambda n: meter.tick('packs', n))
+            if database is not None:    # Seattle's own centre ice goes with its picture in the art served
+                database = patch.seattle_ice(database, ctl.game.schema(), patch.ring_served(on, cache, game_dir),
+                                             ctl.host.log)
         meter.begin('build', 'writing the patch files' + (' and the updated team art...' if 'art' in layers else '...'))
         applied = None
         if layers:

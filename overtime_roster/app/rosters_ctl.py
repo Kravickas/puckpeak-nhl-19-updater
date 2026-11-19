@@ -14,7 +14,7 @@ import threading
 
 from overtime_core import overlay, rosterupdate, sfo, tdb
 
-from . import defaultdb, gamesetup, install, jobs, paths, savegame, sources, trash
+from . import defaultdb, gamesetup, install, jobs, patch, paths, savegame, sources, trash
 from .registry import Part
 from .session import RosterSession
 from .shell import friendly_date
@@ -134,6 +134,8 @@ class RostersCtl(Part):
                                  'or run Update.')
             c.host.log({'cache': 'Overtime default: the one rebuilt after your last Update.',
                         'embedded': 'Overtime default: the verified default this version ships.'}.get(came, came))
+            own = patch.ring_served(dict(c.patch_want), paths.app_dir('cache'), c.game_dir)
+            data = patch.seattle_ice(data, c.game.schema(), own, c.host.log)        # as the one click serves it
             return tdb.Database.parse(data, c.game.schema()), STARTS[1][1]
         self._open_job(DEFAULT, STARTS[1][1], load, said=said)
 
