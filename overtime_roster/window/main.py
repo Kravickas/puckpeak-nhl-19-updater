@@ -748,7 +748,7 @@ def update_now():
 WEBVIEW_THREADS = ('(_call)', '(process_request_thread)')   # pywebview's own: a page call's answer, a file request
 
 
-def leave(code, grace=5.0, system=None, end=os._exit, tick=0.2):
+def leave(code, grace=5.0, system=None, end=os._exit, tick=0.2, threads=threading.enumerate):
     """Returns `code` for sys.exit: Python ends the process as it always does. Linux and macOS get a watcher besides:
     pywebview's own threads are not daemons, and on macOS a page call that answers after its window is gone waits for
     ever (CI, 2026-11-19: the process stayed after the window closed). Once the only threads Python still waits for
@@ -756,12 +756,12 @@ def leave(code, grace=5.0, system=None, end=os._exit, tick=0.2):
     cut short."""
     if (system or sys.platform) == 'win32':
         return code
-    main = threading.current_thread()
+    mine = (threading.current_thread(), threading.main_thread())
 
     def watch():
         since = None
         while True:
-            left = [t for t in threading.enumerate() if t is not main and not t.daemon and t.is_alive()]
+            left = [t for t in threads() if t not in mine and not t.daemon and t.is_alive()]
             if not left:
                 return
             if not all(t.name.endswith(WEBVIEW_THREADS) for t in left):

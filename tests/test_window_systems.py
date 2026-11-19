@@ -284,7 +284,8 @@ def test_a_page_call_stuck_after_the_window_closed_does_not_keep_the_app_alive()
     call.start()
     job.start()
     try:
-        assert app_main.leave(0, grace=0.05, system='darwin', end=end, tick=0.01) == 0   # Python goes on to shut down
+        assert app_main.leave(0, grace=0.05, system='darwin', end=end, tick=0.01,
+                              threads=lambda: [call, job]) == 0     # Python goes on to shut down
         assert not ended.wait(0.3)          # the app's own thread is never cut short
         work.set()
         assert ended.wait(5) and seen == [(0, True)] and call.is_alive()
@@ -297,8 +298,7 @@ def test_a_page_call_stuck_after_the_window_closed_does_not_keep_the_app_alive()
 
 def test_an_app_with_no_thread_left_is_ended_by_python_alone():
     ended = []
-    assert app_main.leave(0, grace=0, system='linux', end=ended.append, tick=0.01) == 0
-    watcher = next((t for t in threading.enumerate() if t.name == 'leave'), None)
-    if watcher:
+    assert app_main.leave(0, grace=0, system='linux', end=ended.append, tick=0.01, threads=lambda: []) == 0
+    for watcher in [t for t in threading.enumerate() if t.name == 'leave']:
         watcher.join(5)
     assert ended == []
