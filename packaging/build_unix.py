@@ -204,8 +204,32 @@ def requirements(spec, system):
     return spec['requirements']['all'] + spec['requirements'].get(system, [])
 
 
+LIB_DIRS = ('/usr/lib/x86_64-linux-gnu', '/usr/lib64', '/usr/lib')     # where a build machine keeps its libraries
+
+
+def carry_libraries(spec, folder, dirs=LIB_DIRS):
+    """System libraries Qt asks for that not every desktop has (bundle.json "libraries": Ubuntu 24.04 comes without
+    libwayland-server, which Qt's web view loads; Qt's X11 window needs libxcb-cursor). Each goes beside the app's own
+    libraries unless PyInstaller took it already; the names carried now. A build machine without one stops the build."""
+    inner = os.path.join(folder, '_internal')
+    carried = []
+    for name in spec.get('libraries', {}).get('linux', []):
+        dst = os.path.join(inner, name)
+        if os.path.exists(dst):
+            continue
+        src = next((os.path.join(d, name) for d in dirs if os.path.exists(os.path.join(d, name))), None)
+        if not src:
+            raise BuildError(f'{name} is not on this machine (packaging/bundle.json "libraries" lists it)')
+        shutil.copyfile(os.path.realpath(src), dst)
+        os.chmod(dst, 0o755)
+        carried.append(name)
+    return carried
+
+
 def build_linux(spec, args, png, work, nodata):
     folder = os.path.join(work, 'dist', spec['name'])
+    carried = carry_libraries(spec, folder)
+    print('system libraries carried:', ', '.join(carried) or 'none (PyInstaller took them)', flush=True)
     appdir = make_appdir(spec, folder, os.path.join(work, 'AppDir'), png, 'Overtime Roster')
     if not args.appimagetool:
         raise BuildError('--appimagetool: the appimagetool AppImage is needed to pack the AppDir')

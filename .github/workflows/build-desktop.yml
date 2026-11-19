@@ -53,7 +53,7 @@ jobs:
         run: |
           sudo apt-get update
           sound=$(apt-cache show libasound2t64 >/dev/null 2>&1 && echo libasound2t64 || echo libasound2)
-          sudo apt-get install -y --no-install-recommends $QT_LIBS $sound
+          sudo apt-get install -y --no-install-recommends $QT_LIBS $sound libwayland-server0   # bundle.json "libraries"
       - name: The private data
         if: inputs.data
         env:
@@ -117,6 +117,7 @@ jobs:
         if: always()
         run: |
           cd run && ./OvertimeNHL19-x86_64.AppImage --appimage-extract >/dev/null
+          ls squashfs-root/usr/lib/overtime-nhl19/_internal | grep -E '^lib(wayland|xcb|xkb|X)' || true
           export LD_LIBRARY_PATH=$(find squashfs-root -type d \( -name lib -o -name _internal -o -name PySide6 \) | paste -sd:)
           find squashfs-root -type f \( -name '*.so' -o -name '*.so.*' -o -name QtWebEngineProcess \) -print0 |
             xargs -0 -n1 sh -c 'ldd "$0" 2>/dev/null | grep "not found" | sed "s|^|$0:|"' | sort -u | tee missing.txt

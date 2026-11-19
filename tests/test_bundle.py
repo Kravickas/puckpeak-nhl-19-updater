@@ -141,6 +141,31 @@ def test_the_appdir_has_what_appimagetool_needs(tmp_path):
     assert os.path.isfile(os.path.join(appdir, 'overtime-nhl19.png'))
 
 
+def test_the_appimage_carries_the_system_libraries_not_every_desktop_has(tmp_path):
+    spec = _spec()
+    assert 'libwayland-server.so.0' in spec['libraries']['linux']      # Ubuntu 24.04 comes without it
+    inner = tmp_path / 'app' / '_internal'
+    inner.mkdir(parents=True)
+    (inner / 'libxcb-cursor.so.0').write_bytes(b'PyInstaller took this one')
+    libs = tmp_path / 'lib'
+    libs.mkdir()
+    (libs / 'libwayland-server.so.0.22.0').write_bytes(b'ELF the library')
+    if hasattr(os, 'symlink') and os.name != 'nt':
+        os.symlink('libwayland-server.so.0.22.0', libs / 'libwayland-server.so.0')
+    else:
+        (libs / 'libwayland-server.so.0').write_bytes(b'ELF the library')
+    assert build_unix.carry_libraries(spec, str(tmp_path / 'app'), dirs=(str(libs),)) == ['libwayland-server.so.0']
+    assert (inner / 'libwayland-server.so.0').read_bytes() == b'ELF the library'      # the file, not a link to it
+    assert (inner / 'libxcb-cursor.so.0').read_bytes() == b'PyInstaller took this one'
+    assert build_unix.carry_libraries(spec, str(tmp_path / 'app'), dirs=(str(libs),)) == []
+
+
+def test_a_build_machine_without_a_listed_library_stops_the_build(tmp_path):
+    (tmp_path / 'app' / '_internal').mkdir(parents=True)
+    with pytest.raises(build_unix.BuildError, match='libwayland-server.so.0 is not on this machine'):
+        build_unix.carry_libraries({'libraries': {'linux': ['libwayland-server.so.0']}}, str(tmp_path / 'app'), dirs=())
+
+
 def test_the_download_keeps_the_exec_bit(tmp_path):
     image = tmp_path / 'OvertimeNHL19-x86_64-nodata.AppImage'
     image.write_bytes(b'\x7fELF' + b'0' * 100)

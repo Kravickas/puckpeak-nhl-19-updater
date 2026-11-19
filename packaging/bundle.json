@@ -23,6 +23,9 @@
     "linux": ["qtpy", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineCore", "PySide6.QtWebChannel", "PySide6.QtNetwork"],
     "darwin": []
   },
+  "libraries": {
+    "linux": ["libwayland-server.so.0", "libxcb-cursor.so.0"]
+  },
   "exclude": {
     "win32": [],
     "linux": ["pythonnet", "clr_loader", "clr", "tkinter"],
