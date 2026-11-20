@@ -352,7 +352,7 @@ def _update_only(base):
     names = []
     for root in gamefiles.roots(base):
         try:
-            names += [n.lower() for n in os.listdir(os.path.join(root, 'databigs')) if n.lower().endswith('.big')] \
+            names += [n.lower() for n in gamefiles.listdir(os.path.join(root, 'databigs')) if n.lower().endswith('.big')] \
                 if root else []
         except OSError:
             continue
@@ -477,7 +477,7 @@ def find_games(user_dir, extra=()):
 
 def _scandirs(root):
     try:
-        return [e for e in os.scandir(root) if e.is_dir()]
+        return [e for e in os.scandir(root) if e.is_dir() and not gamefiles.junk(e.name)]
     except OSError:
         return []
 
@@ -1146,7 +1146,7 @@ def install(emu_exe, xml_text, running=None):
     entries = {e['path']: e for e in old.get('files', [])}
     folder = patch_dir(user)
     if os.path.isdir(folder) and not entries:
-        strangers = set(os.listdir(folder)) - {PATCH_FILE, 'files.json'}
+        strangers = set(gamefiles.listdir(folder)) - {PATCH_FILE, 'files.json'}   # a Mac's .DS_Store is no stranger
         if strangers:
             raise SetupError(f'{folder} holds files Overtime did not write: {", ".join(sorted(strangers))}')
     cfg_path = custom_config_path(user)
@@ -1302,6 +1302,8 @@ def remove(running=None):
         else:
             said.append(f'left (no backup to restore): {path}')
     try:
+        if not gamefiles.listdir(patch_dir(m['user_dir'])):
+            gamefiles.drop_junk(patch_dir(m['user_dir']))
         os.rmdir(patch_dir(m['user_dir']))
     except OSError:
         pass
@@ -1395,7 +1397,7 @@ def snapshot(game_dir, full=False, progress=None, pair=True):
         if root is None:
             continue
         hashed |= {os.path.relpath(os.path.join(root, h), base) for h in HASHED_ALWAYS}
-        for dirpath, _dirs, names in os.walk(root):
+        for dirpath, _dirs, names in gamefiles.walk(root):     # a Mac's .DS_Store / ._* files are not the game's
             for n in names:
                 p = os.path.join(dirpath, n)
                 files[os.path.relpath(p, base)] = [os.path.getsize(p), None]
@@ -1434,7 +1436,7 @@ def compare(before, now):
     where both snapshots have one."""
     out = []
     a, b = before['files'], now['files']
-    for rel in sorted(set(a) | set(b)):
+    for rel in sorted(r for r in set(a) | set(b) if not gamefiles.junk_path(r)):   # a record made before 0.98.0 may list them
         if rel not in b:
             out.append((rel, 'missing'))
         elif rel not in a:

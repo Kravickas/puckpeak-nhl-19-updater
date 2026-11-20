@@ -26,6 +26,50 @@ def _order(name):
 
 UPDATE_SUFFIXES = ('-UPDATE', '-patch')     # shadPS4's names for an update kept beside the base game
 
+# Files a system leaves in folders it shows (0.98.0, a Mac tester: "hits a flag whenever a random Mac file is noticed"):
+# Finder's .DS_Store, AppleDouble `._<name>` beside every file on a non-Mac disk (`._patch_01.big` ends in .big too),
+# __MACOSX and the volume folders of a Mac, Windows' Thumbs.db and desktop.ini. Never game, emulator or patch files:
+# every walk that judges a folder's files leaves them out.
+JUNK_NAMES = frozenset(('.ds_store', 'thumbs.db', 'desktop.ini', '.localized', 'icon\r', '__macosx', '.spotlight-v100',
+                        '.trashes', '.fseventsd', '.temporaryitems', '.documentrevisions-v100', '.apdisk'))
+
+
+def junk(name):
+    """True for a file or folder name a system made (JUNK_NAMES, AppleDouble `._*`), never one of the game's."""
+    return name.startswith('._') or name.lower() in JUNK_NAMES
+
+
+def junk_path(rel_path):
+    """True when any part of a relative path is junk (`__MACOSX/x`, `databigs/._a.big`)."""
+    return any(junk(part) for part in re.split(r'[\\/]', rel_path) if part)
+
+
+def listdir(folder):
+    """os.listdir without junk names."""
+    return [n for n in os.listdir(folder) if not junk(n)]
+
+
+def walk(top):
+    """os.walk without junk folders or files."""
+    for here, dirs, names in os.walk(top):
+        dirs[:] = [d for d in dirs if not junk(d)]
+        yield here, dirs, [n for n in names if not junk(n)]
+
+
+def drop_junk(folder):
+    """Delete the junk files directly in `folder` (so a folder holding only those counts as empty); OSError ignored."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for n in names:
+        p = os.path.join(folder, n)
+        if junk(n) and os.path.isfile(p) and not os.path.islink(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
 
 def _is_game(folder):
     return os.path.isfile(os.path.join(folder, 'sce_sys', 'param.sfo'))
@@ -82,7 +126,7 @@ def archives(game_dir):
         if root is None or (root == update and not os.path.isdir(os.path.join(root, 'databigs'))):
             continue
         big_dir = os.path.join(root, 'databigs')
-        for n in os.listdir(big_dir):
+        for n in listdir(big_dir):
             if n.endswith('.big'):
                 found[n.lower()] = os.path.join(big_dir, n)
     return sorted(found.values(), key=lambda p: _order(os.path.basename(p)))

@@ -76,6 +76,52 @@ DEFAULTS = {key: default for key, _label, _options, default in RULES}
 SHOOTOUT_DEFAULTS = {key: default for key, _label, _options, default in SHOOTOUT_RULES}
 _BY_KEY = {r[0]: r for r in RULES}
 
+# 0.98.0: the match settings a World of Chel lobby serves onto its game (game_manager._chel_served), in the drop-in modes
+# only. The keys are the ones a drop-in search sends (EU logs 2026-11-20: game types 12 and 202 send these nine and no
+# others), and CHEL_OWN holds the values they send, which the game plays when the lobby leaves a setting at the game's
+# own. Only the period length is seen to follow in a CHEL match (lab x11: a served NHL_PeriodLength 1). The rest go the
+# same way, as match attributes the game's setup reads (lab c46), but no CHEL match has shown them yet.
+CHEL_RULE_MODES = (CHEL_DROPIN, CHEL_DROPIN3)
+CHEL_RULE_KEYS = ('periodlength', 'skilllevel', 'gamestyle', 'penalties', 'fighting', 'injuries', 'icing', 'offsides',
+                  'tiebreaker')
+CHEL_RULES = tuple(_BY_KEY[k] for k in CHEL_RULE_KEYS)
+CHEL_OWN = {'periodlength': '4', 'skilllevel': '3', 'gamestyle': '2', 'penalties': '3', 'fighting': '2', 'injuries': '3',
+            'icing': '3', 'offsides': '2', 'tiebreaker': '0'}
+CHEL_PROVEN = ('periodlength',)
+# Owner 2026-11-20: "competitive skill 3 as default but let lobby host change it", then: the card's "Game's own" text
+# "is redundant just leave the actual setting name in". Each row lists the plain values as the Versus card does, the
+# game's own value (CHEL_OWN: what the drop-in search sends, e.g. Competitive, All-Star) as the default, which serves
+# nothing.
+CHEL_OWN_TEXT = "Default settings"
+
+
+def chel_validate(settings):
+    """{key: value string, or None for the game's own} of the CHEL lobby settings given ('' or None: the game's own); an
+    unknown key or value is refused with a text."""
+    if not isinstance(settings, dict):
+        raise RulesError('The match settings are a list of choices.')
+    out = {}
+    for key, value in settings.items():
+        if key not in CHEL_RULE_KEYS:
+            raise RulesError(f'Unknown match setting: {str(key)[:30]}.')
+        if value is None or value == '':
+            out[key] = None
+        else:
+            out.update(validate({key: value}, partial=True))
+    return out
+
+
+def chel_summary(settings):
+    """'5 min · Full sim · Fighting off': what a CHEL lobby serves, in the card's words; CHEL_OWN_TEXT for nothing."""
+    parts = []
+    for key, name, _options, _default in CHEL_RULES:
+        value = (settings or {}).get(key)
+        if value is None:
+            continue
+        text = label(key, value)
+        parts.append(text if key in ('periodlength', 'skilllevel', 'gamestyle', 'tiebreaker') else f'{name} {text.lower()}')
+    return ' · '.join(parts) or CHEL_OWN_TEXT
+
 
 def table(mode=VERSUS):
     """The rows ((key, label, options, default)) of one mode's rules."""

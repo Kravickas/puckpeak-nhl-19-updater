@@ -4,7 +4,7 @@ import { html, useState, useEffect, useRef, cls } from './lib.js';
 import { useLobbyChimes } from './chime.js';
 import { useSlice, useMeta, onEvent } from './store.js';
 import { connect, call } from './bridge.js';
-import { Backdrop, Header, TabBar, HelpBar, Details, Question } from './shell.js';
+import { Backdrop, Header, TabBar, SupportStrip, HelpBar, Details, Question } from './shell.js';
 import { Rail } from './rail.js';
 import { SaveBar, EditsWindow, saveRoster, cardDraft } from './savebar.js';
 
@@ -154,6 +154,7 @@ function App() {
     <${Backdrop}/>
     <${Header} meta=${meta} play=${app && app.play}/>
     <${TabBar} tabs=${TABS} tab=${tab} onTab=${pickTab}/>
+    <${SupportStrip}/>
     <main class="stage">
       ${TABS.filter((t) => !t.team && seen.has(t.id)).map((t) => html`<section key=${t.id}
           class=${cls('pane', `tab-${t.id}`, 'enter')} hidden=${tab !== t.id}>

@@ -120,3 +120,19 @@ def test_shootout_summary_and_edit():
     assert rules.edit(raw, {}, mode=rules.SHOOTOUT) == raw
     with pytest.raises(rules.RulesError):
         rules.edit(raw, {'periodlength': 10}, mode=rules.SHOOTOUT)
+
+
+def test_chel_settings_are_the_drop_in_search_keys_with_the_games_own_as_unset():
+    assert rules.CHEL_RULE_MODES == (rules.CHEL_DROPIN, rules.CHEL_DROPIN3)
+    assert set(rules.CHEL_OWN) == set(rules.CHEL_RULE_KEYS) and 'leaguerules' not in rules.CHEL_RULE_KEYS
+    assert all(rules.CHEL_OWN[key] in {v for v, _ in options} for key, _label, options, _d in rules.CHEL_RULES)
+    # owner 2026-11-20: Competitive, skill 3 (All-Star) by default = what the drop-in search sends
+    assert {k: rules.CHEL_OWN[k] for k in ('skilllevel', 'gamestyle')} == {'skilllevel': '3', 'gamestyle': '2'}
+    assert (rules.label('skilllevel', '3'), rules.label('gamestyle', '2')) == ('All-Star', 'Competitive')
+    assert rules.chel_validate({'periodlength': 10, 'gamestyle': '', 'skilllevel': None}) == {
+        'periodlength': '10', 'gamestyle': None, 'skilllevel': None}
+    for bad in ({'leaguerules': '1'}, {'periodlength': '7'}, {'icing': True}, ['periodlength']):
+        with pytest.raises(rules.RulesError):
+            rules.chel_validate(bad)
+    assert rules.chel_summary({}) == 'Default settings'
+    assert rules.chel_summary({'periodlength': '5', 'gamestyle': '3', 'fighting': '0'}) == '5 min · Full sim · Fighting off'

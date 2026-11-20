@@ -317,3 +317,19 @@ def test_column_reads_what_get_reads():
         t = Table('t', bytes(head), fields, rnd.randbytes(size * (n + 5)))
         for f in fields:
             assert t.column(f.name) == [t.get(r, f.name) for r in range(n)]
+
+
+def test_digest_tells_a_changed_savegroup_and_only_that():
+    # 0.98.0: a lobby host's roster changed after Ready (multiplayer_ctl._roster_watch) is told by this digest
+    db = make_db()
+    a = db.digest('rosterupdate')
+    assert a == make_db().digest('rosterupdate') and len(a) == 32
+    db['teams'].set(0, 'index', 7)                  # a table outside the group
+    assert db.digest('rosterupdate') == a and db.digest() != make_db().digest()
+    db['players'].set(1, 'lastname', 'Kesler')
+    b = db.digest('rosterupdate')
+    assert b != a
+    db.to_bytes()                                   # writing the file leaves it as it is
+    assert db.digest('rosterupdate') == b
+    db['players'].set(1, 'lastname', '')
+    assert db.digest('rosterupdate') == a

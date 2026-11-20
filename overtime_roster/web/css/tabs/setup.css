@@ -130,36 +130,8 @@
 .tab-setup .su-acts { flex: none; display: none; gap: 6px; }
 .tab-setup .su-row:hover .su-acts, .tab-setup .su-row.sel .su-acts, .tab-setup .su-row:focus-within .su-acts { display: flex; }
 
-/* --- Discord and Ko-fi, first in the left column: Legacy's buttons and colours ---------------------------------------- */
-.tab-setup .su-links { display: flex; align-items: stretch; gap: 10px; flex: none; min-width: 0; container-type: inline-size; }
-.tab-setup .su-discord, .tab-setup .su-kofi { display: flex; align-items: center; gap: 10px; min-width: 0; border: 0;
-  border-radius: 4px; color: #fff; font: inherit; text-align: left; cursor: pointer; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); }
-.tab-setup .su-discord { flex: 1 1 0; padding: 10px 16px; background: #5865f2; font-size: 15px; font-weight: 700; letter-spacing: .2px; }
-.tab-setup .su-discord svg { width: 22px; height: 22px; fill: currentColor; flex: none; }
-.tab-setup .su-discord .t { white-space: nowrap; }
-.tab-setup .su-discord .sub { margin-left: auto; min-width: 0; font-size: 12.5px; font-weight: 600; opacity: .85;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tab-setup .su-discord:hover { background: #6d79f6; }
-.tab-setup .su-discord:active { background: #4752c4; }
-.tab-setup .su-kofi { flex: none; padding: 8px 14px; border: 1px solid rgba(255, 244, 231, .16);
-  background: linear-gradient(135deg, #9d6535 0%, #bf7a3f 100%); transition: filter .16s ease; }
-.tab-setup .su-kofi .cup { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px;
-  height: 28px; border-radius: 50%; background: rgba(255, 248, 240, .18); font-size: 15px; line-height: 1;
-  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
-.tab-setup .su-kofi .txt { display: flex; flex-direction: column; min-width: 0; }
-.tab-setup .su-kofi .t { font-size: 15px; font-weight: 700; line-height: 1.1; white-space: nowrap; }
-.tab-setup .su-kofi .sub { margin-top: 2px; font-size: 12px; line-height: 1.1; color: rgba(255, 247, 240, .86); white-space: nowrap; }
-.tab-setup .su-kofi:hover { filter: brightness(1.05); }
-.tab-setup .su-discord:focus-visible, .tab-setup .su-kofi:focus-visible { outline: 2px solid rgba(255, 255, 255, .8); outline-offset: 2px; }
-@container (max-width: 470px) { .tab-setup .su-discord .sub { display: none; } }
-
 /* --- short windows (under 720 lines): tighter, the hints go ------------------------------------------------------------ */
 @media (max-height: 720px) {
-  .tab-setup .su-discord { padding: 6px 12px; font-size: 13.5px; }
-  .tab-setup .su-discord svg { width: 18px; height: 18px; }
-  .tab-setup .su-kofi { padding: 4px 12px; }
-  .tab-setup .su-kofi .t { font-size: 13.5px; }
-  .tab-setup .su-kofi .sub { display: none; }
   .tab-setup .col { gap: 6px; }
   .tab-setup .su-checks { margin-top: 6px; gap: 4px; }
   .tab-setup .su-check { padding-top: 2px; padding-bottom: 2px; }
@@ -290,9 +262,3 @@
 .tab-setup .su-newest.good { color: var(--good); }
 .tab-setup .su-newest.good::before { content: '✓  '; }
 .tab-setup .su-newest.caution { color: var(--caution); }
-/* Discord and coffee: under the rosters, smaller */
-.tab-setup .col > .su-links { margin-top: auto; }
-.tab-setup .col > .su-links .su-discord { padding: 8px 14px; font-size: 14px; }
-.tab-setup .col > .su-links .su-discord .sub { display: none; }
-.tab-setup .col > .su-links .su-kofi { padding: 6px 12px; }
-.tab-setup .col > .su-links .su-kofi .t { font-size: 14px; }

@@ -23,6 +23,7 @@ the codes MSB-first, written as bits // 8 + 1 bytes. Offset 0xFFFFFFFF = no stri
 Indexes (league tables of Franchise / Season / Be a Pro saves, e.g. leaguerostertable): their definitions follow the
 records (and string area); kept as read, as in Legacy's PS3 codec (`stock.INDEXES`).
 """
+import hashlib
 import heapq
 import struct
 
@@ -461,6 +462,19 @@ class Database:
             raise ValueError(f"{table.name}: already in the database")
         self.tables.append(table)
         self._by[table.tag] = self._by[table.name] = table
+
+    def digest(self, savegroup=None):
+        """A short hex digest of everything an edit can change (Table.state) in the tables of `savegroup` (all with
+        None): equal digests, equal tables. A few ms for the rosterupdate group, no file is built (0.98.0: a lobby
+        host's roster changed after Ready)."""
+        h = hashlib.blake2b(digest_size=16)
+        for t in self.tables:
+            if savegroup is None or (t.meta and savegroup in t.meta.savegroups):
+                header, data, strings, _tree, edits = t.state()
+                for part in (t.tag.encode(), header, data, strings, repr(sorted(edits.items())).encode()):
+                    h.update(len(part).to_bytes(4, 'little'))
+                    h.update(part)
+        return h.hexdigest()
 
     def keep(self):
         """Which tables there are and the state of each, for put_back()."""

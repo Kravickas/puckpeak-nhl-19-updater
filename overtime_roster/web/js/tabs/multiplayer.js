@@ -344,14 +344,41 @@ function ChelPlayers({ l, launching }) {
 }
 
 // the CHEL lobby's mode (the host picks it before Ready); World of Chel takes its other settings in the game
+// 0.98.0: a drop-in lobby's match settings. The server puts them on the lobby's game (nothing is baked); only the
+// period length is seen working in a CHEL match so far, so the card says the rest are not yet confirmed.
+function ChelRules({ r, host, hostName }) {
+  const edit = r.can_edit;
+  if (!r.on) return html`<div class="mp-note">This mode takes its settings in the game. Drop-in 6s and 3s take the lobby's.</div>`;
+  return html`
+    <div class="mp-rules">${r.rows.map((row) => {
+      const picked = row.options.find((o) => o.value === row.value);
+      return html`<label key=${row.key} class=${cls('mp-rule', row.value !== '' && 'changed')}
+          title=${row.proven ? 'Seen working in a World of Chel match' : 'Not yet confirmed in a World of Chel match'}>
+        <span class="mp-rule-label caps">${row.label}${row.proven ? '' : ' *'}</span>
+        ${edit
+          ? html`<${Select} value=${row.value} options=${row.options} onChange=${(v) => call('mp_set_chel_rule', row.key, v)}/>`
+          : html`<span class="mp-rule-value">${picked ? picked.label : row.value}</span>`}
+      </label>`;
+    })}</div>
+    <div class="mp-note">The server puts these on your lobby's game. If it meets another lobby, the game plays one
+      lobby's settings. * Not yet confirmed in a World of Chel match: only the period length is seen working so far.</div>
+    ${edit && html`<div class="mp-row"><span class="mp-note">Changing a setting clears Ready for everyone.</span><span class="sp"></span>
+      <${Button} small kind="ghost" disabled=${r.is_default} onClick=${() => call('mp_reset_chel_rules')}>Reset to default<//></div>`}
+    ${!host && html`<div class="mp-note">${hostName || 'The host'} picks the settings for your lobby's game.</div>`}
+    ${host && !edit && html`<div class="mp-note">The game is starting: the settings are fixed now.</div>`}`;
+}
+
 function ChelCard({ l, modes }) {
   const options = (modes || []).map((m) => ({ value: m.mode, label: m.name }));
-  return html`<${Card} n=${3} title="World of Chel">
+  const r = l.chel_rules;
+  return html`<${Card} n=${3} title="World of Chel"
+      aside=${r && r.on ? html`<${Tag} tone=${r.is_default ? 'info' : 'accent'}>${r.summary}<//>` : null}>
     <div class="mp-body mp-rules-body">
       <div class="mp-rule mp-mode-pick"><span class="mp-rule-label caps">Mode</span>
         ${l.mode_pick && l.mode_pick.edit && options.length
           ? html`<${Select} value=${l.chel_mode} options=${options} onChange=${(v) => call('mp_set_mode', v)}/>`
           : html`<span class="mp-rule-value">${l.game}</span>`}</div>
+      ${r && html`<${ChelRules} r=${r} host=${l.host} hostName=${l.host_name}/>`}
     </div>
   </${Card}>`;
 }
@@ -484,13 +511,24 @@ function RosterRule({ roster }) {
   </label>`;
 }
 
+// 0.98.0 (a tester: the host's changes did not reach the match): the host sees what Ready sent (or will send) and its
+// CRC; a change after Ready un-readies them (Python), so the match never plays an older roster than the one open here
 function RosterNote({ roster, host, hostName }) {
   if (roster.mode !== 'host') return null;
-  return host
-    ? html`<div class="mp-note">Your open roster (with your edits and lines; none open: the one Patch put on your game) is sent
-        when you press Ready. Both games download it.</div>`
-    : html`<div class="mp-note">${hostName || 'The host'} plays their own roster.
-        ${roster.uploaded ? 'Your game downloads it when you press PLAY.' : 'It is sent when they press Ready.'}</div>`;
+  const crc = roster.crc ? ` (CRC ${roster.crc})` : '';
+  if (!host) {
+    return html`<div class="mp-note">${hostName || 'The host'} plays their own roster.
+      ${roster.uploaded ? `Your game downloads it when you press PLAY${crc}.` : 'It is sent when they press Ready.'}</div>`;
+  }
+  const what = roster.note && !roster.late ? ''     // changed after Ready: the next Ready sends it (the note says so)
+    : roster.sent
+    ? `Sent at Ready: ${roster.sent}${crc}. Both games download it when you press PLAY.`
+    : roster.none_open
+      ? `No roster is open here, so Ready sends ${roster.will}. To play your own players, lines and positions, open your roster on the Setup tab first.`
+      : `Ready sends ${roster.will}, with your players, lines and positions (saved or not). Both games download it.`;
+  return html`<div class=${cls('mp-note', (roster.note || (roster.none_open && !roster.sent)) && 'warn')}>
+    ${roster.note && html`<b>${roster.note}</b> `}${what}
+    ${!roster.note && !roster.late && ' A change after Ready un-readies you, so it goes with your next Ready.'}</div>`;
 }
 
 // the game the lobby plays: Online Versus, Shootout or Threes (the host picks; the others grey out the rules they have not)

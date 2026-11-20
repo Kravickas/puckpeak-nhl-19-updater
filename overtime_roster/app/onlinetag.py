@@ -319,8 +319,9 @@ def remove(game_dir):
     folder = os.path.join(mods, *gamesetup.VERSION_DIR)
     while os.path.normcase(folder).startswith(os.path.normcase(mods)):
         try:
-            if not os.path.isdir(folder) or os.listdir(folder):
+            if not os.path.isdir(folder) or gamefiles.listdir(folder):
                 break
+            gamefiles.drop_junk(folder)
             os.rmdir(folder)
         except OSError:
             break

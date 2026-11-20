@@ -2,6 +2,30 @@
 
 What changed in each version, for players.
 
+## 0.98.0 (2026-11-20)
+
+### New
+
+- **Match settings for Drop-in lobbies**: the host of a Drop-in 6s or 3s lobby picks period length, skill level,
+  game style, penalties, fighting, injuries, icing, offsides and tie break on the World of Chel card. Skill level and
+  game style start at All-Star and Competitive. Only the period length is confirmed in a World of Chel match so far;
+  the card marks the others with *.
+- **Support strip**: Buy me a coffee and Discord sit under the tab row on every tab.
+
+### Fixed
+
+- **The host's own roster**: edits the host makes after pressing Ready now go with the next Ready (before, they never
+  reached the online game). The lobby card shows which roster Ready sends.
+- **Mac**: Finder's hidden files (.DS_Store and the like) no longer make the app refuse a game or patch folder.
+
+### How to get it
+
+- The app updates itself. No new packs, no Patch needed.
+
+### Known limits
+
+- Single gameplay sliders cannot be set online: the game style picks the whole slider set.
+
 ## 0.97.0 (2026-11-19)
 
 ### New

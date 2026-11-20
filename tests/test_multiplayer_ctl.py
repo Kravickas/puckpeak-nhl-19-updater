@@ -122,7 +122,12 @@ class FakeService:
 
     def settings(self, code, token, rules):
         self._go('settings', code, token, rules)
-        self.lobby = {**self.lobby, 'rules': {**RU.defaults(self.lobby.get('mode') or 'versus'), **(self.lobby.get('rules') or {}), **rules}}
+        if self.lobby.get('kind') == 'chel':     # 0.98.0: a drop-in lobby's served settings (None: the game's own)
+            now = {k: v for k, v in {**(self.lobby.get('chel_rules') or {}), **rules}.items() if v is not None}
+            self.lobby = {**self.lobby, 'chel_rules': now}
+        else:
+            self.lobby = {**self.lobby, 'rules': {**RU.defaults(self.lobby.get('mode') or 'versus'),
+                                                  **(self.lobby.get('rules') or {}), **rules}}
         for p in self.lobby['players']:
             p['ready'] = False
         return {**self.lobby, 'you': 0}
@@ -1030,7 +1035,8 @@ def test_the_host_plays_its_own_roster_and_sends_it_at_ready(mp, monkeypatch):
     start_lobby(mp)
     mp.service.lobby['roster_mode'] = 'server'
     mp.lobby = dict(mp.service.lobby)
-    assert mp.view()['lobby']['roster_mode'] == {'mode': 'server', 'uploaded': False, 'edit': True}
+    r = mp.view()['lobby']['roster_mode']
+    assert {k: r[k] for k in ('mode', 'uploaded', 'edit')} == {'mode': 'server', 'uploaded': False, 'edit': True}
     assert 'Pick' in mp.set_roster_mode('mine')['error']
     assert mp.set_roster_mode('host') == {'ok': True}
     assert mp.view()['lobby']['roster_mode']['mode'] == 'host'
@@ -1055,6 +1061,65 @@ def test_a_host_without_a_served_roster_is_told_to_patch(mp, monkeypatch):
     monkeypatch.setattr(MC.hostroster, 'host_roster', none)
     mp.service.calls.clear()
     assert 'Patch' in mp.ready()['error'] and mp.service.calls == []
+
+
+def test_a_roster_change_after_ready_unreadies_the_host_and_ready_sends_it_again(mp, monkeypatch):
+    # 0.98.0, a tester: the host changed positions, players and lines and the match did not have them. The roster goes
+    # at Ready; a change after it un-readies the host (the next Ready sends it), after the launch it is only said.
+    _roster_service(mp.service)
+    start_lobby(mp)
+    mp.service.lobby['roster_mode'] = 'server'
+    mp.lobby = dict(mp.service.lobby)
+    mp.set_roster_mode('host')
+    mp.ctl.game.schema = lambda: 'schema'
+    r = mp.view()['lobby']['roster_mode']
+    assert r['none_open'] and r['will'] == 'the roster Patch put on your game' and r['sent'] == ''
+    mp.ctl.session = types.SimpleNamespace(db='db', source_name='Puck Peak')
+    now = {'fp': 'a'}
+    monkeypatch.setattr(MC.hostroster, 'host_roster', lambda game_dir, schema, db: (b'ROSTER', 'C' * 54, 'open'))
+    monkeypatch.setattr(MC.hostroster, 'fingerprint', lambda db, schema: ('open', now['fp']))
+    monkeypatch.setattr(MC.hostroster, 'complete', lambda db, schema: db is not None)
+    r = mp.view()['lobby']['roster_mode']
+    assert not r['none_open'] and r['will'] == '"Puck Peak", the roster open here' and r['sent'] == ''
+    assert mp.ready() == {'ok': True}
+    mp.service.lobby['players'][0]['ready'] = True
+    mp.service.lobby['host_roster_crc'] = 'C' * 54
+    announced = len(mp.service.announced)
+    mp.poll_once()                                      # nothing changed: still ready
+    r = mp.view()['lobby']['roster_mode']
+    assert len(mp.service.announced) == announced
+    assert r['sent'] == '"Puck Peak", the roster open here' and r['crc'] == 'CCCCCCCC' and r['note'] == ''
+    now['fp'] = 'b'                                     # a line moved after Ready
+    mp.poll_once()
+    assert mp.service.announced[-1][:4] == ('ready', 'K7M2Q', 'secret-token', False)
+    assert 'press ready again' in mp.view()['lobby']['roster_mode']['note'].lower()
+    assert any('changed after Ready' in line for line in mp.ctl.host.lines)
+    mp.service.lobby['players'][0]['ready'] = False
+    mp.service.calls.clear()
+    assert mp.ready() == {'ok': True}                   # Ready sends the new one
+    assert [c[0] for c in mp.service.calls] == ['upload_roster', 'ready']
+    assert mp.view()['lobby']['roster_mode']['note'] == ''
+    # launched: the lobby refuses another roster, so the host is told and stays in the match
+    players = [dict(p, ready=True) for p in mp.service.lobby['players']]
+    mp.lobby = {**mp.service.lobby, 'players': players, 'state': 'launching', 'you': 0}
+    announced = len(mp.service.announced)
+    now['fp'] = 'c'
+    mp._roster_watch()
+    r = mp.view()['lobby']['roster_mode']
+    assert len(mp.service.announced) == announced and r['late'] and 'this match plays' in r['note']
+    mp.lobby = {**mp.lobby, 'players': [dict(p, ready=False) for p in players], 'state': 'open'}
+    mp._roster_watch()                                  # that match is over: the next Ready sends what is open
+    assert mp.view()['lobby']['roster_mode']['note'] == ''
+
+
+def test_the_guest_sees_the_crc_its_game_downloads(mp):
+    mp.set_name('Me')
+    mp.set_ext('5')
+    mp.join('K7M2Q')
+    mp.lobby = {**mp.service.lobby, 'roster_mode': 'host', 'host_roster': True, 'host_roster_crc': 'H' * 54, 'you': 1}
+    assert mp.me == 1
+    r = mp.view()['lobby']['roster_mode']
+    assert r['uploaded'] and r['crc'] == 'HHHHHHHH' and 'sent' not in r
 
 
 def test_the_guest_cannot_pick_the_roster(mp):
@@ -1794,3 +1859,53 @@ def test_screen_texts_name_the_mode_and_flag_wrong_mode_and_stalls():
     assert v['tone'] == 'caution' and 'stuck?' in v['text'] and '2 min' in v['text']
     assert M._screen_view({'id': 'searching', 'mode': 51, 'for': 300}, 'chel_dropin3')['tone'] == 'good'
     assert M._screen_view({'id': 'closed', 'mode': None, 'for': 0})['text'] == 'game closed'
+
+
+# --- 0.98.0: a drop-in CHEL lobby's match settings ----------------------------------------------------------------
+
+@pytest.mark.usefixtures('chel_on')
+def test_the_chel_card_has_drop_in_settings_only_from_a_server_that_serves_them(mp):
+    start_chel(mp)
+    assert mp.view()['lobby']['chel_rules'] is None                  # a 0.97.0 server: the card has no settings
+    mp.service.lobby.update(chel_rules={}, chel_rules_on=True)
+    mp._apply({**mp.service.lobby, 'you': 0})
+    r = mp.view()['lobby']['chel_rules']
+    assert r['on'] and r['can_edit'] and r['is_default'] and r['summary'] == 'Default settings'
+    assert [row['key'] for row in r['rows']] == list(RU.CHEL_RULE_KEYS)
+    period = r['rows'][0]
+    assert period['value'] == '' and period['proven']                # owner: plain values as on the Versus card
+    assert [o['label'] for o in period['options']] == ['3 min', '4 min', '5 min', '10 min', '15 min', '20 min']
+    assert [o['value'] for o in period['options']] == ['3', '', '5', '10', '15', '20']   # 4 min: the game's own
+    assert not any("Game's own" in o['label'] or '(default)' in o['label'] for row in r['rows'] for o in row['options'])
+    assert not any(row['proven'] for row in r['rows'][1:])            # the card marks them not yet confirmed
+    skill, style = r['rows'][1], r['rows'][2]                         # owner 2026-11-20: All-Star, Competitive by default
+    assert (skill['key'], skill['value'], style['key'], style['value']) == ('skilllevel', '', 'gamestyle', '')
+    assert [o['label'] for o in style['options']] == ['Arcade', 'Traditional', 'Competitive', 'Full sim']
+    assert [o['value'] for o in style['options']] == ['0', '1', '', '3']
+    assert [o['label'] for o in skill['options']] == ['Rookie', 'Semi-pro', 'Pro', 'All-Star', 'Superstar']
+    assert [o['value'] for o in skill['options']] == ['0', '1', '2', '', '4']
+    assert mp.set_chel_rule('periodlength', '10') == {'ok': True}
+    assert mp.service.calls[-1] == ('settings', 'K7M2Q', 'secret-token', {'periodlength': '10'})
+    r = mp.view()['lobby']['chel_rules']
+    assert r['rows'][0]['value'] == '10' and r['summary'] == '10 min' and not r['is_default']
+    assert 'error' in mp.set_chel_rule('leaguerules', '2')            # not a drop-in setting: never sent
+    assert 'error' in mp.set_chel_rule('periodlength', '7')
+    assert mp.service.calls[-1][3] == {'periodlength': '10'}
+    assert mp.set_chel_rule('periodlength', '') == {'ok': True}
+    assert mp.service.calls[-1][3] == {'periodlength': None}
+    assert mp.reset_chel_rules() == {'ok': True}
+    assert mp.service.calls[-1][3] == {k: None for k in RU.CHEL_RULE_KEYS}
+    assert mp.view()['lobby']['chel_rules']['is_default']
+    assert mp.view()['lobby']['rules'] is None                         # nothing of the Versus card, nothing baked
+    assert mp._launch_rules() is None
+
+
+def test_the_chel_settings_rows_for_a_guest_a_launch_and_a_mode_without_them():
+    view = MC.MultiplayerCtl._chel_rules_view
+    lobby = {'chel_rules': {'gamestyle': '3', 'junk': '1'}, 'chel_rules_on': True, 'state': 'open'}
+    guest = view(lobby, False)
+    assert not guest['can_edit'] and guest['summary'] == 'Full sim' and guest['rows'][2]['value'] == '3'
+    assert view({**lobby, 'chel_rules': {'gamestyle': '2'}}, True)['rows'][2]['value'] == ''   # Competitive = the default
+    assert not view({**lobby, 'state': 'launching'}, True)['can_edit']
+    off = view({**lobby, 'chel_rules_on': False}, True)
+    assert (off['on'], off['rows'], off['can_edit'], off['summary']) == (False, [], False, 'Default settings')

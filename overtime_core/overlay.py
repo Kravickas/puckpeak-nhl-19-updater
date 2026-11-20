@@ -1055,7 +1055,8 @@ def _forget(game_dir):
         os.remove(p)
     top = overlay_dir(game_dir)
     for here, _dirs, _files in sorted(os.walk(top), key=lambda w: -len(w[0])):
-        if not os.listdir(here):
+        if not gamefiles.listdir(here):     # empty, or only a Mac's .DS_Store
+            gamefiles.drop_junk(here)
             os.rmdir(here)
 
 

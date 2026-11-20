@@ -125,7 +125,8 @@ class MultiplayerCtl(Part):
     CALLS = {'mp_set_name': 'set_name', 'mp_set_ext': 'set_ext', 'mp_set_press': 'set_press', 'mp_refresh': 'refresh',
              'mp_create': 'create', 'mp_join': 'join', 'mp_ready': 'ready', 'mp_leave': 'leave',
              'mp_launch_now': 'launch_now', 'mp_set_rule': 'set_rule', 'mp_roster_mode': 'set_roster_mode',
-             'mp_reset_rules': 'reset_rules', 'mp_set_mode': 'set_mode', 'mp_history_refresh': 'history_refresh',
+             'mp_reset_rules': 'reset_rules', 'mp_set_chel_rule': 'set_chel_rule',
+             'mp_reset_chel_rules': 'reset_chel_rules', 'mp_set_mode': 'set_mode', 'mp_history_refresh': 'history_refresh',
              'mp_history_player': 'history_player', 'mp_history_close': 'history_close',
              'mp_result_open': 'result_open', 'mp_result_close': 'result_close', 'mp_result': 'send_result',
              'mp_review_open': 'review_open', 'mp_review_close': 'review_close', 'mp_set_hidden': 'set_hidden',
@@ -168,6 +169,10 @@ class MultiplayerCtl(Part):
         self.prep = ''              # what Ready does before it tells the lobby (the shadPS4 build, the patch), for the card
         self.auto_patched = None    # the lobby code Ready patched the game for (once per lobby)
         self.prep_why = ''          # why Ready's preparation could not do its part here (said with a lobby refusal)
+        # 0.98.0 (a tester: the host's edits did not reach the match): the host roster the last Ready sent here
+        # ({code, crc, label, fp}) and what changed since (('ready' | 'late', text) or None), see _roster_watch
+        self.sent_roster = None
+        self.roster_note = None
         self.shown_now = False
         self.looked = False
         self.code = self.token = None
@@ -810,12 +815,61 @@ class MultiplayerCtl(Part):
         try:
             with c.lock:
                 s = c.session
-                blob, crc, came = hostroster.host_roster(c.game_dir, c.game.schema(), s.db if s is not None else None)
+                db, schema = (s.db if s is not None else None), c.game.schema()
+                blob, crc, came = hostroster.host_roster(c.game_dir, schema, db)
+                fp = hostroster.fingerprint(db, schema)     # after the build (it packs typed names): what went
+                label = _roster_label(s, came)
         except (OSError, ValueError, KeyError, overlay.PatchError) as err:
             raise hostroster.HostRosterError(f'Your roster could not be read ({err}).') from None
-        where = 'the roster open here' if came == 'open' else 'the roster Patch put on your game'
-        c.host.log(f'Multiplayer: uploading {where} ({len(blob)} bytes, CRC {crc[:12]}...).')
+        c.host.log(f'Multiplayer: uploading {label} ({len(blob)} bytes, CRC {crc[:12]}...).')
         self.client().upload_roster(code, token, blob)
+        with self.mlock:
+            self.sent_roster = {'code': code, 'crc': crc, 'label': label, 'fp': fp}
+            self.roster_note = None
+
+    def _roster_now(self):
+        """hostroster.fingerprint of what Ready would send now (None when it cannot be told)."""
+        c = self.ctl
+        try:
+            with c.lock:
+                s = c.session
+                return hostroster.fingerprint(s.db if s is not None else None, c.game.schema())
+        except Exception:   # noqa: BLE001 (no game folder, a schema that does not read: Ready says so itself)
+            return None
+
+    def _roster_watch(self):
+        """0.98.0 (a tester: "the host's roster changes did not reach the online game"). The host's roster goes at
+        Ready, so a change made after it (a line, a position, a player, Undo, another roster opened) un-readies the
+        host while the lobby has not launched: the next Ready sends the new one. Once launched the roster is fixed (the
+        lobby refuses another): the host is told the match plays the one sent. A few ms per poll (no file built)."""
+        with self.mlock:
+            lobby, sent, code, token = self.lobby or {}, self.sent_roster, self.code, self.token
+            players = lobby.get('players') or []
+            mine = players[0] if players and isinstance(players[0], dict) else {}
+            launched = lobby.get('state') in LAUNCHING
+            watch = (bool(sent) and sent['code'] == code and self.me == 0 and lobby.get('roster_mode') == 'host'
+                     and (launched or bool(mine.get('ready'))))
+            if not watch:
+                if self.roster_note and self.roster_note[0] == 'late' and not launched:
+                    self.roster_note = None     # that match is over: the next Ready sends what is open then
+                return
+        now = self._roster_now()
+        if now is None or now == sent['fp']:
+            return
+        if launched:
+            with self.mlock:
+                news = not self.roster_note
+                self.roster_note = ('late', 'You changed your roster after the match started: this match plays the '
+                                            'one you sent at Ready. Your changes go with your next Ready.')
+            if news:
+                self.ctl.host.log('Multiplayer: the roster changed after the launch (this match plays the one sent).')
+                self._changed()
+            return
+        self.ctl.host.log('Multiplayer: the roster changed after Ready: not ready until Ready sends it again.')
+        with self.mlock:
+            self.roster_note = ('ready', 'Your roster changed after you pressed Ready, so you are not ready now. '
+                                         'Press Ready again to send it.')
+        self._send_ready(code, token, False)
 
     def set_roster_mode(self, mode):
         """The host picks whose roster the match plays on: 'server' (the online roster) or 'host' (the host's own
@@ -835,6 +889,8 @@ class MultiplayerCtl(Part):
             lobby = self.client().roster_mode(code, token, mode)
         except LC.LobbyError as err:
             return self._lobby_error(err)
+        with self.mlock:
+            self.roster_note = None         # both ready flags cleared: the next Ready sends it
         self._apply(lobby)
         return {'ok': True}
 
@@ -880,6 +936,19 @@ class MultiplayerCtl(Part):
     def reset_rules(self):
         """The host puts every match rule back to the game's own."""
         return self._send_rules(RU.defaults(self._mode()))
+
+    def set_chel_rule(self, key, value):
+        """0.98.0: the host of a drop-in CHEL lobby picks one match setting ('' = the game's own); the server serves it
+        onto the party's game and clears every ready flag on a change. Nothing is baked into the game."""
+        try:
+            wanted = RU.chel_validate({key: value})
+        except RU.RulesError as err:
+            return self._fail(str(err))
+        return self._send_rules(wanted)
+
+    def reset_chel_rules(self):
+        """The host leaves every CHEL match setting to the game."""
+        return self._send_rules({key: None for key in RU.CHEL_RULE_KEYS})
 
     def _send_rules(self, wanted):
         with self.mlock:
@@ -1143,6 +1212,7 @@ class MultiplayerCtl(Part):
     def _left(self, note):
         with self.mlock:
             self.code = self.token = self.lobby = None
+            self.sent_roster = self.roster_note = None
             self.launched_for = None
             if self.game and self.game.get('phase') in ('failed', 'ended', 'rematch'):
                 self.game = None
@@ -1216,6 +1286,7 @@ class MultiplayerCtl(Part):
             if _down_text(self.error):
                 self.error = ''
         self._apply(lobby)
+        self._roster_watch()
 
     def _apply(self, lobby):
         """Take the server's view; both ready starts the game once."""
@@ -1829,6 +1900,24 @@ class MultiplayerCtl(Part):
                      'text': ('not reachable' if self.service_down else self.ctl.setup.server['host']), 'go': None})
         return rows
 
+    def _roster_sent_view(self, lobby, host):
+        """0.98.0: which roster the match plays. The host: what Ready sent (name, CRC) or what it will send, and what
+        changed since; a guest: the CRC its game downloads (a 0.98.0 server says it)."""
+        crc = lobby.get('host_roster_crc') if isinstance(lobby.get('host_roster_crc'), str) else ''
+        if not host:
+            return {'crc': crc[:8]}
+        sent = self.sent_roster if self.sent_roster and self.sent_roster['code'] == self.code else None
+        c = self.ctl
+        s = c.session
+        try:    # a part roster (not every rosterupdate table) sends the patched game's, as host_roster does
+            came = 'open' if s is not None and hostroster.complete(s.db, c.game.schema()) else 'patch'
+        except Exception:   # noqa: BLE001 (no game folder yet: Ready says so)
+            came = 'patch'
+        return {'crc': (sent['crc'] if sent else crc)[:8], 'sent': sent['label'] if sent and lobby.get('host_roster') else '',
+                'will': _roster_label(s, came), 'none_open': came != 'open',
+                'note': self.roster_note[1] if self.roster_note else '',
+                'late': bool(self.roster_note and self.roster_note[0] == 'late')}
+
     def _lobby_view(self):
         lobby = self.lobby
         if not lobby:
@@ -1856,9 +1945,13 @@ class MultiplayerCtl(Part):
                 'mode': lobby.get('mode') if chel else self._mode(), 'game': self._game_name(), 'mode_pick': (
                     {'edit': host and lobby.get('state') not in LAUNCHING} if 'mode' in lobby else None),
                 'waiting': lobby.get('waiting'), 'players': players, 'rules': rules,
+                # 0.98.0: a drop-in CHEL lobby's served settings (None: not a CHEL lobby, or a server without them)
+                'chel_rules': (self._chel_rules_view(lobby, host)
+                               if chel and isinstance(lobby.get('chel_rules'), dict) else None),
                 'roster_mode': (None if 'roster_mode' not in lobby else
                                 {'mode': lobby.get('roster_mode'), 'uploaded': bool(lobby.get('host_roster')),
-                                 'edit': host and lobby.get('state') not in LAUNCHING}),
+                                 'edit': host and lobby.get('state') not in LAUNCHING,
+                                 **self._roster_sent_view(lobby, host)}),
                 'chat': [{'n': c['n'], 'name': str(c.get('name') or ''), 'text': str(c.get('text') or ''),
                           'mine': c.get('who') == self.me}
                          for c in (lobby.get('chat') or [])[-CHAT_SHOWN:] if isinstance(c, dict) and isinstance(c.get('n'), int)],
@@ -1872,6 +1965,24 @@ class MultiplayerCtl(Part):
                 'bench': bool(mine and mine['bench']),
                 'path': list(CHEL_PATHS.get(lobby.get('mode'), ())) if chel else [],
                 'wrong_mode': chel and 'this lobby plays' in str(lobby.get('waiting') or '')}
+
+    @staticmethod
+    def _chel_rules_view(lobby, host):
+        """0.98.0: the match settings rows of the World of Chel card: the plain values as on the Versus card, the
+        game's own one (RU.CHEL_OWN, the default) with value '' (the server serves nothing for it), the lobby's pick,
+        whether a CHEL match has shown it working (`proven`: only the period length). `on` False: this mode takes its
+        settings in the game (the card says so, no rows)."""
+        picked = {k: str(v) for k, v in lobby['chel_rules'].items() if k in RU.CHEL_RULE_KEYS}
+        on = bool(lobby.get('chel_rules_on'))
+        edit = host and on and lobby.get('state') not in LAUNCHING
+
+        def row(key, name, options):
+            own, value = RU.CHEL_OWN[key], picked.get(key, '')
+            return {'key': key, 'label': name, 'value': '' if value == own else value, 'proven': key in RU.CHEL_PROVEN,
+                    'options': [{'value': '' if v == own else v, 'label': text} for v, text in options]}
+        rows = [row(key, name, options) for key, name, options, _default in RU.CHEL_RULES] if on else []
+        return {'rows': rows, 'on': on, 'can_edit': edit, 'is_default': not picked,
+                'summary': RU.chel_summary(picked) if on else RU.CHEL_OWN_TEXT}
 
     @staticmethod
     def _rules_view(lobby, host):
@@ -1965,6 +2076,14 @@ def _screen_view(s, lobby_mode=None):
         return {'text': '%s for %s: stuck?' % (text, _age(held) if held >= 45 else '%d s' % held), 'tone': 'caution',
                 'for': held}
     return {'text': text, 'tone': 'info', 'for': held}
+
+
+def _roster_label(s, came):
+    """The host roster in words: the roster open here (by its name), or the patched game's."""
+    if came != 'open':
+        return 'the roster Patch put on your game'
+    name = (getattr(s, 'source_name', '') or '').strip()
+    return f'"{name}", the roster open here' if name else 'the roster open here'
 
 
 def _age(seconds):

@@ -160,6 +160,40 @@ a:hover { color: var(--accent-hi); text-decoration: underline; }
 .keycap.round { min-width: 20px; width: 20px; padding: 0; border-radius: 50%; font-size: 11px; }
 .keycap:hover { background: rgba(255, 255, 255, .12); }
 
+/* --- support strip under the tab row, on every tab (0.98.0, as Faceoff 0.30.0): coffee first, Discord second ---------- */
+.tabs:has(+ .support) { margin-bottom: 6px; }
+.support { position: relative; z-index: 1; flex: none; display: flex; align-items: center; gap: 10px;
+  width: max-content; max-width: calc(100% - 32px); margin: 0 auto 10px; padding: 3px 3px 3px 14px;
+  border-radius: 999px; border: 1px solid var(--line-hi);
+  background: linear-gradient(180deg, rgba(34, 41, 50, .88), rgba(24, 29, 35, .92));
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .04); }
+.sup-heart { flex: none; color: var(--accent); font-size: 14px; line-height: 1; text-shadow: 0 0 10px var(--glow); }
+.sup-text { min-width: 0; font-size: 13.5px; line-height: 1.2; color: var(--text-2); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.sup-short { display: none; }
+.support .discord, .support .kofi { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 28px;
+  padding: 0 13px 0 10px; border: 0; border-radius: 999px; color: #fff; font: inherit; font-size: 12.5px; font-weight: 700;
+  letter-spacing: .02em; white-space: nowrap; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .3);
+  transition: transform .16s var(--ease), filter .16s, background .16s; }
+.support .discord { background: #5865f2; }
+.support .discord svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+.support .kofi { padding-left: 5px; border: 1px solid rgba(255, 244, 231, .16);
+  background: linear-gradient(135deg, #9d6535 0%, #bf7a3f 100%); }
+.support .kofi .cup { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px;
+  border-radius: 50%; background: rgba(255, 248, 240, .18); font-size: 11.5px; line-height: 1;
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
+.support .discord:hover, .support .kofi:hover { transform: translateY(-1px); filter: brightness(1.08); }
+.support .discord:active, .support .kofi:active { transform: translateY(0); filter: brightness(.95); }
+.support .discord:focus-visible, .support .kofi:focus-visible { outline: 2px solid rgba(255, 255, 255, .8); outline-offset: 2px; }
+@media (max-width: 900px) { .sup-long { display: none; } .sup-short { display: inline; } }
+/* short windows: the strip costs a row, so it is a step smaller and the tab row gives some of its margin back */
+@media (max-height: 720px) {
+  .tabs:has(+ .support) { margin-bottom: 3px; }
+  .support { margin-bottom: 6px; padding: 2px 2px 2px 12px; gap: 8px; }
+  .sup-text { font-size: 12.5px; }
+  .support .discord, .support .kofi { height: 24px; font-size: 12px; }
+}
+
 /* --- the stage holding the tabs ------------------------------------------------------------------------------------- */
 .stage { position: relative; z-index: 1; flex: 1; min-height: 0; padding: 0 16px; }
 .pane { position: absolute; inset: 0 16px; display: flex; flex-direction: column; min-height: 0; }

@@ -297,7 +297,7 @@ def safe_look(setup):
 def measure(game_dir):
     """(bytes, files) of the game folder."""
     total = count = 0
-    for folder, _dirs, names in os.walk(game_dir):
+    for folder, _dirs, names in gamefiles.walk(game_dir):
         for name in names:
             try:
                 total += os.path.getsize(os.path.join(folder, name))

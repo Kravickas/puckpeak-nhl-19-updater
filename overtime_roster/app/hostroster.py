@@ -17,12 +17,22 @@ def served_database(game_dir):
     return overlay._current_database(game_dir, state) if 'database' in (state.get('layers') or {}) else None
 
 
+def complete(db, schema):
+    """True when `db` holds every rosterupdate table (a part roster does not: host_roster sends the served one)."""
+    return db is not None and all(m.short in db for m in schema.tables.values() if h2h.SAVEGROUP in m.savegroups)
+
+
+def fingerprint(db, schema):
+    """What host_roster would send now, told apart in a few ms with no file built (0.98.0: the roster changed after
+    the host's Ready): ('open', digest of the open roster's rosterupdate tables), else ('patch',)."""
+    return ('open', db.digest(h2h.SAVEGROUP)) if complete(db, schema) else ('patch',)
+
+
 def host_roster(game_dir, schema, open_db=None):
     """(roster_h2h bytes, CRC, where it came from): the open roster `open_db` (a tdb.Database), else the served one.
     Raises HostRosterError with neither."""
     initial = tdb.Database.parse(h2h.initial_roster(game_dir), schema)
-    wanted = [m.short for m in schema.tables.values() if h2h.SAVEGROUP in m.savegroups]
-    if open_db is not None and all(t in open_db for t in wanted):    # else (a part roster) the served one
+    if complete(open_db, schema):    # else (none open, a part roster) the served one
         blob, crc = h2h.build(open_db, schema, initial)
         return blob, crc, 'open'
     raw = served_database(game_dir)

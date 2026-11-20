@@ -16,7 +16,7 @@ marker existed) may hold the player's own files, so they stay where they are and
 import os
 import shutil
 
-from overtime_core import durable
+from overtime_core import durable, gamefiles
 
 SPARE = 1 << 30         # free bytes left on the new drive after the copy
 SKIP = ('.part', '.tmp')    # leftovers of a write a crash stopped: not copied, removed with the old folder
@@ -65,7 +65,7 @@ def pick(path):
     cache folder of this program, else SUBFOLDER inside it, so the player's files never mix with the cache.
     CacheMoveError when that one holds other files too."""
     for folder in (path, os.path.join(path, SUBFOLDER)):
-        if not os.path.exists(folder) or is_cache(folder) or (os.path.isdir(folder) and not os.listdir(folder)):
+        if not os.path.exists(folder) or is_cache(folder) or (os.path.isdir(folder) and not gamefiles.listdir(folder)):
             return folder
     raise CacheMoveError(f'{path} holds other files, and so does its {SUBFOLDER} folder. Pick an empty folder.')
 
@@ -198,6 +198,8 @@ def _prune(folder, keep=False):
         if keep and same(top, folder):
             continue
         try:
+            if not gamefiles.listdir(top):     # only a Mac's .DS_Store left
+                gamefiles.drop_junk(top)
             os.rmdir(top)
         except OSError:
             pass
