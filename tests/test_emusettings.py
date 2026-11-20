@@ -170,7 +170,7 @@ def test_defaults_without_patch_readbacks_always_pro_and_shader_cache_once(user,
     wrote = emusettings.apply_defaults(str(user), True)
     cfg = _read(user)
     assert sorted(wrote) == ['GPU.direct_memory_access_enabled', 'GPU.readback_linear_images_enabled',
-                             'GPU.readbacks_mode', 'GPU.vblank_frequency',
+                             'GPU.readbacks_mode', 'GPU.submit_draw_interval', 'GPU.vblank_frequency',
                              'General.neo_mode', 'Log.sync', 'Vulkan.pipeline_cache_enabled']
     # owner 2026-11-11: direct memory access by default, not locked; 2026-11-13: vblank 9999 (Unlocked), log sync off
     assert emusettings.frame_rate(str(user)) == 9999 and emusettings.log_sync(str(user)) is False
@@ -180,6 +180,7 @@ def test_defaults_without_patch_readbacks_always_pro_and_shader_cache_once(user,
     assert 'extra_dmem_in_mbytes' not in cfg['General'] and emusettings.dmem(str(user)) == 0
     assert not {'GPU.vblank_frequency', 'GPU.direct_memory_access_enabled', 'General.extra_dmem_in_mbytes'} & set(emusettings.locks())
     assert cfg['GPU']['readbacks_mode'] == 2 and cfg['GPU']['readback_linear_images_enabled'] is True
+    assert cfg['GPU']['submit_draw_interval'] == 1000 and 'GPU.submit_draw_interval' in emusettings.locks()
     assert cfg['General']['neo_mode'] is True and cfg['Vulkan']['pipeline_cache_enabled'] is True
     assert cfg['GPU']['present_mode'] == 'Fifo' and cfg['General']['volume_slider'] == 80   # started from config.json
     view = emusettings.view(str(user))

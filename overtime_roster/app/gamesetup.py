@@ -43,8 +43,10 @@ DMEM_KEY, DMEM_1440 = 'extra_dmem_in_mbytes', 3500   # "General": what the 1440p
 AMD_MATH_KEY = 'redzone_patches'
 # "GPU": shadPS4's readbacks (0 Disabled, the default; 1 Relaxed; 2 Precise) and "Readback linear images" (off by
 # default). Precise and on for every player (owner 2026-11-10, against graphical glitches); install() writes them over
-# the player's values and keeps those for remove()
-GPU_SETTINGS = {'readbacks_mode': 2, 'readback_linear_images_enabled': True}
+# the player's values and keeps those for remove(). "Submit draw interval" (0, the default: never early; N: the draws
+# recorded so far go to the GPU after N draws, vk_rasterizer FlushPeriodically) 1000 the same way (Kravickas
+# 2026-11-20)
+GPU_SETTINGS = {'readbacks_mode': 2, 'readback_linear_images_enabled': True, 'submit_draw_interval': 1000}
 # "GPU": shadPS4's display mode. full_screen off = a window; on with "Fullscreen" = exclusive; on with anything else =
 # borderless (fork sdl_window.cpp). The app holds the player's choice (Game settings), default borderless: the HUD draws
 # over a borderless window (owner 2026-11-10: "make sure default is fullscreen borderless"). install() writes it like

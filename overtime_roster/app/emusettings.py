@@ -30,6 +30,7 @@ LANGUAGES = ('Japanese', 'English (US)', 'French (France)', 'Spanish (Spain)', '
 
 LOCK_GPU = ('Overtime sets this for NHL 19: it stops graphical glitches, and every player in an online match needs '
             'the same value.')
+LOCK_DRAWS = 'Overtime sets this for NHL 19: the draws go to the GPU every 1000.'
 LOCK_NETWORK = ('Overtime sets the network for online play: the ShadNet sign-in and servers come from Setup and the '
                 'Multiplayer tab.')
 LOCK_REDZONE = ('On for Intel CPUs: Overtime turns it on so the game does its math like an AMD CPU, which online '
@@ -189,6 +190,9 @@ FIELDS = [
        options=_opts((0, 'Disabled'), (1, 'Relaxed'), (2, 'Precise')), lock=LOCK_GPU),
     _f('Experimental', 'GPU', 'GPU', 'readback_linear_images_enabled', 'Readback linear images', 'check', False,
        'Copies linear images back too.', lock=LOCK_GPU),
+    _f('Experimental', 'GPU', 'GPU', 'submit_draw_interval', 'Submit draw interval', 'number', 0,
+       'Sends the GPU the draws recorded so far after this many draws. 0 waits for the end of the work as usual.',
+       min=0, max=100000, lock=LOCK_DRAWS),
     _f('Experimental', 'GPU', 'GPU', 'direct_memory_access_enabled', 'Direct memory access', 'check', False,
        'Lets the GPU read game memory directly. Faster on some games, glitches on others.'),
     _f('Experimental', 'GPU', 'Vulkan', 'pipeline_cache_enabled', 'Shader cache', 'check', False,

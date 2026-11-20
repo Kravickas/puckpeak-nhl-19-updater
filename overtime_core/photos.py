@@ -317,12 +317,14 @@ def _made_path(folder, key, template, picture):
     return os.path.join(folder, f'{file_name(key)}.{h.hexdigest()[:16]}.gnf')
 
 
-def made_gnf(folder, key, template):
-    """The GNF of the portrait drawn as `key` in `folder` (to_gnf), kept next to it: made once, read back after (a
-    BC7 portrait takes a while to make). Other GNFs of the same picture (an older encoder's) go."""
+def kept_gnf(folder, key, template):
+    """The GNF made_gnf kept for the portrait drawn as `key`, when it is there and whole, else None."""
     with open(os.path.join(folder, file_name(key) + '.webp'), 'rb') as f:
         picture = f.read()
-    path = _made_path(folder, key, template, picture)
+    return _kept(_made_path(folder, key, template, picture))
+
+
+def _kept(path):
     try:
         with open(path, 'rb') as f:
             data = f.read()
@@ -331,6 +333,19 @@ def made_gnf(folder, key, template):
             return data
     except (OSError, gnf.GnfError, struct.error):
         pass
+    return None
+
+
+def made_gnf(folder, key, template):
+    """The GNF of the portrait drawn as `key` in `folder` (to_gnf), kept next to it: made once, read back after (a
+    BC7 portrait takes a while to make). Other GNFs of the same picture (an older encoder's) go. Module level: it
+    runs in worker processes (supplement)."""
+    with open(os.path.join(folder, file_name(key) + '.webp'), 'rb') as f:
+        picture = f.read()
+    path = _made_path(folder, key, template, picture)
+    data = _kept(path)
+    if data is not None:
+        return data
     data = to_gnf(template, picture)
     _write(path, data)
     stem = file_name(key) + '.'
@@ -441,8 +456,14 @@ def supplement(pack_links, people, folder, template, get=fetch, today=None, limi
         made.append((art.PORTRAIT.format(artid), key))
         rows.append([*person, artid])
     keys = sorted({k for _p, k in made})      # one picture made once, even when two people share it
-    data = {}
-    for key, gnf_data, err in workers.ordered(((k, (folder, k, template)) for k in keys), made_gnf, ()):
+    data = {k: kept_gnf(folder, k, template) for k in keys}     # the ones made before: read here
+    new = [k for k in keys if data[k] is None]
+    # the new ones on every core: in processes (the encoder's many small numpy steps hold the GIL between them, so
+    # threads leave most cores idle: workers._process_pool), at most one per photo (one photo alone splits its blocks
+    # over the cores itself)
+    jobs = ((k, (folder, k, template)) for k in new)
+    for key, gnf_data, _err in workers.ordered(jobs, made_gnf, (), workers=max(1, min(workers.count(), len(new))),
+                                               processes=True):
         data[key] = gnf_data
     for path, key in made:
         files[path] = data[key]

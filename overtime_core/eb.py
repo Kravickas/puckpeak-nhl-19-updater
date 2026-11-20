@@ -328,20 +328,50 @@ def _whole(e):
     return e.data.read() if hasattr(e.data, 'read') else e.data
 
 
+HASH_AHEAD = 8      # pieces written but not hashed yet (each a texture or a 4 MB block): the memory it may hold
+
+
 def _write(out, folders, entries, context=None, progress=None):
     """Write the archive through `out`.tmp (renamed at the end); returns its sha256. `progress(n)`: n more bytes
-    written."""
+    written. The sha256 is taken on a thread of its own, the same bytes in the same order, while the next ones are
+    written (both let go of the GIL: a new art archive of 15 GB was hashed and written in turn, 2026-11-15)."""
+    import queue
     h = hashlib.sha256()
+    q = queue.Queue(HASH_AHEAD)
+    failed = []
+
+    def hash_all():
+        try:
+            while True:
+                b = q.get()
+                if b is None:
+                    return
+                h.update(b)
+        except BaseException as err:  # noqa: BLE001 - raised on the writing thread below
+            failed.append(err)
+            while q.get() is not None:      # keep taking what is put, so the writer never waits on a full queue
+                pass
+    hasher = threading.Thread(target=hash_all, daemon=True, name='eb-hash')
+    hasher.start()
+    ended = False
     tmp = out + '.tmp'
     try:
         with open(tmp, 'wb') as f:
             for b in _stream(folders, entries, context):
                 f.write(b)
-                h.update(b)
+                q.put(b)
                 if progress:
                     progress(len(b))
+        q.put(None)
+        ended = True
+        hasher.join()
+        if failed:
+            raise failed[0]
         os.replace(tmp, out)
     finally:
+        if not ended:
+            q.put(None)
+            hasher.join()
         if os.path.exists(tmp):
             os.remove(tmp)
     return h.hexdigest()

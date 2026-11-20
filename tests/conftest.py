@@ -99,6 +99,17 @@ def no_real_art_packs(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_github(monkeypatch, tmp_path):
+    """No test reads Kravickas's real GitHub releases (kravbuild): a list that is not there reads as GitHub offline; a
+    test sets its own."""
+    from overtime_roster.app import kravbuild
+    monkeypatch.setenv('OVERTIME_KRAVICKAS_RELEASES', (tmp_path / 'no-github-releases.json').as_uri())
+    kravbuild.forget()
+    yield
+    kravbuild.forget()
+
+
+@pytest.fixture(autouse=True)
 def no_machine_preflight(request, monkeypatch):
     """The Linux and macOS first-run report reads this machine (Vulkan, glibc, disk): empty for every test except
     test_preflight, which calls the probes itself."""

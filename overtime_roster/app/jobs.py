@@ -9,6 +9,7 @@ from . import paths
 
 LOG_MAX = 2 << 20   # bytes: a longer error.log is moved to error.old.log first
 _context = None     # () -> [(label, value, is_folder)]: what the Controller adds to every error-log block
+_log_lock = threading.Lock()    # two jobs failing at once: one rotates error.log, each block is written whole
 
 
 def set_context(fn):
@@ -33,16 +34,17 @@ def log_block(err, step=''):
         lines.append(f'{label + ":":<10}{value}')
     lines.append(''.join(traceback.format_exception(type(err), err, err.__traceback__)).rstrip())
     path = paths.app_dir('logs', 'error.log')
-    try:
-        if os.path.getsize(path) > LOG_MAX:     # the older half goes to error.old.log
-            os.replace(path, path[:-4] + '.old.log')
-    except OSError:
-        pass
-    try:
-        with open(path, 'a', encoding='utf-8') as f:
-            f.write('\n'.join(lines) + '\n\n')
-    except OSError:
-        pass
+    with _log_lock:
+        try:
+            if os.path.getsize(path) > LOG_MAX:     # the older half goes to error.old.log
+                os.replace(path, path[:-4] + '.old.log')
+        except OSError:
+            pass
+        try:
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write('\n'.join(lines) + '\n\n')
+        except OSError:
+            pass
     return path
 
 

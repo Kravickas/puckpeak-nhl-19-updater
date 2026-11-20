@@ -1778,6 +1778,60 @@ def test_the_open_play_watch_starts_only_with_the_readout_on(mp, monkeypatch):
     assert started == ['mp-link']                                              # one at a time
 
 
+def test_a_lobby_start_waits_for_no_patch(mp, monkeypatch):
+    """A Patch (or Unpatch, or Update) holds the app's flag and writes the overlay and the patch file: the lobby start
+    does not write the hook or start the game beside it; it says to wait instead."""
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    start_lobby(mp)
+    mp.ctl.busy = 'Patching NHL 19...'
+    mp._launch_job()
+    assert 'hook' not in kinds(rig) and 'started' not in kinds(rig)
+    assert mp.game['phase'] == 'failed' and 'patching nhl 19 is still running' in mp.game['note'].lower()
+    assert mp.ctl.busy == 'Patching NHL 19...'          # the Patch's flag is left as it was
+
+
+def test_a_lobby_start_lets_its_own_flag_go(mp, monkeypatch):
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    start_lobby(mp)
+    mp._launch_job()
+    assert kinds(rig)[:2] == ['hook', 'started'] and mp.ctl.busy is None
+
+
+def test_the_online_start_comes_off_after_a_patch_that_ran_meanwhile(mp, monkeypatch):
+    """The game closed and the player pressed Patch: the hook's removal waits for it, then takes the hook off."""
+    import threading
+    good_checks(mp)
+    rig = Rig(mp, monkeypatch)
+    start_lobby(mp)
+    original = rig.set_menus
+    patch_done = threading.Event()
+
+    def set_menus(game_dir, launch_opts, running=None):
+        if launch_opts is None:
+            assert patch_done.is_set() and mp.ctl.busy == 'Taking the online start off...'
+        original(game_dir, launch_opts, running)
+    monkeypatch.setattr(MC.overlay, 'set_menus', set_menus)
+    calls = []
+
+    def sleep(s):
+        calls.append(s)
+        if mp.ctl.busy == 'Patching NHL 19...':
+            mp.ctl.busy = None          # the Patch ends while the removal waits
+            patch_done.set()
+    mp.sleep = sleep
+    watch = mp._watch
+
+    def watched(*a, **kw):
+        out = watch(*a, **kw)
+        mp.ctl.busy = 'Patching NHL 19...'      # Patch pressed as the game closed
+        return out
+    monkeypatch.setattr(mp, '_watch', watched)
+    mp._launch_job()
+    assert kinds(rig)[-1] == 'hook' and rig.events[-1] == ('hook', None) and mp.ctl.busy is None
+
+
 # --- 0.96.0: the host's countdown, the bench ------------------------------------------------------------------------
 def countdown_lobby(mp):
     start_chel(mp, split=False)

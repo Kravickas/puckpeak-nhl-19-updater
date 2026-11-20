@@ -42,6 +42,7 @@ HOOK_SECONDS = 1800     # the hook the launch bakes works this long (the jump ha
 BOOT_WAIT = 60          # seconds from start to the first title press (docs/notes/zero-press.md)
 TITLE_GAP = 20          # seconds between the two title presses
 WATCH_POLL = 2.0
+UNHOOK_WAIT = 900.0     # seconds the hook's removal waits for a job writing the overlay (a Patch after the match)
 LINK_POLL = 2.0         # seconds between link asks for a game started from Play (watch_open_link)
 LINK_STALE = 10.0       # ... figures older than this are an ended match's: no readout
 WANT_ASKS, WANT_GAP = 4, 15  # after a game: how often the server is asked for an early end, seconds apart
@@ -1425,11 +1426,16 @@ class MultiplayerCtl(Part):
                 return
             self._restart_for_hook()
         self._phase('hook')
-        overlay.set_menus(game_dir, self._hook_opts(rules, user))
-        before = (gamesetup.shadnet_log(user) or {}).get('when')
+        with patch_ctl.game_writes(c, 'Starting NHL 19 for the lobby...'):   # not beside a Patch (SetupError)
+            overlay.set_menus(game_dir, self._hook_opts(rules, user))
+            before = (gamesetup.shadnet_log(user) or {}).get('when')
+            try:
+                self._phase('starting')
+                launch.start(emu, game_dir)
+            except BaseException:
+                self._unhook(game_dir)
+                raise
         try:
-            self._phase('starting')
-            launch.start(emu, game_dir)
             self.hooked = self._hook_key()
             self._titles(emu, lambda: self._signed_in(user, before))
             self._ready(emu)
@@ -1507,13 +1513,14 @@ class MultiplayerCtl(Part):
         self._lobby_build()         # NHL 19 is closed now: on the lobby build (Ready skipped it under a running game)
         exe = self._lobby_exe()
         try:
-            got = matchsetup.apply(game_dir, user, plan['recipe'], self._own_text(), running=self.running,
-                                   log=c.host.log, tag=plan['id'])
-            self._phase('hook')
-            overlay.set_menus(game_dir, self._hook_opts(rules, user))     # on the match view: the player's files stay
-            before = (gamesetup.shadnet_log(user) or {}).get('when')
-            self._phase('starting')
-            launch.start(emu, game_dir, patch_file=got['patch'], exe=exe)
+            with patch_ctl.game_writes(c, 'Setting up the match...'):   # not beside a Patch (SetupError)
+                got = matchsetup.apply(game_dir, user, plan['recipe'], self._own_text(), running=self.running,
+                                       log=c.host.log, tag=plan['id'])
+                self._phase('hook')
+                overlay.set_menus(game_dir, self._hook_opts(rules, user))     # on the match view: the player's files stay
+                before = (gamesetup.shadnet_log(user) or {}).get('when')
+                self._phase('starting')
+                launch.start(emu, game_dir, patch_file=got['patch'], exe=exe)
             self.hooked = self._hook_key()
             # the key map, sign-in log and config are the player's own data folder's (the copy runs on it)
             self._titles(emu, lambda: self._signed_in(user, before))
@@ -1658,10 +1665,16 @@ class MultiplayerCtl(Part):
         return {'ok': True}
 
     def _unhook(self, game_dir):
-        """The hook comes off once the game is closed (set_menus refuses while it runs)."""
+        """The hook comes off once the game is closed (set_menus refuses while it runs). A job that writes the overlay
+        (a Patch pressed once the game closed) is waited for; after UNHOOK_WAIT the next look takes it off."""
         for _ in range(3):
             try:
-                overlay.set_menus(game_dir, None, running=self.running)
+                with patch_ctl.game_writes(self.ctl, 'Taking the online start off...', wait=UNHOOK_WAIT,
+                                           sleep=self.sleep):
+                    overlay.set_menus(game_dir, None, running=self.running)
+                return
+            except gamesetup.SetupError as err:
+                self.ctl.host.log(f'Multiplayer: the online start is taken off later ({err}).')
                 return
             except overlay.PatchError as err:
                 if self.running():
@@ -1684,7 +1697,10 @@ class MultiplayerCtl(Part):
         try:
             layer = ((overlay.status(c.game_dir) or {}).get('layers') or {}).get('menus') or {}
             if layer.get('autoplay_until'):
-                overlay.set_menus(c.game_dir, None, running=self.running)
+                with patch_ctl.game_writes(c, 'Taking the online start off...'):   # a job runs: the next look
+                    overlay.set_menus(c.game_dir, None, running=self.running)
+        except gamesetup.SetupError:
+            pass
         except (overlay.PatchError, OSError, ValueError) as err:
             c.host.log(f'Multiplayer: a leftover online start could not be taken off ({err}).')
 

@@ -89,8 +89,9 @@ def save(cache_dir, speeds, last):
 
 
 def patched_text(n):
-    """The Help bar's count beside the %: "Patched 850 MB", "Patched 10.3 GB" (2^30 bytes, as the app's other sizes)."""
-    return f'Patched {n / 2**30:.1f} GB' if n >= 2**30 else f'Patched {int(n / MB)} MB'
+    """The Help bar's count beside the %: "Patched 850 MB", "Patched 10.34 GB" (2^30 bytes, as the app's other sizes;
+    two decimals, so the count moves every 0.01 GB, about 10 MB)."""
+    return f'Patched {n / 2**30:.2f} GB' if n >= 2**30 else f'Patched {int(n / MB)} MB'
 
 
 def _creep(x):

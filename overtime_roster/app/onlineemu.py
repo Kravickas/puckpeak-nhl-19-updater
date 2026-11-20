@@ -13,7 +13,9 @@ from . import boost, gamesetup, packdownload, paths
 PACK = boost.LOBBY_PACK
 # the builds a lobby may name (0.90.2): the server pins one by its pack's sha256, the app fetches the published pack that
 # has it. Overtime Native when the server names none (0.92.0, owner 2026-11-13; Kravickas before).
-PACKS = tuple(b['pack'] for b in boost.BUILDS.values())     # Linux, macOS: Overtime Native v2 alone
+# Linux, macOS: Overtime Native v2 alone. The Kravickas build a lobby plays is the release host's (EMULATOR_PACK, the
+# one the server pins), not the newest from his GitHub that Play takes (boost's KRAVICKAS_PACK)
+PACKS = tuple(packdownload.EMULATOR_PACK if key == boost.KRAVICKAS else b['pack'] for key, b in boost.BUILDS.items())
 KEEP = 2            # builds kept: the current one and the one before (a server switch mid-update still finds it)
 
 

@@ -1,6 +1,6 @@
 """The shadPS4 builds the app plays with (Setup's Boost performance card, the header's Play NHL 19 button). Three builds,
-each a pack on the release host pinned by its sha256 in latest.json, never in the exe (owner 2026-11-11, 0.90.2;
-order, default and packs from 0.92.0, owner 2026-11-13; v2 from 2026-11-16):
+each a pack pinned by its sha256 (the release host's latest.json; Kravickas's: his GitHub's), never in the exe (owner
+2026-11-11, 0.90.2; order, default and packs from 0.92.0, owner 2026-11-13; v2 from 2026-11-16):
 - 'native2', shown as "Overtime Native v2" (the default, first in the dropdown, the lobby build): v1's commits on
   Kravickas's nhl-perf-test plus six speed items (fork branch overtime-native-v2, docs/notes/native-v2.md)
   (packdownload.NATIVE2_PACK);
@@ -9,9 +9,9 @@ order, default and packs from 0.92.0, owner 2026-11-13; v2 from 2026-11-16):
   collector by seconds (fork branch overtime-nightly, docs/notes/perf-ram.md, native-port.md)
   (packdownload.NIGHTLY_PACK). Overtime publishes it with its releases; the id, folder and pack name keep "nightly"
   (prefs, installed folders and the server's pin URL name them);
-- 'kravickas': Kravickas's own CI build of his nhl-test branch (d334436: his fix of the Out of order flip IRQ race on
-  upstream main), with Kravickas's yes (owner, 2026-11-01) (packdownload.EMULATOR_PACK). The card's Update is for
-  this one: its builds move on GitHub between Overtime's releases.
+- 'kravickas': Kravickas's own CI build of his NHL19-Build branch, the newest release his GitHub publishes
+  (kravbuild.py: the API's sha256 of the file, no release host in between), with Kravickas's yes (owner, 2026-11-01)
+  (packdownload.KRAVICKAS_PACK). Play takes a newer one by itself; the card's Update gets it now.
 Each one's shadPS4.exe goes into the app's own folder (a player's own exe is never touched); every shadPS4 there uses
 %APPDATA%\\shadPS4, so saves, patch and ShadNet login stay what they are. QtLauncher is not changed (0.90.2; the
 "NHL 19 Boost" entry older apps added stays). Standard library only.
@@ -21,7 +21,7 @@ import sys
 
 from overtime_core import overlay
 
-from . import emufile, gamesetup, packdownload, paths
+from . import emufile, gamesetup, kravbuild, packdownload, paths
 
 NATIVE2, NIGHTLY, KRAVICKAS = 'native2', 'nightly', 'kravickas'
 DEFAULT = NATIVE2   # 2026-11-16 (owner): Overtime Native v2 is the default and what every lobby plays on
@@ -32,14 +32,14 @@ BUILDS = {      # GPL-2.0: each build's source code; the card's dropdown shows t
               'source': 'https://github.com/MatusRiedl/shadPS4/tree/overtime-native-v2'},
     NIGHTLY: {'pack': packdownload.NIGHTLY_PACK, 'label': 'Overtime Native v1', 'folder': ('boost', 'nightly'),
               'source': 'https://github.com/MatusRiedl/shadPS4/tree/overtime-nightly'},
-    KRAVICKAS: {'pack': packdownload.EMULATOR_PACK, 'label': 'Kravickas', 'folder': ('boost',),
-                'source': 'https://github.com/Kravickas/shadPS4/tree/d3344364003349c2bb35f0c0eb2389a64db4c792'},
+    KRAVICKAS: {'pack': packdownload.KRAVICKAS_PACK, 'label': 'Kravickas', 'folder': ('boost',),
+                'source': f'https://github.com/{kravbuild.REPO}/tree/{kravbuild.BRANCH}'},
 }
 if sys.platform != 'win32':     # Linux and macOS (0.97.0): Overtime Native v2 is the one build made for them
     BUILDS = {NATIVE2: BUILDS[NATIVE2]}
 # the card's Update button: Overtime Native v1/v2 come with Overtime's releases (Play gets them)
 UPDATABLE = tuple(b for b in (KRAVICKAS,) if b in BUILDS)
-PACK = packdownload.EMULATOR_PACK       # the Kravickas pack
+PACK = packdownload.KRAVICKAS_PACK      # the Kravickas pack (from GitHub)
 LOBBY_PACK = BUILDS[DEFAULT]['pack']    # the lobby build when the server names none (onlineemu), online_boost's
 SOURCE = BUILDS.get(KRAVICKAS, BUILDS[DEFAULT])['source']
 ENTRY = 'NHL 19 Boost'      # its name in QtLauncher's Version Manager (apps before 0.90.2)
@@ -97,11 +97,26 @@ def unpack(pack, target):
         raise BoostError(str(err)) from err
 
 
+def published(build, max_age=kravbuild.REMEMBER):
+    """Where `build` is published: the release host's latest.json (None: read it) or, for Kravickas, his GitHub's
+    newest release ({PACK: Release}, {} when there is none). BoostError when GitHub cannot be read or has none."""
+    if name_of(build) != KRAVICKAS:
+        return None
+    table = kravbuild.table(max_age)
+    if table is None:
+        raise BoostError(kravbuild.OFFLINE)
+    if PACK not in table:
+        raise BoostError(kravbuild.NONE)
+    return table
+
+
 def install(build, cache_dir, progress=None, cancelled=None):
     """Download the published `build` (when not in the cache yet) and put its exe in place. Returns (exe, sha256 of
     its pack)."""
     pack_name = BUILDS[name_of(build)]['pack']
-    (_name, ok, message), = packdownload.download([pack_name], cache_dir, progress, cancelled=cancelled)
+    release = published(build, max_age=0)
+    (_name, ok, message), = packdownload.download([pack_name], cache_dir, progress, release=release,
+                                                  cancelled=cancelled)
     if not ok:
         raise BoostError(message)
     found = packdownload.located(pack_name, cache_dir)

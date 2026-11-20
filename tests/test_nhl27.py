@@ -1183,3 +1183,31 @@ def test_update_rebuilds_the_other_club_leagues_from_nhl27(game_db):
             on[team].append(state.bio(pi))
     assert {b['firstname'] for b in on[froelunda]} == {'Frolunda'} and len(on[froelunda]) == 23
     assert len(on[mora]) == stock_mora
+
+
+def test_with_absent_reads_the_player_pages_at_once_and_decides_the_same():
+    """The NHL.com pages of the players nobody lists are read a few at a time (each read was a request of its own,
+    one after another); who goes where is what reading them in turn gave."""
+    import threading
+    import time
+    real = [{'first': 'Ben', 'last': 'Kindel', 'birth': '2007-04-19', 'position': 'C', 'team': 'PIT', 'id': 1}]
+    data = {'nhl_last': [{'first': f'Moved{i}', 'last': f'Clubs{i}', 'birth': [1995, 1, 1 + i], 'pos': 'G',
+                          'team': 'CBJ', 'nhl_id': 100 + i} for i in range(6)]}
+    pack = {'players': [], 'contracts': [{'first': f'Moved{i}', 'last': f'Clubs{i}', 'birth': [1995, 1, 1 + i],
+                                          'pos': 'G', 'org': 'CBJ'} for i in range(6)]}
+    pages = {100 + i: {'active': True, 'team': ('TOR', 'MTL', 'BOS')[i % 3]} for i in range(6)}
+    now, peak, lock = [0], [0], threading.Lock()
+
+    def slow(nhl_id):
+        with lock:
+            now[0] += 1
+            peak[0] = max(peak[0], now[0])
+        time.sleep(0.05)
+        with lock:
+            now[0] -= 1
+        return pages.get(nhl_id)
+    _o, extra, _f = U.with_absent(real, pack, data, None, set(), slow)
+    _o, in_turn, _f = U.with_absent(real, pack, data, None, set(), pages.get)
+    assert peak[0] > 1
+    assert extra == in_turn and {r['last']: r['team'] for r in extra} == {f'Clubs{i}': ('TOR', 'MTL', 'BOS')[i % 3]
+                                                                         for i in range(6)}

@@ -137,6 +137,7 @@ class Controller:
         self.selected = None
         self.session = None
         self.busy = None  # text of the job that runs
+        self.busy_thread = None     # the thread holding busy through patch_ctl.game_writes (it may nest)
         self.status = {'text': '', 'tone': 'info', 'progress': None}
         # the open roster's team (the rail) and player (the Roster tab)
         self.league = 0
@@ -215,7 +216,7 @@ class Controller:
 
     def say(self, text, tone='info', progress=None, amount=None):
         """The Help bar's line: `progress` 0..1 (< 0: running, no end known), `amount` a short count beside the % (Patch:
-        "Patched 10.3 GB"), only while given."""
+        "Patched 10.34 GB"), only while given."""
         self.status = {'text': text, 'tone': tone, 'progress': progress}
         if amount:
             self.status['amount'] = amount

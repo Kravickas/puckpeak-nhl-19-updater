@@ -443,6 +443,7 @@ class UpdateCtl(Part):
                 if mode == 'new' and slot else None
             rec = self._record('go', mode=mode, target=target, name=name, slot=slot, over=over, roster=roster)
             gathered, todo = self._reuse(season, offline, rec['opts']['calendar'], session)
+            planned_on = self._state(session) if todo is not None else None    # the roster the plan was made on
             rec['reused'] = gathered is not None
             c._fresh_update()
             self._begin('go', 'Updating the roster...')
@@ -470,7 +471,7 @@ class UpdateCtl(Part):
                 c.host.log(f'{dict(install.STEPS)[key]}: {text}')
 
         def work():
-            nonlocal gathered, todo
+            nonlocal gathered, todo, planned_on
             if gathered is None:
                 self._step(0, self._check_text(offline))
                 gathered = self._gather(season, offline, opts['calendar'])
@@ -483,6 +484,7 @@ class UpdateCtl(Part):
                     raise update.UpdateError('Another roster was opened: nothing was changed.')
                 if todo is None:
                     todo = update.plan(session.db, gathered, self._aliases(session, rec))
+                    planned_on = self._state(session)
             rec['todo'] = todo
             sm = todo.summary()
             self._step(1, f"Planning: {sm['moves']} move, {sm['new']} new, {sm['releases']} leave...")
@@ -490,6 +492,13 @@ class UpdateCtl(Part):
                                          f"{sm['releases']} leave")
             self._step(2, 'Changing the roster: rosters, lines, ratings, calendar...')
             with c.lock:
+                if c.session is not session:
+                    raise update.UpdateError('Another roster was opened: nothing was changed.')
+                if self._state(session) != planned_on:
+                    # an edit came in between (a page call takes the lock while it is free): plan on the roster as
+                    # it is now, not the one the plan was made on
+                    todo = rec['todo'] = update.plan(session.db, gathered, self._aliases(session, rec))
+                    planned_on = self._state(session)
                 rec['served'] = office.league_served(c.game_dir, c.patch_status) if served is None \
                     else bool(served.get('league'))
                 portraits = patch.served_portraits(c.game_dir, paths.app_dir('cache'),

@@ -92,10 +92,7 @@ def updated_default(game, gathered, per32=None, log=lambda msg: None, seattle_ic
     log(f'expansion career contracts: {longer} NHL deals one season longer')
     listed = rosterupdate.expansion_free_agents(session.db)
     log(f'expansion career free agents: {len(listed)} Seattle players listed (they stay on Seattle elsewhere)')
-    dropped = teams.drop_throwbacks(session.db, game.schema())
-    log(f"Utah's Coyotes throwbacks: {len(dropped)} jersey rows removed")
-    kit = teams.seattle_kit(session.db, game.schema())
-    log(f"Seattle's kit: {len(kit)} jersey rows on art {teams.SEATTLE_KIT_ART}")
+    # Utah's throwbacks and Seattle's kit rows: update.run (teams.drop_throwbacks, teams.seattle_kit)
     if SEATTLE_CENTER_ICE if seattle_ice is None else seattle_ice:
         log(f"Seattle's centre ice: {teams.seattle_center_ice(session.db)} team rows on its own logo")
     problems = rep.problems + [str(i) for i in session.verify(strict=True) if i.level == 'error']

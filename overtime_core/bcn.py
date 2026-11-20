@@ -23,6 +23,10 @@ alpha come out a fifth of the way in) and has no BC7, so the BC7 art of the game
   code holds lands on a step between them.
 - Then the ends kept are searched one code step at a time (_search, SEARCH passes; BC7 modes 6 and 1: SEARCH7): what
   rounding the fitted ends leaves (on a real 1024 jersey 40.9 -> 41.8 dB, most of it on flat fabric).
+- A block that comes more than once in a texture is encoded once (_distinct): a block's encoding depends on its own
+  pixels only, so the texture is byte for byte the one every block encoded gives, in less time (measured 2026-11-14 on
+  one core, mip 0: a 2048 jersey 1.4 -> 1.0 s, its 1024 number sheet 0.54 -> 0.30 s, a 320 x 380 UI jersey
+  0.33 -> 0.18 s; a photo, nearly every block its own, the same).
 - A texture made on its own splits its blocks over the cores (workers.shared); on a pool's thread it does not.
 
 Every choice is checked against the colours the block decodes to (BC7: the spec's integer weights), so what is kept is
@@ -61,7 +65,8 @@ def encode(fmt, px):
     enc = {'BC1': _bc1, 'BC3': _bc3, 'BC5': _bc5, 'BC7': _bc7}.get(fmt)
     if enc is None:
         raise ValueError(f'cannot encode {fmt}')
-    b = blocks(np.ascontiguousarray(px, np.uint8))
+    every = blocks(np.ascontiguousarray(px, np.uint8))
+    b, where = _distinct(every)
 
     def one(i):
         part = enc(b[i:i + CHUNK].astype(np.float32))
@@ -69,8 +74,25 @@ def encode(fmt, px):
     starts = range(0, len(b), CHUNK)
     if len(starts) > 1 and not workers.in_worker() and workers.count() > 1:
         # a texture made on its own: its chunks on every core (on a pool's thread, the pool already uses them)
-        return b''.join(workers.shared().map(one, starts))
-    return b''.join(one(i) for i in starts)
+        data = b''.join(workers.shared().map(one, starts))
+    else:
+        data = b''.join(one(i) for i in starts)
+    if len(b) == len(every):        # every block its own: already in the texture's order
+        return data
+    return np.frombuffer(data, np.uint8).reshape(len(b), -1)[where].tobytes()
+
+
+def _distinct(b):
+    """(the distinct blocks of `b` (n, 16, C) in the order they first come, each block's place among them)."""
+    n = len(b)
+    if n < 2:
+        return b, np.arange(n)
+    keys = np.ascontiguousarray(b).reshape(n, -1).view(np.dtype((np.void, b.shape[1] * b.shape[2])))[:, 0]
+    _same, first, inverse = np.unique(keys, return_index=True, return_inverse=True)
+    order = np.argsort(first)                       # np.unique sorts by the bytes: back to the texture's order
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+    return b[first[order]], rank[inverse.reshape(-1)]
 
 
 # --- shared --------------------------------------------------------------------------------------------------------

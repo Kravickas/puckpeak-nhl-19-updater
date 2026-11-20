@@ -157,13 +157,14 @@ def test_the_bytes_patched_count_as_the_writing_steps_go():
     m.begin('kits:nhl')
     clock.t += 1
     m.share_of('kits:nhl', 0.5)
-    assert m.written() == 1.5 * 2**30 and said[-1] == 'Patched 1.5 GB'
+    assert m.written() == 1.5 * 2**30 and said[-1] == 'Patched 1.50 GB'
     m.share_of('kits:nhl', 1.0)
     m.begin('copy')
     clock.t += 1
     m.tick('copy', 1 << 20)
-    assert said[-1] == 'Patched 3.0 GB' and m.written() == (3 << 30) + (1 << 20)
-    assert PM.patched_text(850 * 2**20) == 'Patched 850 MB' and PM.patched_text(int(10.34 * 2**30)) == 'Patched 10.3 GB'
+    assert said[-1] == 'Patched 3.00 GB' and m.written() == (3 << 30) + (1 << 20)
+    assert PM.patched_text(850 * 2**20) == 'Patched 850 MB' and PM.patched_text(int(10.34 * 2**30)) == 'Patched 10.34 GB'
+    assert PM.patched_text(2**30 + 11 * 2**20) == 'Patched 1.01 GB'     # about 10 MB more: the count moves
 
 
 def test_the_help_bar_line_carries_the_count_only_while_given():
@@ -406,3 +407,45 @@ def test_a_patch_that_stops_stops_its_bar(sc, monkeypatch):  # noqa: F811
 
 from test_gamesetup import world  # noqa: E402,F401  (fixture)
 from test_setup_controller import sc  # noqa: E402,F401  (fixture)
+
+
+def test_the_team_art_written_again_after_a_patch_that_kept_it_has_its_share_of_the_bar(monkeypatch):
+    """The last Patch kept the art archive (it wrote 0 bytes), this one makes jerseys and writes 8 GB of team art again:
+    the bar plans those GBs from the scan, so the write starts where its time starts, not at 99 %."""
+    from overtime_roster.app import patch_ctl
+    art_bytes = 8 * 2**30
+    job = patch.KitJob('pants', 'out', {}, None, 10**9, None, 10**9)
+    monkeypatch.setattr(patch, '_game_index', lambda game_dir: ({}, {}))
+    monkeypatch.setattr(patch, 'kit_jobs', lambda *a, **k: [job])
+    monkeypatch.setattr(patch, 'art_layer_work', lambda *a, **k: 0)
+    monkeypatch.setattr(patch, 'art_layer_bytes', lambda *a, **k: art_bytes)
+    monkeypatch.setattr(overlay, 'copy_size', lambda *a, **k: 0)
+    speeds = dict(PM.default_speeds(), kits=1e-7)           # the jerseys: 100 s; the write 26 s, its read back 13 s
+    clock = Clock()
+    m = PM.Meter(lambda text, share: None, speeds, clock=clock)
+    last = {key: 0 for key in ('copy', 'write', 'verify', 'clubart', 'packs')}
+    last.update({f'kits:{fam}': 0 for fam in patch_ctl.KIT_FAMILIES})
+    on = {'art': True, 'roster': False, **{k: False for k in patch_ctl.DATA_LAYERS}}
+    patch_ctl.plan_patch(m, last, on, 'cache', None)
+
+    def run(key, seconds, units=None):
+        m.begin(key)
+        clock.t += seconds
+        if units:
+            m.tick(key, units)
+    run('prepare', 0.5)
+    patch_ctl.scan_patch(m, last, on, 'game', 'cache', None)
+    clock.t += 3.0
+    run('texts', 2.0)
+    run('clean', 4.0)
+    run('kits:pants', 100.0, job.work)
+    for key in ('clubart', 'packs'):
+        m.skip(key)
+    run('build', 5.0)
+    patch_ctl.apply_meter(m)('plan', {'copy': 0, 'write': art_bytes, 'verify': art_bytes})
+    m.begin('write')
+    at_write = m.share()
+    planned = sum(m._est(ph) for ph in m._phases.values())
+    assert at_write == pytest.approx(1 - (m._est(m._phases['write']) + m._est(m._phases['verify']) + 2.0) / planned,
+                                     abs=0.03)
+    assert at_write < 0.8

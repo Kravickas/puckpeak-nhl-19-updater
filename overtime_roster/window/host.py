@@ -6,6 +6,10 @@ lines and the events: none of their snapshots takes the controller's lock, so th
 it. The other sends the tabs' slices. A message goes through a transport: pywebview's evaluate_js in the window, or
 the local server's event stream in browser mode. The status slice comes first in every message.
 
+Every message carries `seq`, one higher than the one before it was taken: a slice's snapshot in it is at least as new
+as that moment. The page keeps the newest seq of each slice and drops an older one (store.js): the first message (the
+answer of ready) and a push run at once, and a push sent after it may reach the page before it.
+
 `picker` (set by window/main.py in the window) shows Windows' file and folder pickers; browser mode has none.
 """
 import json
@@ -49,6 +53,7 @@ class WebHost:
         self._lines, self._clear, self._events = [], False, []
         self.lines = []
         self._pushing = False
+        self._seq = 0           # the last message's (first() and take() count up under _lock)
         self.picker = None  # (folder, start, kinds) -> path, '' when cancelled; None: no window to show one in
 
     def register(self, name, snapshot):
@@ -118,7 +123,10 @@ class WebHost:
             self._dirty.clear()
             self._lines, self._clear = [], False
             lines = list(self.lines)
-        return {'meta': self.meta, 'slices': self._snaps(self.sources), 'log': {'lines': lines, 'clear': True}}
+            self._seq += 1
+            seq = self._seq
+        return {'meta': self.meta, 'slices': self._snaps(self.sources), 'log': {'lines': lines, 'clear': True},
+                'seq': seq}
 
     def take(self, which='all'):
         """What changed since the last take, as one message (None: nothing). which: 'quick' (the status line, the
@@ -131,9 +139,11 @@ class WebHost:
                 lines, self._lines = self._lines, []
                 clear, self._clear = self._clear, False
                 events, self._events = self._events, []
-        if not (names or lines or clear or events):
-            return None
-        message = {}
+            if not (names or lines or clear or events):
+                return None
+            self._seq += 1
+            seq = self._seq
+        message = {'seq': seq}
         if names:
             message['slices'] = self._snaps(names)
         if lines or clear:
@@ -143,11 +153,13 @@ class WebHost:
         return message
 
     def start_pushing(self):
-        if not self._pushing:
+        with self._lock:        # ready() can come twice at once (a reload): one pair of pushers
+            if self._pushing:
+                return
             self._pushing = True
-            threading.Thread(target=self._pusher, args=('quick', self._wake_quick), daemon=True,
-                             name='push-quick').start()
-            threading.Thread(target=self._pusher, args=('slices', self._wake), daemon=True, name='push').start()
+        threading.Thread(target=self._pusher, args=('quick', self._wake_quick), daemon=True,
+                         name='push-quick').start()
+        threading.Thread(target=self._pusher, args=('slices', self._wake), daemon=True, name='push').start()
 
     def _pusher(self, which, wake):
         last = 0.0

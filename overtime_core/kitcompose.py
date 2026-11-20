@@ -38,6 +38,8 @@ KIND, FORMAT = 'kitlayers', 1
 FAMILIES = ('nhl', 'intl', 'clubs', 'hometown')
 SOURCE = "NHL 27's jerseys, made on this PC"
 DRAWING = '1'                   # bump when a step draws differently: every composed pack is made again
+# a step whose drawing changed on its own: only its textures are made again (the others keep their fingerprint)
+OP_DRAWING = {'font': '2'}      # 2: soft edges between two inks (_font_image), no blend of two inks taken as a third
 HEAD = 0x100                    # a GNF's header: all gnf.make needs of its template
 SIZE = 1024                     # the masks' size (warp19.SIZE)
 MIRROR_Y, LIFT = 640, 130       # cover: below MIRROR_Y a block comes from the mirrored row (the back), above from LIFT higher
@@ -247,9 +249,17 @@ def _inks(img, alpha):
         return sorted(got, reverse=True)
     body, edge_bins = bins(opaque), bins(rim)
     fill, edge = body[0][1], edge_bins[0][1]
-    mid = next((c for _n, c in body if sum(abs(a - b) for a, b in zip(c, fill)) > FONT_GAP
-                and sum(abs(a - b) for a, b in zip(c, edge)) > FONT_GAP), edge)
+    # a colour between fill and edge is their soft edge (a 2-ink sheet's), not a third ink
+    mid = next((c for _n, c in body if _off_line(c, fill, edge) > FONT_GAP), edge)
     return fill, mid, edge
+
+
+def _off_line(c, a, b):
+    """How far colour c is (sum of the channels) from the nearest colour between a and b."""
+    d = [y - x for x, y in zip(a, b)]
+    dd = sum(v * v for v in d)
+    t = 0.0 if dd == 0 else min(1.0, max(0.0, sum((z - x) * v for z, x, v in zip(c, a, d)) / dd))
+    return sum(abs(z - (x + t * v)) for z, x, v in zip(c, a, d))
 
 
 def _sub(u, v):
@@ -292,7 +302,7 @@ def _mix_matrix(ink, target):
 
 def _font_image(raw, fill, edge, mid=None):
     """`font`'s RGBA image."""
-    from PIL import Image, ImageChops
+    from PIL import Image
     img = gnf.to_image(raw).convert('RGBA')
     rgb, alpha = img.convert('RGB'), img.getchannel('A')
     ink = _inks(rgb, alpha)
@@ -302,17 +312,18 @@ def _font_image(raw, fill, edge, mid=None):
         out = rgb.convert('RGB', matrix)
         out.putalpha(alpha)
         return out
-    gaps = [ImageChops.add(ImageChops.difference(rgb, Image.new('RGB', rgb.size, c)).convert('L', (1, 1, 1, 0)),
-            Image.new('L', rgb.size, k)) for k, c in enumerate(ink)]      # a tie goes to the earlier ink
-    out = Image.new('RGB', rgb.size, target[0])
-    for k in (1, 2):
-        # this ink where it is nearer than every earlier one
-        nearer = ImageChops.subtract(gaps[0], gaps[k], 1, 0)
-        better = nearer
-        for j in range(1, 3):
-            if j != k:
-                better = ImageChops.darker(better, ImageChops.subtract(gaps[j], gaps[k], 1, 0))
-        out.paste(Image.new('RGB', rgb.size, target[k]), mask=better.point(lambda v: 255 if v > 0 else 0))
+    # the inks on one line (a 2-ink sheet: fill and edge; or two inks alike): each pixel's place between the two inks
+    # farthest apart becomes the same place between their new colours, so the soft edge between them stays soft (each
+    # pixel snapped to its nearest ink before: a stair-stepped edge, a blend of the two in the third colour); fill and
+    # edge first, so a tie (the sheet's mid is its edge) keeps them
+    import numpy as np
+    j, k = max(((0, 2), (0, 1), (1, 2)), key=lambda jk: sum((a - b) ** 2 for a, b in zip(ink[jk[0]], ink[jk[1]])))
+    i0, d = np.array(ink[j], np.float32), np.array(ink[k], np.float32) - np.array(ink[j], np.float32)
+    t0, dt = np.array(target[j], np.float32), np.array(target[k], np.float32) - np.array(target[j], np.float32)
+    px = np.asarray(rgb, np.float32)
+    dd = float(d @ d)
+    t = np.clip((px - i0) @ d / dd, 0, 1)[..., None] if dd >= 1 else np.zeros(px.shape[:2] + (1,), np.float32)
+    out = Image.fromarray(np.clip(np.rint(t0 + t * dt), 0, 255).astype(np.uint8), 'RGB')
     out.putalpha(alpha)
     return out
 
@@ -421,7 +432,7 @@ def _key(source, targets, game_dir):
             arcs.append((os.path.basename(big), os.path.getsize(big)))
         except OSError:
             arcs.append((os.path.basename(big), None))
-    text = json.dumps([source.sha256, pillow, DRAWING, gnf.ENCODER, arcs, sorted(targets)])
+    text = json.dumps([source.sha256, pillow, DRAWING, sorted(OP_DRAWING.items()), gnf.ENCODER, arcs, sorted(targets)])
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
@@ -543,7 +554,8 @@ def _fingerprint(source, step, raw, files):
     game's bytes and the drawing / encoder versions. The same fingerprint makes the same texture."""
     from PIL import __version__ as pillow
     members = getattr(source, 'members', None) or {}
-    h = hashlib.sha256(json.dumps([DRAWING, gnf.ENCODER, pillow, step, [members.get(m) for m in _members(step)]],
+    drawing = DRAWING + ('.' + OP_DRAWING[step.get('op')] if step.get('op') in OP_DRAWING else '')
+    h = hashlib.sha256(json.dumps([drawing, gnf.ENCODER, pillow, step, [members.get(m) for m in _members(step)]],
                                   sort_keys=True, default=str).encode('utf-8'))
     h.update(hashlib.sha256(raw).digest())
     for k in sorted(files):

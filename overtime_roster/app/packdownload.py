@@ -18,6 +18,7 @@ and remembered, so it is not downloaded again for this roster.
 What is in the cache is remembered in <cache>/packs.json ({name: {sha256, size, mtime}}, photos.zip also {roster,
 fits}; WRONG: the photos made for another roster), so a status does not hash a hundred megabytes each time.
 """
+import concurrent.futures
 import hashlib
 import http.client
 import json
@@ -36,14 +37,16 @@ from .patch import (ART_ENV, ART_PACKS, CLUBART_PACK, EXTRA_PACKS, KITLAYER_PACK
                     PHOTOS_PACK, mark_checked)
 
 # name -> what a player reads, and whether the patch needs it for the art (core; until v0.10.0 the one click fetched those)
-EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: Kravickas's NHL 19 build of shadPS4 (boost.py), so not in PACKS
+EMULATOR_PACK = 'shadps4_nhl19.zip'     # not art: the release host's Kravickas build (a lobby the server pins to it)
+KRAVICKAS_PACK = 'shadps4_kravickas.zip'    # not art: the newest Kravickas build from his GitHub (kravbuild.py, boost.py)
 EMULATOR_EXE = emufile.name()           # shadPS4.exe; shadps4.AppImage on Linux, shadps4 on macOS (emufile.py)
 NIGHTLY_PACK = 'shadps4_nightly.zip'    # not art: Overtime Native v1 (boost.py 'nightly')
 # not art: Overtime Native v2 (boost.py 'native2'); shadps4_native2_linux.zip / _macos.zip on those systems
 NATIVE2_PACK = emufile.pack_name('shadps4_native2.zip')
 CPUTEST_PACK = 'cpu_estimates.zip'      # not art: tools/cpu_estimates.py as an exe, Check my CPU (cpucheck.py)
 CPUTEST_EXE = 'cpu-estimates.exe'
-TOOL_PACKS = (EMULATOR_PACK, NIGHTLY_PACK, NATIVE2_PACK, CPUTEST_PACK)   # the program packs: each one exe, not in PACKS (no art)
+TOOL_PACKS = (EMULATOR_PACK, KRAVICKAS_PACK, NIGHTLY_PACK, NATIVE2_PACK,
+              CPUTEST_PACK)   # the program packs: each one exe, not in PACKS (no art)
 PACKS = {
     'looks32.zip': {'title': 'Team art for all 32 teams', 'core': True},
     'looks.zip': {'title': 'Utah and Seattle looks', 'core': True},
@@ -64,8 +67,11 @@ TIMEOUT = 10                    # seconds for reading latest.json
 REMEMBER = 300                  # seconds a read release is reused by status() (a failed read: FORGET)
 FORGET = 30
 CHUNK = 256 * 1024
+TRIES = 3                       # a pack that came down damaged (sha256, size, a file's CRC32) is downloaded again
 
 WRONG_FILE = 'The downloaded file is not the one that was published, so it was not used.'
+DAMAGED = ('{name} in the pack is damaged (its CRC32 does not match) every time it is downloaded, so the pack was not '
+           'used. Tell us on Discord.')
 OFFLINE = 'The Overtime server does not answer. Check your internet connection, then try again.'
 NOT_OFFERED = 'The Overtime server does not offer this pack yet. Try again later.'
 NOT_SERVED_TEXT = 'Not available for download yet: the Overtime server does not list it.'   # Legacy 0.80.0
@@ -81,6 +87,10 @@ class PackError(RuntimeError):
 
 class Stopped(Exception):
     """download(): cancelled() said stop."""
+
+
+class _Again(PackError):
+    """_fetch(): the download came out damaged; _get downloads it again (TRIES)."""
 
 
 _lock = threading.RLock()       # the record (status, a download and missing_core may run in different threads)
@@ -460,7 +470,7 @@ def _fetch(release, part, report=None, cancelled=None):
             except ValueError:
                 announced = 0
             if announced and (announced > limit or (release.size and announced != release.size)):
-                raise PackError(WRONG_FILE)
+                raise _Again(WRONG_FILE)
             total = release.size or announced
             while True:
                 if cancelled and cancelled():
@@ -472,14 +482,17 @@ def _fetch(release, part, report=None, cancelled=None):
                 if not block:
                     break
                 if got + len(block) > limit:
-                    raise PackError(WRONG_FILE)
+                    raise _Again(WRONG_FILE)
                 out.write(block)
                 sha.update(block)
                 got += len(block)
                 if report:
                     report(got, total)
         if sha.hexdigest() != release.digest or (release.size and got != release.size):
-            raise PackError(WRONG_FILE)
+            raise _Again(WRONG_FILE)
+        bad = damaged(part)         # every file read in full: its CRC32 (zipfile checks it at each file's end)
+        if bad is not None:
+            raise _Again(DAMAGED.format(name=bad))
         try:
             CHECKS.get(release.asset, check_zip)(part)
         except art.ArtError as err:
@@ -490,6 +503,39 @@ def _fetch(release, part, report=None, cancelled=None):
     except BaseException:
         _drop(part)
         raise
+
+
+def damaged(path, workers=None):
+    """The first file of the zip at `path` (in its order) that does not read back as it was stored: its CRC32 (or its
+    compressed data) is off; '(the zip)' when the zip does not open; None when every file reads. The files are read a
+    few threads at a time (zlib and the CRC32 let the other threads run), each thread with its own handle."""
+    import zipfile
+    import zlib
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = [i.filename for i in z.infolist() if not i.is_dir()]
+    except (zipfile.BadZipFile, OSError, ValueError):
+        return '(the zip)'
+    n = max(1, min(workers or os.cpu_count() or 1, len(names)))
+
+    def check(group):
+        bad = []
+        try:
+            with zipfile.ZipFile(path) as z:
+                for name in group:
+                    try:
+                        with z.open(name) as f:
+                            while f.read(1 << 20):
+                                pass
+                    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, ValueError):
+                        bad.append(name)
+        except (zipfile.BadZipFile, OSError, ValueError):
+            bad.extend(group)
+        return bad
+    groups = [names[k::n] for k in range(n)]
+    with concurrent.futures.ThreadPoolExecutor(n, thread_name_prefix='pack-crc') as pool:
+        bad = {name for found in pool.map(check, groups) for name in found}
+    return next((name for name in names if name in bad), None)
 
 
 def _drop(path):
@@ -506,7 +552,13 @@ def _get(name, release, cache_dir, report=None, cancelled=None, game_dir=None):
     os.makedirs(cache_dir, exist_ok=True)
     target = os.path.join(cache_dir, name)
     part = target + '.part'
-    _fetch(release, part, report, cancelled)
+    for attempt in range(TRIES):
+        try:
+            _fetch(release, part, report, cancelled)
+            break
+        except _Again as err:       # damaged on the way (or on the disk): once more, from the start
+            if attempt == TRIES - 1:
+                raise PackError(str(err)) from err
     st = os.stat(part)
     entry = {'sha256': release.digest, 'size': st.st_size}
     if name == PHOTOS_PACK:
@@ -529,28 +581,28 @@ def _get(name, release, cache_dir, report=None, cancelled=None, game_dir=None):
         if name == PHOTOS_PACK:
             rec.pop(WRONG, None)
     if name in ART_PACKS:      # the published file (sha256 above): the first Patch need not unpack it all to check it
-        mark_checked(cache_dir, target)
+        with _lock:             # packs come down at the same time: one record of checked zips
+            mark_checked(cache_dir, target)
     return target
 
 
 def download(names, cache_dir, progress=None, release=None, game_dir=None, cancelled=None):
-    """Download the packs `names` into the cache, one after the other, each checked (the published size and sha256,
-    a readable pack; photos.zip also against the default roster) before it is put in place. A pack already here as
-    published is not downloaded again. progress(name, done bytes, total bytes); cancelled() True stops (the pack
-    being downloaded is dropped, the rest are not started). Returns [(name, ok, message)], messages for players.
-    `release`: published()'s table, a latest.json URL, or None (the release host, read now)."""
+    """Download the packs `names` into the cache, all at the same time (each to its own .part file, the record under its
+    lock), each checked (the published size and sha256, every file's CRC32, a readable pack; photos.zip also against
+    the default roster) before it is put in place; one that came down damaged is downloaded again (TRIES). A pack
+    already here as published is not downloaded again. progress(name, done bytes, total bytes), from the pack's own
+    thread; cancelled() True stops (every pack being downloaded is dropped). Returns [(name, ok, message)] in the order
+    of `names`, messages for players. `release`: published()'s table, a latest.json URL, or None (the release host,
+    read now)."""
     names = list(dict.fromkeys(names))
     table = _table(release, None, max_age=0)
-    out = []
+    out, todo = [], []
     for name in names:
         if name not in KNOWN:
             out.append((name, False, 'Overtime Roster does not know this pack.'))
             continue
         if table is None:
             out.append((name, False, OFFLINE))
-            continue
-        if out and out[-1][2] == STOPPED:
-            out.append((name, False, STOPPED))
             continue
         pub = table.get(name)
         with _Record(cache_dir) as rec:
@@ -566,20 +618,31 @@ def download(names, cache_dir, progress=None, release=None, game_dir=None, cance
         if refused:
             out.append((name, False, WRONG_ROSTER))
             continue
+        todo.append((len(out), name, pub))
+        out.append(None)
+
+    def one(job):
+        _at, name, pub = job
         step = max(1, (pub.size if pub else 0) // 100)
         last = [-step]
 
-        def report(done, total, name=name, last=last):
-            if progress and (done - last[0] >= step or done == total):
+        def report(done, total):
+            if progress and (abs(done - last[0]) >= step or done == total):     # a try again starts at 0
                 last[0] = done
                 progress(name, done, total)
         try:
             _get(name, pub, cache_dir, report, cancelled, game_dir)
-            out.append((name, True, 'Downloaded.'))
+            return name, True, 'Downloaded.'
         except Stopped:
-            out.append((name, False, STOPPED))
+            return name, False, STOPPED
         except PackError as err:
-            out.append((name, False, str(err)))
+            return name, False, str(err)
+    if len(todo) == 1:
+        out[todo[0][0]] = one(todo[0])
+    elif todo:
+        with concurrent.futures.ThreadPoolExecutor(len(todo), thread_name_prefix='pack-download') as pool:
+            for job, got in zip(todo, pool.map(one, todo)):
+                out[job[0]] = got
     return out
 
 
@@ -682,8 +745,8 @@ def check_kitlayers(path):
         raise art.ArtError(f'{len(missing)} pictures missing, {missing[0]} first')
 
 
-CHECKS = {EMULATOR_PACK: check_emulator, NIGHTLY_PACK: check_emulator, NATIVE2_PACK: check_emulator,
-          CPUTEST_PACK: check_cputest, CLUBART_PACK: check_clubart,   # not art packs
+CHECKS = {EMULATOR_PACK: check_emulator, KRAVICKAS_PACK: check_emulator, NIGHTLY_PACK: check_emulator,
+          NATIVE2_PACK: check_emulator, CPUTEST_PACK: check_cputest, CLUBART_PACK: check_clubart,   # not art packs
           **{name: check_kitlayers for name in KITLAYER_PACKS}}
 
 

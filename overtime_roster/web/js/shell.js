@@ -112,7 +112,7 @@ export function SupportStrip() {
 
 // progress, the status (its own slice, pushed first: it never waits for the others), the keys.
 // status: {text, tone, busy, progress: 0..1 | < 0 (running, no end known) | null, amount: a short count beside the % (Patch:
-// "Patched 10.3 GB", counted as it writes) or none}; tip: shown when the status is empty
+// "Patched 10.34 GB", counted as it writes) or none}; tip: shown when the status is empty
 export function HelpBar({ status, tip, enter, detailsOpen, onDetails, onEnter }) {
   const s = status || {};
   const p = s.progress;

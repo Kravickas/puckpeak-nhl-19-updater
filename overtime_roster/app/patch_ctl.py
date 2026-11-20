@@ -8,6 +8,8 @@ drives on a SetupController of its own), so the one click is a function of the S
 it, and this tab's patch_apply / patch_undo (beta1's names) are the same two. The game folder is only ever read: the
 patch is served from the overlay folder beside it (overtime_core.overlay).
 """
+import concurrent.futures
+import contextlib
 import os
 import threading
 import time
@@ -234,6 +236,39 @@ def _part(ctl):
     return (getattr(ctl, 'parts', None) or {}).get('patch')
 
 
+GAME_WRITES = 'Writing the patch file...'   # the busy text of game_writes() (Setup's server field, Ready, a lobby start)
+
+
+@contextlib.contextmanager
+def game_writes(ctl, what=GAME_WRITES, wait=0.0, sleep=time.sleep, clock=time.monotonic):
+    """The app's busy flag (ctl.busy) while `what` writes what Patch and Unpatch write too: the eboot patch file and
+    shadPS4's settings (gamesetup.install), the overlay (overlay.apply / set_menus, a match setup). A page call (the
+    server field, the Resolution) or a lobby start would otherwise write them beside a Patch. The thread that holds
+    the flag through this may come in again (Ready's refresh inside its own); a job that holds it otherwise is waited
+    for up to `wait` seconds, then gamesetup.SetupError ("Wait a moment: ... is still running")."""
+    me = threading.get_ident()
+    end = clock() + wait
+    while True:
+        with ctl.lock:
+            doing = getattr(ctl, 'busy', None)
+            if doing and getattr(ctl, 'busy_thread', None) == me:
+                owned = False           # ours already (nested)
+                break
+            if not doing:
+                ctl.busy, ctl.busy_thread = what, me
+                owned = True
+                break
+        if clock() >= end:
+            raise gamesetup.SetupError(f'Wait a moment: {_doing(doing)} is still running.')
+        sleep(0.25)
+    try:
+        yield
+    finally:
+        if owned:
+            with ctl.lock:
+                ctl.busy, ctl.busy_thread = None, None
+
+
 # --- the jobs: Patch, Unpatch, Check again, the clean-game check and copy ---------------------------------------------
 def adopt_patch(setup):
     """The patch file in shadPS4 is the one this Overtime writes but another record holds it (a lab run or a second
@@ -325,7 +360,7 @@ def run_job(setup, busy, work, said, stopped, then=None, error=False, rescan=Tru
     ctl = setup.ctl
     part = _part(ctl)
     with ctl.lock:
-        doing = ctl.busy
+        doing = ctl.busy or (getattr(setup, '_launching', False) and 'NHL 19 starting')   # Play writes the patch file
         if not doing:
             ctl.busy = busy
             if error and part is not None:
@@ -504,6 +539,23 @@ def clubart_text(clubs, log=None):
     return ' '.join(words)
 
 
+def in_background(fn):
+    """fn() on a thread of its own, its archive tables cached for that thread (eb.cached_tocs): a Future whose
+    result() is fn's value, or raises what fn raised."""
+    fut = concurrent.futures.Future()
+
+    def run():
+        if not fut.set_running_or_notify_cancel():
+            return
+        try:
+            with eb.cached_tocs():
+                fut.set_result(fn())
+        except BaseException as err:  # noqa: BLE001 - handed to whoever waits (result() raises it)
+            fut.set_exception(err)
+    threading.Thread(target=run, daemon=True, name='patch-roster').start()
+    return fut
+
+
 def one_click(setup, then=None):
     """Patch (Setup's setup_patch; patch_apply is beta1's name): checks, the clean-game record (the first time), the
     data overlay with exactly the switches that are on (one that is off is off: its served layer goes), the eboot
@@ -520,9 +572,19 @@ def one_click(setup, then=None):
         return {'error': text}
     cache = cache_dir()
     on = switches(want, packs_here(cache))
-    box = {}            # the Patch meter, once work() made it
+    box = {}            # the Patch meter, once work() made it; the roster's thread, once it started
 
     def work(step):
+        try:
+            return patch_work(step)
+        finally:
+            # the job never ends while its roster thread runs (a step after it failed, or Stop): another Patch or the
+            # Rosters tab would build or read the cached default (defaultdb) beside it
+            roster = box.get('roster')
+            if roster is not None:
+                concurrent.futures.wait([roster])
+
+    def patch_work(step):
         speed = patchmeter.load(cache)
         meter = box['meter'] = patchmeter.Meter(step, speed['speeds'], amount=patchmeter.patched_text)
         box['last'] = speed['last']
@@ -537,6 +599,9 @@ def one_click(setup, then=None):
         if matchsetup.active():
             raise Refused(MATCH_LOCKED)
         gamesetup.use_game(game_dir)
+        # the default roster is made on its own thread from here: the scan, the texts, the clean record and the
+        # jerseys (other processes) run meanwhile; the 'roster' step only waits for what is left of it
+        roster = box['roster'] = in_background(setup._default_roster) if on['roster'] else None
         if game['title_id'] != gamesetup.TITLE_ID:     # CUSA11116 v1.60 runs CUSA11126's eboot (same sha256, 2026-11-03)
             ctl.host.log(f"NHL 19 {game['title_id']}: eboot.bin sha256 "
                          f"{gamesetup._file_sha(gamefiles.locate(game_dir, 'eboot.bin'))}")
@@ -555,10 +620,14 @@ def one_click(setup, then=None):
             left_out = texts if lang is None else [
                 k for k in texts if lang != textpack.LANG and not overlay.layer_fits(game_dir, k, lang)]
             layers = [k for k in layers if k not in left_out]
+            if on['art']:       # the jerseys of the layer packs on this PC's game files; unchanged: kept
+                patch.make_kits(on, game_dir, cache, log=ctl.host.log, step=meter.say, jobs=kit_jobs,
+                                progress=lambda fam, share: (meter.begin(f'kits:{fam}'),
+                                                             meter.share_of(f'kits:{fam}', share)))
             database = None
-            if on['roster']:
+            if roster is not None:
                 meter.begin('roster')
-                database = setup._default_roster()
+                database = roster.result()
                 meter.rekind('roster', ROSTER_KINDS.get(getattr(setup, 'default_came', None), meter.kind('roster')))
                 layers.append('database')
             now = overlay.status(game_dir)
@@ -576,10 +645,6 @@ def one_click(setup, then=None):
                                                index=index, source=source)
                     if clubs is not None:
                         clubs = dict(clubs, origin=origin, where=where)
-            if on['art']:       # the jerseys of the layer packs on this PC's game files; unchanged: kept
-                patch.make_kits(on, game_dir, cache, log=ctl.host.log, step=meter.say, jobs=kit_jobs,
-                                progress=lambda fam, share: (meter.begin(f'kits:{fam}'),
-                                                             meter.share_of(f'kits:{fam}', share)))
             if on['art']:
                 meter.begin('packs')
                 meter.resize('packs', patch.art_layer_work(on, cache, game_dir))   # the packs just made count none
@@ -657,14 +722,15 @@ def plan_patch(meter, last, on, cache, setup):
     meter.plan('scan', 'time:scan', 1, 'measuring the work...')
     meter.plan('texts', 'time:texts', 1, "reading the game's text...")
     meter.plan('clean', 'time:clean', 1, 'noting the clean game first...')
-    if on['roster']:
+    if on['art']:
+        for fam in KIT_FAMILIES:
+            meter.plan(f'kits:{fam}', 'kits', last.get(f'kits:{fam}', 0),
+                       'making the jerseys on this PC...' if fam == 'pants' else '', writes=True)
+    if on['roster']:    # made on its own thread from the start (one_click): this step waits for what is left
         meter.plan('roster', _roster_kind(setup), 1, f'making the {SEASON_LABEL} default roster...')
     if on['art']:
         meter.plan('clubart', 'clubart', last.get('clubart', 0), 'making the club logos of the roster you play...',
                    writes=True)
-        for fam in KIT_FAMILIES:
-            meter.plan(f'kits:{fam}', 'kits', last.get(f'kits:{fam}', 0),
-                       'making the jerseys on this PC...' if fam == 'pants' else '', writes=True)
         meter.plan('packs', 'check', last.get('packs', 0), 'checking the art packs...')
     meter.plan('build', 'time:build', 1, 'writing the patch files...')
     meter.plan('copy', 'copy', last.get('copy', 0), 'writing the patch files...', writes=True)
@@ -676,9 +742,12 @@ def plan_patch(meter, last, on, cache, setup):
 
 def scan_patch(meter, last, on, game_dir, cache, log):
     """Measure the long steps before they run (the 'scan' step): the game's index (read once, handed to each step that
-    makes textures), the jersey families to make and their work (patch.kit_jobs), the art pack bytes to check, and
-    (the first time: after that, what the last Patch wrote is the better guess, an archive it kept writes nothing) the
-    archives overlay.apply copies and writes. Returns (index, kit jobs)."""
+    makes textures), the jersey families to make and their work (patch.kit_jobs), the art pack bytes to check, and the
+    archives overlay.apply copies and writes, measured now whenever the game's index is read (the art on, or the first
+    Patch): what the last Patch wrote is no guess for them, as one that kept its archives wrote 0 bytes, and a Patch
+    after it that writes the team art again had its GBs left out of the bar until apply measured them (the bar stood at
+    99 % while they were written). An archive apply keeps after all is skipped then: the bar moves on. Returns (index,
+    kit jobs)."""
     meter.begin('scan')
     index = patch._game_index(game_dir) if on['art'] or 'copy' not in last else None
     jobs = patch.kit_jobs(on, game_dir, cache, log=log, index=index) if on['art'] else []
@@ -692,10 +761,10 @@ def scan_patch(meter, last, on, game_dir, cache, log):
             meter.skip(key)     # off, kept as it is, or nothing to make
     if on['art']:
         meter.resize('packs', patch.art_layer_work(on, cache, game_dir))
-    if 'copy' not in last and index is not None:
+    if index is not None:
         layers = [k for k in DATA_LAYERS if on[k]] + (['database'] if on['roster'] else [])
         meter.resize('copy', overlay.copy_size(game_dir, layers, where=index[0]))
-    if 'write' not in last and on['art']:
+    if on['art']:
         size = patch.art_layer_bytes(on, cache, game_dir, jobs, index[1] if index else None)
         meter.resize('write', size)
         meter.resize('verify', size)
@@ -887,7 +956,11 @@ def refresh_network(setup):
         return 'same'
     if overlay.emulator_running() or matchsetup.active():
         return 'later'
-    gamesetup.install(emu, new)
+    try:
+        with game_writes(setup.ctl):
+            gamesetup.install(emu, new)
+    except gamesetup.SetupError:
+        return 'later'          # a job (Patch, Unpatch) writes it now: the next start puts it in
     setup.ctl.host.log(f"Server {setup.server['host']} put into the patch file, network keys on (no Patch needed).")
     return 'written'
 
@@ -907,13 +980,14 @@ def online_minimum(setup):
         raise gamesetup.SetupError('Find NHL 19 in Setup first.')
     if matchsetup.active():
         raise gamesetup.SetupError(MATCH_LOCKED)
-    layers = (overlay.status(game_dir) or {}).get('layers') or {} if game_dir else {}
-    if game_dir and not layers:
-        overlay.apply(game_dir, ('menus',), menus={'news': True})
-    xml = setup._xml()
-    if 'league' not in layers:
-        xml = xmlpatch.bap32_off(xml)           # Seattle in Be a Pro needs the league layer's Lua (local only)
-    manifest = gamesetup.install(emu, xml)
+    with game_writes(setup.ctl):     # not beside a Patch (SetupError: Ready says why)
+        layers = (overlay.status(game_dir) or {}).get('layers') or {} if game_dir else {}
+        if game_dir and not layers:
+            overlay.apply(game_dir, ('menus',), menus={'news': True})
+        xml = setup._xml()
+        if 'league' not in layers:
+            xml = xmlpatch.bap32_off(xml)           # Seattle in Be a Pro needs the league layer's Lua (local only)
+        manifest = gamesetup.install(emu, xml)
     setup.ctl.host.log('Online: the eboot patch, network keys%s put in for online play (no full Patch).'
                        % ('' if layers else ' and the online start'))
     return manifest

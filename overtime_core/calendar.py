@@ -57,8 +57,10 @@ def season_games(client, start_year, codes=None, log=lambda msg: None):
     """[(date, home code, away code)] of every regular-season game of the season starting in `start_year`, one
     request per club (`client`: nhlcom.Client), each game once, sorted by date then NHL.com game id."""
     games = {}
-    for code in sorted(codes or SLOTS):
-        for g in nhlcom.schedule_games(client.club_schedule(code, season_code(start_year))):
+    codes = sorted(codes or SLOTS)
+    asked = nhlcom.each(lambda code: client.club_schedule(code, season_code(start_year)), codes)   # a few at once
+    for body in asked:      # in club order, as one after another
+        for g in nhlcom.schedule_games(body):
             games[g['id']] = (g['date'], g['home'], g['away'])
     out = [games[k] for k in sorted(games, key=lambda k: (games[k][0], k))]
     log(f'NHL.com {season_code(start_year)}: {len(out)} regular-season games')

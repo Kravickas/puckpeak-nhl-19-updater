@@ -84,13 +84,16 @@ def gather_rosters(client, start_year, codes=None, log=lambda msg: None):
     """[real player] of every club (nhlcom.roster_players dicts, 'team' = club code), the season's roster or, before
     NHL.com has it, the current one."""
     from . import nhlcom
-    out = []
-    for code in sorted(codes or calendar.SLOTS):
+
+    def club(code):
         try:
             body = client.roster(code, calendar.season_code(start_year))
         except Exception:  # noqa: BLE001 - NHL.com answers 404 before the season's rosters exist
             body = client.roster(code, 'current')
-        out += nhlcom.roster_players(body, team=code)
+        return nhlcom.roster_players(body, team=code)
+    out = []
+    for rows in nhlcom.each(club, sorted(codes or calendar.SLOTS)):     # a few clubs at once, in club order
+        out += rows
     log(f'NHL.com rosters: {len(out)} players on {len(codes or calendar.SLOTS)} clubs')
     return out
 
@@ -214,6 +217,33 @@ def _absent_row(p, team, number=None):
             'team': team, 'number': number, 'id': p.get('nhl_id'), 'birthplace': p.get('city') or p.get('birthplace')}
 
 
+def _pages_wanted(real_lines, ids, by_id, deals, last_year, players, missing, in_feed, listed):
+    """The NHL ids with_absent's two loops may look up (its own tests, before either loop adds anyone: a few more than
+    it reads, never one less)."""
+    want = set()
+    for entry in (real_lines or {}).values():
+        want |= {v for v in ((entry or {}).get('slots') or {}).values() if v and v not in ids and v not in by_id}
+    for key in set(deals) | set(last_year):
+        deal, last, row = deals.get(key), last_year.get(key), players.get(key)
+        p = dict(row or deal or {}, **(last or {}))
+        if not p.get('nhl_id') or p['nhl_id'] in ids or p.get('pos') not in POSITION_27 + ('L', 'R'):
+            continue
+        if in_feed(p) or not listed and row is not None and row.get('league') != 'nhl':
+            continue
+        if deal is None and (row is None or row.get('league') != 'nhl'):
+            continue
+        if missing(p):
+            want.add(p['nhl_id'])
+    return sorted(want, key=str)
+
+
+def _read_ahead(lookup, wanted):
+    """`lookup` with the pages of `wanted` read a few at a time first (nhlcom.each); any other id is read when asked."""
+    from . import nhlcom
+    pages = dict(zip(wanted, nhlcom.each(lookup, wanted)))
+    return lambda nhl_id: pages[nhl_id] if nhl_id in pages else lookup(nhl_id)
+
+
 def with_absent(real, pack, data=None, real_lines=None, listed=(), lookup=None, log=lambda m: None, farms=None):
     """(NHL.com's rosters `real` + the NHL players its lists leave out, those extra rows, [(AHL club, player)] who go to
     a farm club instead: clubdata.merged). The lists drop injured reserve and some players they should have (the
@@ -247,6 +277,9 @@ def with_absent(real, pack, data=None, real_lines=None, listed=(), lookup=None, 
         return matcher.match_all([row])[0].game is None and face not in faces
     size = collections.Counter(r['team'] for r in real)
     extra, farmed, ids = [], [], {r.get('id') for r in real}
+    if lookup:      # every page the two loops below may read, read a few at once first (each one a request)
+        lookup = _read_ahead(lookup, _pages_wanted(real_lines, ids, by_id, deals, last_year, players, missing, in_feed,
+                                                  listed))
     farm_size = collections.Counter({club: n for club, n in (farms or {}).values()})
 
     def add(row):

@@ -2,6 +2,57 @@
 
 What changed in each version, for players.
 
+## 0.98.1 (2026-11-20)
+
+### Changed
+
+- **The Kravickas build comes straight from his GitHub.** Play NHL 19 checks Kravickas's GitHub for his newest
+  NHL19-Build and downloads it by itself; Get newest on the Boost card gets it now. The card shows which build is the
+  newest.
+- **Jerseys, numbers, logos and photos are made faster on your PC** (none of this changes a byte of them):
+  - a block that comes more than once in a texture is compressed once (about a third of a jersey's patterned blocks
+    repeat, more on numbers and socks): compressing the national pack's 200 made textures took 99 s instead of 156 s
+    on one core, a whole 2048 jersey 1.8 s instead of 2.3 s;
+  - mips of a picture with no see-through parts (3D jerseys, socks, pants) skip the alpha work;
+  - the game's own normal and coeff maps with their old crest covered are made 5 times faster, the flat number
+    normals 10 times;
+  - the player photos the packs lack are made on every core (the roster update); the ones made before are only
+    read.
+- **Patch is faster.** The default roster is made while Patch reads the game and makes the jerseys (after a roster
+  update that is up to about 20 s off the wait), and the new team art archive is hashed while it is written instead
+  of in turn (2 GB written 1.6 times faster in a test; on a hard disk the gain is smaller).
+- **The roster update reads NHL.com all at once.** It asked for one thing at a time, each a second after the one
+  before had answered: the 32 rosters and 32 schedules of a first update (and every player page it reads) took over a
+  minute of waiting. Now they are all asked for at once (those 64 took 0.5 s instead of 79 s in a test where each
+  answer took 0.25 s). When NHL.com says it is too many (429) or has trouble for a moment (5xx), every request waits
+  what it asks and that one is asked again, 4 times at most. What the update gets is the same.
+- **Packs download all at the same time**, and every file inside a pack is read back and checked (its CRC32) before
+  the pack is used. A pack that comes down damaged is downloaded again, 3 times at most.
+- **Submit draw interval 1000.** Overtime sets shadPS4's Submit draw interval (GPU) to 1000 for NHL 19, like
+  Readbacks: Game settings shows it locked, and Unpatch puts your own value back.
+- **Patch's count in the bottom bar has two decimals** (Patched 10.34 GB): it moves every 0.01 GB, about 10 MB,
+  so you see it is still writing.
+
+### Fixed
+
+- **Jersey numbers in two colours have smooth edges.** Where the fill meets the outline, each pixel kept the colour
+  nearest to it, which gave stair-stepped edges, and a team with a third number colour got a thin ring of it there.
+- **Things that ran at the same moment no longer get in each other's way:**
+  - Patch's roster update plans again when you edited the roster while it was getting ready, so it works on the
+    roster as it is now and not as it was;
+  - the window no longer shows an older state after a newer one (a progress bar stepping back, a log that cleared
+    itself) when two updates of the screen crossed;
+  - the game and saves folders cannot be changed while a job (Patch, Save, the roster update) is
+    using them; Setup says to wait;
+  - the patch file is written by one thing at a time: Patch waits while Play is starting NHL 19, and a lobby start,
+    a match setup, the online start's clean-up and the network refresh wait for a Patch (or say to wait) instead of
+    writing over it;
+  - an edit made just as you pressed Save is in the saved roster and no longer shows as unsaved;
+  - two errors at once no longer drop the older half of error.log.
+- **Patch's bar no longer stands at 99 % while the team art is written.** After a Patch that kept the team art as it
+  was, the next one that writes it again left its GBs out of the bar until the write began, so the longest step got
+  the last 1 %. Patch now measures them before it starts.
+
 ## 0.98.0 (2026-11-20)
 
 ### New

@@ -26,8 +26,8 @@ import webbrowser
 from overtime_core import gamefiles, overlay, rosterupdate, tdb, xmlpatch
 
 from .. import SITE, VERSION
-from . import (boost, cachemove, cpucheck, crashreport, emuinput, emusettings, gamesetup, jobs, launch, packdownload,
-               emufile, patch, patch_ctl, paths, pkginstall, preflight, selfupdate)
+from . import (boost, cachemove, cpucheck, crashreport, emuinput, emusettings, emufile, gamesetup, jobs, kravbuild,
+               launch, packdownload, patch, patch_ctl, paths, pkginstall, preflight, selfupdate)
 from .registry import Part
 from .shell import friendly_date
 
@@ -190,6 +190,7 @@ class SetupController(Part):
         self.looked = False     # Check now looked in this session
         self.packs = None       # pack_status() of the last look
         self.boost_table = None     # packdownload.published() of the last look
+        self.krav_table = None      # kravbuild.table() of the last look: the Kravickas build on GitHub
         self.dl = None          # {names, name, part, share} while packs download
         self.dl_stop = False    # a pack switched off while it downloads
         self.asked = set()      # the core asset switches (patch_ctl.PACK_KEYS) switched on here: their packs download
@@ -314,8 +315,13 @@ class SetupController(Part):
                     packs['published'] = None if os.environ.get(patch.ART_ENV) else packdownload.published()
                 except Exception as err:  # noqa: BLE001
                     ctl.host.log(f'The picture packs could not be looked at: {err}')
+
+            def look_krav():            # Kravickas's GitHub, beside latest.json (each waits up to its own timeout)
+                packs['krav'] = None if os.environ.get(patch.ART_ENV) else kravbuild.table()
             worker = threading.Thread(target=look_packs, daemon=True, name='packs-look')
             worker.start()
+            krav = threading.Thread(target=look_krav, daemon=True, name='krav-look')
+            krav.start()
             step(0)
             emus = gamesetup.find_emulators(near=gamesetup.around(game_dir, 2) if game_dir else ())
             emu = emulator if emulator and os.path.isfile(emulator) else (emus[0] if emus else '')
@@ -342,6 +348,7 @@ class SetupController(Part):
             step(3)
             answers = gamesetup.server_answers(host) if emu else (None, '')
             worker.join(15)
+            krav.join(15)
             status = gamesetup.status(emu or None)
             return {
                 'emulators': emus, 'emulator': emu, 'build': build, 'user_dir': user, 'games': games, 'game': game,
@@ -354,6 +361,7 @@ class SetupController(Part):
                 'running': overlay.emulator_running(),
                 'clean': gamesetup.load_clean(),
                 'packs': packs.get('rows'), 'published': packs.get('published'),
+                **({'krav': packs['krav']} if 'krav' in packs else {}),     # not read in time: the last look's stays
             }
 
         def done(found):
@@ -365,6 +373,8 @@ class SetupController(Part):
                 if found['packs'] is not None:
                     self.packs = found['packs']
                     self.boost_table = found.get('published')
+                if 'krav' in found:
+                    self.krav_table = found['krav']
                 if not self.known_emulator() and found['emulator']:
                     self.emulator = found['emulator']   # found: remembered
                     self._remember()
@@ -391,6 +401,8 @@ class SetupController(Part):
         A folder the player set in the Folders list is never overruled, nor OVERTIME_GAME_DIR and OVERTIME_SAVE_DIR
         (tests, the owner's runs). `auto` ('game' / 'saves', just put back to Auto) takes what was found."""
         c = self.ctl
+        if c.busy:      # a job reads the folders: the next look (after it) follows
+            return
         follow = found.get('follow_game')
         if auto == 'game' and not follow and 'OVERTIME_GAME_DIR' not in os.environ:
             ok = [g['path'] for g in found.get('games') or [] if g.get('ok')]
@@ -567,6 +579,8 @@ class SetupController(Part):
             return self.setup_install_pkg(picked)
         game = _game_of(picked)
         by_hand = bool(picked) and not game      # shadPS4 itself picked (not found from the game)
+        if game and self._wait():       # the game folder follows: not under a job that reads it
+            return None
         if game:
             # NHL 19 itself: the game folder is that one, and shadPS4 is the one the player runs (QtLauncher's
             # selected version, else the newest found where the emulator keeps its games)
@@ -597,6 +611,8 @@ class SetupController(Part):
         return {'ok': True}
 
     def setup_set_game(self, path):
+        if self._wait():
+            return None
         self.ctl.set_game_dir(path)
         self._scan()
         return {'ok': True}
@@ -647,7 +663,7 @@ class SetupController(Part):
 
         def work():
             use, kind, game = pkginstall.install(path, game_dir, progress)
-            c.set_game_dir(use)
+            c.set_game_dir(use, job=True)  # this job holds the busy flag
             got = None if emu else self._install_build()
             return use, kind, game, got
 
@@ -805,7 +821,7 @@ class SetupController(Part):
                                f'{self._build_label()} build.')
         build = self.build
         exe = boost.here(build)
-        pub = (self.boost_table or {}).get(boost.BUILDS[build]['pack'])
+        pub = self._published(build)
         if exe and pub is not None and pub.digest != self.boost['sha'].get(build):
             exe = ''                    # a newer build is published: Play gets it first
         return exe, build, ''
@@ -848,6 +864,15 @@ class SetupController(Part):
                   expected=(boost.BoostError,), after=self._boost_done)
         self.ctl.changed('app')
         return {'ok': True}
+
+    def _table_of(self, build):
+        """Where `build` is published, as the last look read it: Kravickas's GitHub (kravbuild) or the release host
+        (latest.json). None: it could not be read."""
+        return self.krav_table if boost.name_of(build) == boost.KRAVICKAS else self.boost_table
+
+    def _published(self, build):
+        """The Release of `build`'s pack the last look found, or None."""
+        return (self._table_of(build) or {}).get(boost.BUILDS[boost.name_of(build)]['pack'])
 
     def _use_own(self, exe):
         with self.ctl.lock:
@@ -1020,6 +1045,8 @@ class SetupController(Part):
         path = (path or '').strip().strip('"')
         if key == 'emulator':
             return self.setup_set_emulator(path)
+        if key in ('game', 'saves') and self._wait():  # not under a job that reads them (before anything is kept)
+            return None
         if key not in FOLDERS or not path:
             return {'error': 'Pick a folder.'}
         use, why = self._check_folder(key, path)
@@ -1047,6 +1074,8 @@ class SetupController(Part):
             return {'error': f'no folder {key}'}
         if key == 'cache':
             return self._cache_move(None)
+        if key in ('game', 'saves') and self._wait():
+            return None
         with self.ctl.lock:
             self.custom.pop(key, None)
             if key == 'data':
@@ -1179,14 +1208,19 @@ class SetupController(Part):
         titles = PACKS
         cache, game_dir = patch_cache(), c.game_dir
         with c.lock:
-            self.dl = {'names': list(names), 'name': names[0], 'part': 0.0, 'share': 0.0, 'switch': switch}
+            self.dl = {'names': list(names), 'name': names[0], 'part': 0.0, 'share': 0.0, 'switch': switch, 'parts': {}}
+
+        parts = {}      # the packs come down at the same time (packdownload.download): each one's share so far
 
         def progress(name, done, total):
             part = min(1.0, done / total) if total else 0.0
-            share = (names.index(name) + part) / len(names) if name in names else part
             with c.lock:
-                self.dl = {'names': list(names), 'name': name, 'part': part, 'share': share, 'switch': switch}
-            c.say(f'Downloading {titles.get(name, (name,))[0]}... {round(part * 100)} %', 'info', share)
+                parts[name] = part
+                share = sum(parts.get(n, 0.0) for n in names) / len(names) if name in names else part
+                self.dl = {'names': list(names), 'name': name, 'part': part, 'share': share, 'switch': switch,
+                           'parts': dict(parts)}
+            what = titles.get(name, (name,))[0] if len(names) == 1 else f'{len(names)} packs'
+            c.say(f'Downloading {what}... {round((part if len(names) == 1 else share) * 100)} %', 'info', share)
             c.changed('setup', 'patch')
 
         def work():
@@ -1215,6 +1249,17 @@ class SetupController(Part):
         busy = busy or ('Downloading the picture packs...' if len(names) > 1 else
                         f'Downloading {titles.get(names[0], (names[0],))[0]}...')
         return self._job(busy, work, said, rescan=False, after=after)
+
+    def _dl_part(self, names):
+        """The share downloaded so far of the first of `names` in the pack download running now (0.0 before its first
+        bytes); None when none of them is downloading."""
+        dl = self.dl
+        if dl is None or not self.ctl.busy:
+            return None
+        for n in names:
+            if n in dl['names']:
+                return (dl.get('parts') or {}).get(n, 0.0)
+        return None
 
     @staticmethod
     def _summary(results, titles):
@@ -1397,10 +1442,9 @@ class SetupController(Part):
     def _boost_card(self, emulator):
         """The Boost performance card: the build choice (the chosen one lit), what Play starts, Update."""
         c = self.ctl
-        table = self.boost_table or {}
         builds = []
         for b, info in boost.BUILDS.items():
-            pub = table.get(info['pack'])
+            pub = self._published(b)
             here = bool(boost.here(b))
             builds.append({'id': b, 'label': info['label'], 'here': here, 'published': pub is not None,
                            'updatable': b in boost.UPDATABLE,
@@ -1425,8 +1469,12 @@ class SetupController(Part):
             text, tone = f'{label}: Play NHL 19 downloads it first{size}.', ''
         elif self.found is None:
             text, tone = 'Looking...', ''
-        elif self.boost_table is None:
-            text, tone = 'The Overtime server does not answer: check your internet connection.', 'caution'
+        elif self._table_of(self.build) is None:
+            text = (kravbuild.OFFLINE if self.build == boost.KRAVICKAS
+                    else 'The Overtime server does not answer: check your internet connection.')
+            tone = 'caution'
+        elif self.build == boost.KRAVICKAS:
+            text, tone = f'{label}: {kravbuild.NONE}', 'caution'
         else:
             text, tone = f'{label}: not available for download yet.', 'caution'
         news, upstream = self._emulator_news() if self.build == boost.KRAVICKAS else ('', '')
@@ -1444,21 +1492,13 @@ class SetupController(Part):
 
     @staticmethod
     def _emulator_news():
-        """(line, tooltip) from the server's watch of Kravickas's builds (latest.json "emulator"): a newer build on
-        GitHub the server has not moved to yet, and how the build stands to upstream shadPS4."""
-        news = packdownload.emulator_news() or {}
-        newer, up = news.get('newer'), news.get('upstream')
-        line = ''
-        if isinstance(newer, dict):
-            when = f' ({newer["date"]})' if isinstance(newer.get('date'), str) else ''
-            line = f'A newer Kravickas build is on GitHub{when}. Overtime moves to it after a test.'
-        tip = ''
-        if isinstance(up, dict) and isinstance(up.get('ahead'), int) and isinstance(up.get('behind'), int):
-            tip = (f"Kravickas's build is upstream shadPS4 plus NHL 19 fixes: {up['ahead']} commits ahead of upstream, "
-                   f"{up['behind']} behind.")
-            if isinstance(up.get('release'), str):
-                tip += f" Upstream's latest release: {up['release']}."
-        return line, tip
+        """(line, tooltip) about the newest Kravickas build on his GitHub (kravbuild's last read): the one Play and
+        Get newest take."""
+        news = kravbuild.info()
+        if not news:
+            return '', ''
+        return (f"Newest on Kravickas's GitHub: {kravbuild.BRANCH} {news['commit']} ({news['date']}).",
+                f"{news['tag']}: {news['page']}" if news['page'] else news['tag'])
 
     # --- Check my CPU (cpucheck.py; the page shows it in Multiplayer > Advanced) ----------------------------------------
     def _cpu_set(self, **changes):
@@ -1738,8 +1778,9 @@ class SetupController(Part):
             c.patch_want[key] = bool(on)
             c.remember(patch=dict(c.patch_want))
             (self.asked.add if on else self.asked.discard)(key)
-            if not on and self.dl is not None and self.dl['name'] in names and not any(
-                    c.patch_want.get(k) for k, v in patch_ctl.ASSET_PACKS.items() if self.dl['name'] in v):
+            dl = self.dl        # the packs come down together: the run stops when no switch on needs one of them
+            if not on and dl is not None and any(n in dl['names'] for n in names) and not any(
+                    c.patch_want.get(k) for k, v in patch_ctl.ASSET_PACKS.items() if any(n in v for n in dl['names'])):
                 self.dl_stop = True
         c.changed('patch')
         if on and self._extras_wanted():
@@ -1807,7 +1848,7 @@ class SetupController(Part):
         c = self.ctl
         rows = {r['name']: r for r in (self.packs if self.packs is not None else local_packs(patch_cache()))}
         found = patch_ctl.packs_here(patch_cache())
-        dl, out = self.dl, []
+        out = []
         busy = bool(c.busy) and not self._extras_running()
         titles = {key: (title, sub) for key, title, sub, _info in patch_ctl.LAYERS}
         infos = {key: info for key, _title, _sub, info in patch_ctl.LAYERS}
@@ -1821,9 +1862,10 @@ class SetupController(Part):
                    'progress': None, 'tag': None, 'tone': '', 'quiet': False,
                    'info': {'title': title, 'text': infos.get(key) or patch_ctl.EXTRA_INFOS.get(key) or sub},
                    'can_remove': bool(r.get('removable')) and not c.busy, 'can_update': False}
-            if dl is not None and c.busy and dl['name'] in names:
-                row.update(tone='info', progress=dl['part'], text=f"Downloading... {round(dl['part'] * 100)} %"
-                                                                  f"{f' of {size}' if size else ''}")
+            part = self._dl_part(names)
+            if part is not None:
+                row.update(tone='info', progress=part, text=f"Downloading... {round(part * 100)} %"
+                                                            f"{f' of {size}' if size else ''}")
             elif wanted and state in WANTED and self._extras_running():
                 row['text'] = 'Waiting for its turn...'
             elif state == 'here' or state == 'newer':
@@ -2241,7 +2283,6 @@ class SetupController(Part):
         """Downloads: one row per pack, and Download all."""
         c = self.ctl
         rows = self.packs if self.packs is not None else local_packs(patch_cache())
-        dl = self.dl
         part = c.parts.get('patch') if hasattr(c, 'parts') else None
         beta1 = part.kits_progress if part is not None and c.busy == getattr(part, 'KITS_BUSY', None) else None
         out = []
@@ -2252,16 +2293,12 @@ class SetupController(Part):
                    'can_download': r['state'] in WANTED and bool(emulator),
                    'tone': {'here': 'good', 'newer': 'info'}.get(r['state'], 'caution'),
                    'text': r.get('text') or _pack_text(r)}
-            turn = dl['names'].index(name) - dl['names'].index(dl['name']) \
-                if dl is not None and c.busy and name in dl['names'] and dl['name'] in dl['names'] else None
-            if turn == 0 or (turn is None and name == KITS and beta1 is not None):
-                share = dl['part'] if turn == 0 else beta1
+            part = self._dl_part([name])        # every pack of the run comes down at the same time
+            if (part is not None and part < 1.0) or (part is None and name == KITS and beta1 is not None):
+                share = part if part is not None else beta1
                 row.update(state='downloading', tone='info', progress=share, can_download=False, can_remove=False,
                            text=f"Downloading... {round(share * 100)} %{f' of {size}' if size else ''}")
-            elif turn is not None and turn > 0:
-                row.update(state='downloading', tone='info', progress=0.0, can_download=False, can_remove=False,
-                           text='Waiting for its turn...')
-            elif turn is not None:      # downloaded in this run: its row shows it once the run ends
+            elif part is not None:      # downloaded in this run: its row shows it once the run ends
                 row.update(can_download=False, can_remove=False, tone='good', text='Downloaded.')
             out.append(row)
         wanted = [r['name'] for r in rows if r['state'] in WANTED and r['name'] not in OPTIONAL]

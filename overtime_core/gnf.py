@@ -1,6 +1,7 @@
 """PS4 GNF textures of NHL 19 (CUSA11126 v1.60): header, GCN tiling (detile / retile), new textures shaped like a
-stock one. Header and tiling are stdlib; making BCn data from a picture uses Pillow (resizing) and bcn (numpy: the
-blocks), decoding to a picture Pillow; both are imported inside those functions only. Facts: docs/notes/gnf-format.md.
+stock one. Header and tiling are stdlib (tiling uses numpy where it is installed: the same bytes, one gather in C);
+making BCn data from a picture uses Pillow (resizing) and bcn (numpy: the blocks), decoding to a picture Pillow; both
+are imported inside those functions only. Facts: docs/notes/gnf-format.md.
 
 GNF (little-endian): "GNF " | u32 contents size (0xf8: data at 8 + that = 0x100) | u8 version 2 | u8 texture count |
 u8 log2 alignment | u8 0 | u32 file size | count x sce::Gnm::Texture (8 dwords, GCN T# image resource; dword 7 holds
@@ -165,13 +166,50 @@ def _order(ew, eh, pitch_e, n, retile):
     return array('I', [e * n + k for e in src for k in range(n)])
 
 
+def _numpy():
+    """numpy, or None where it is not installed (the server: overtime_core stays stdlib there)."""
+    try:
+        import numpy
+    except ImportError:
+        return None
+    return numpy
+
+
+@functools.lru_cache(maxsize=64)
+def _order_np(ew, eh, pitch_e, retile):
+    """_order's elements (not items) as a numpy index, worked out in whole arrays: the same order, in milliseconds
+    instead of the 0.2 - 0.5 s _pairs takes for the mips of a 2048 texture (once per shape and process)."""
+    np = _numpy()
+    tiles_x, tiles_y = _a(pitch_e or ew, 8) // 8, _a(eh, 8) // 8
+    mx = np.array([x for x, _y in MORTON8])
+    my = np.array([y for _x, y in MORTON8])
+    ty, tx, i = np.meshgrid(np.arange(tiles_y), np.arange(tiles_x), np.arange(64), indexing='ij')
+    px, py = (tx * 8 + mx[i]).ravel(), (ty * 8 + my[i]).ravel()  # each tiled element's place in the picture
+    inside = (px < ew) & (py < eh)
+    tiled = np.flatnonzero(inside)
+    linear = py[inside] * ew + px[inside]
+    if retile:
+        src = np.full(len(px), ew * eh, np.intp)
+        src[tiled] = linear
+    else:
+        src = np.zeros(ew * eh, np.intp)
+        src[linear] = tiled
+    src.setflags(write=False)
+    return src
+
+
 def _gather(data, ew, eh, bpe, pitch_e, retile):
     """detile / retile as one gather of whole elements, or None where the plain loop must run (an element size with
-    no copy unit, or data not exactly the length the shape asks for, which the loop handles as it always has)."""
+    no copy unit, or data not exactly the length the shape asks for, which the loop handles as it always has). With
+    numpy: one indexed copy of the elements; without: array items by _order."""
     unit = _UNITS.get(bpe)
     want = ew * eh if retile else _a(pitch_e or ew, 8) * _a(eh, 8)
     if unit is None or len(data) != want * bpe or array(unit[0]).itemsize * unit[1] != bpe:
         return None
+    np = _numpy()
+    if np is not None:
+        src = np.frombuffer(bytes(data) + bytes(bpe) if retile else data, np.dtype((np.void, bpe)))
+        return src[_order_np(ew, eh, pitch_e, retile)].tobytes()
     code, n = unit
     src = memoryview(bytes(data) + (bytes(bpe) if retile else b'')).cast(code)
     out = array(code)
@@ -323,7 +361,10 @@ MIP_FILTER = 'BICUBIC'
 def _mips(img, sizes):
     """Each mip of `img` (RGB / RGBA, already the first mip's size) as (h, w, C) uint8, the first as it is. The others
     are scaled from it with MIP_FILTER in the stored numbers, as the game's own (see MIP_FILTER), in floats and weighted
-    by alpha (a clear pixel's colour does not bleed into its neighbours)."""
+    by alpha (a clear pixel's colour does not bleed into its neighbours). A picture opaque all over (the jerseys,
+    socks and pants) skips its alpha plane: its colours would be weighted by an alpha of 1 and divided by that alpha
+    scaled, which is exactly 1 at every size (checked on 91 sizes, 2048 x 2048 to 1 x 1), so the numbers are the same
+    without it (3 planes scaled instead of 4) and its alpha stays 255."""
     import numpy as np
     from PIL import Image
     first = np.asarray(img, np.uint8)
@@ -332,6 +373,9 @@ def _mips(img, sizes):
         return out
     a = first.astype(np.float32) / 255
     alpha = a[..., 3:] if a.shape[2] == 4 else None
+    opaque = alpha is not None and bool((first[..., 3] == 255).all())
+    if opaque:
+        alpha = None
     rgb = a[..., :3] if alpha is None else a[..., :3] * alpha
     planes = [rgb[..., c] for c in range(3)] + ([alpha[..., 0]] if alpha is not None else [])
     planes = [Image.fromarray(np.ascontiguousarray(p, np.float32), 'F') for p in planes]
@@ -339,6 +383,10 @@ def _mips(img, sizes):
     for size in sizes[1:]:
         small = np.stack([np.asarray(p.resize(size, method), np.float32) for p in planes], -1)
         rgb = small[..., :3]
+        if opaque:
+            out.append(np.concatenate([np.clip(np.rint(rgb * 255), 0, 255).astype(np.uint8),
+                                       np.full(rgb.shape[:2] + (1,), 255, np.uint8)], -1))
+            continue
         if alpha is not None:
             al = np.clip(small[..., 3:], 0, 1)      # a bicubic filter overshoots at hard edges: kept in range
             rgb = np.where(al > 0, rgb / np.maximum(al, 1e-12), 0)

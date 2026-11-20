@@ -158,9 +158,15 @@ def _loop_retile(lin, ew, eh, bpe, pitch_e):
     return bytes(out)
 
 
-def test_tiling_fast_path_is_the_element_loop():
-    """Jersey speed: detile / retile gather whole elements in a cached order; the bytes are the per-element loop's,
-    for every element size, odd shapes, a padded pitch, and short data (which takes the loop itself)."""
+@pytest.mark.parametrize('numpy', [True, False])
+def test_tiling_fast_path_is_the_element_loop(numpy, monkeypatch):
+    """Jersey speed: detile / retile gather whole elements in a cached order (numpy's gather, or array items where
+    numpy is not installed); the bytes are the per-element loop's, for every element size, odd shapes, a padded pitch,
+    and short data (which takes the loop itself)."""
+    if numpy:
+        pytest.importorskip('numpy')
+    else:
+        monkeypatch.setattr(gnf, '_numpy', lambda: None)
     rnd = random.Random(7)
     for bpe in (1, 2, 4, 8, 16, 3, 12):
         for _ in range(25):
@@ -172,6 +178,24 @@ def test_tiling_fast_path_is_the_element_loop():
                 assert gnf.detile_thin1d(data, ew, eh, bpe, pitch) == _loop_detile(data, ew, eh, bpe, pitch)
                 lin = rnd.randbytes(max(0, ew * eh * bpe - cut))
                 assert gnf.retile_thin1d(lin, ew, eh, bpe, pitch) == _loop_retile(lin, ew, eh, bpe, pitch)
+
+
+def test_opaque_pictures_mip_the_same_without_their_alpha():
+    """An opaque picture skips the alpha plane in _mips: its colours are the RGB picture's mips exactly (the alpha
+    weighting and the division by a scaled alpha of exactly 1 change nothing), its alpha 255; one clear pixel takes
+    the weighted path."""
+    pil = pytest.importorskip('PIL.Image')
+    np = pytest.importorskip('numpy')
+    rgb = np.random.default_rng(5).integers(0, 256, (96, 160, 3), dtype=np.uint8)
+    sizes = [(160 >> k, max(1, 96 >> k)) for k in range(8)]
+    plain = gnf._mips(pil.fromarray(rgb, 'RGB'), sizes)
+    opaque = gnf._mips(pil.fromarray(np.dstack([rgb, np.full((96, 160), 255, np.uint8)]), 'RGBA'), sizes)
+    for a, b in zip(plain[1:], opaque[1:]):
+        assert np.array_equal(a, b[..., :3]) and (b[..., 3] == 255).all()
+    alpha = np.full((96, 160), 255, np.uint8)
+    alpha[0, 0] = 0
+    clear = gnf._mips(pil.fromarray(np.dstack([rgb, alpha]), 'RGBA'), sizes)
+    assert clear[1][0, 0, 3] < 255
 
 
 def test_scaled_template_is_k_times_larger():

@@ -124,3 +124,133 @@ def test_match_all_gives_each_game_player_once():
     m = Matcher(GAME)
     out = m.match_all([Person('x', 'Leon', 'Draisaitl', ''), Person('y', 'Leon', 'Draisaitl', '1995-10-27')])
     assert [(r.level, r.game.key if r.game else None) for r in out] == [('none', None), ('exact', 5)]
+
+
+class Slow:
+    """A fetcher that takes `delay` seconds of real time per request and notes how many run at once and when each
+    started."""
+    def __init__(self, body, delay=0.05):
+        import threading
+        self.body, self.delay, self.lock = body, delay, threading.Lock()
+        self.now = self.peak = 0
+        self.starts, self.urls = [], []
+
+    def __call__(self, url):
+        import time
+        with self.lock:
+            self.now += 1
+            self.peak = max(self.peak, self.now)
+            self.starts.append(time.monotonic())
+            self.urls.append(url)
+        time.sleep(self.delay)
+        with self.lock:
+            self.now -= 1
+        return json.dumps(self.body(url) if callable(self.body) else self.body).encode()
+
+
+def test_rosters_of_the_clubs_are_asked_for_at_once_and_come_back_in_club_order():
+    """32 clubs one after another, each waiting a second after the one before had answered, was over a minute of
+    every first update: they are asked for a few at a time now, spaced by their start, and the list is the same."""
+    from overtime_core import calendar, rosterupdate as U
+    fetch = Slow(lambda url: {'forwards': [{'id': 1, 'firstName': {'default': url.split('/')[-2]},
+                                            'lastName': {'default': 'X'}, 'positionCode': 'C'}]})
+    c = nhlcom.Client(fetch=fetch, min_interval=0)
+    got = U.gather_rosters(c, 2026)
+    assert fetch.peak > 1
+    assert [p['team'] for p in got] == sorted(calendar.SLOTS) and [p['first'] for p in got] == sorted(calendar.SLOTS)
+    assert c.requests == len(calendar.SLOTS)
+
+
+def test_club_schedules_are_asked_for_at_once_and_give_the_same_calendar():
+    from overtime_core import calendar
+    games = lambda url: {'games': [{'id': 7, 'gameDate': '2026-10-07', 'homeTeam': {'abbrev': 'TOR'},   # noqa: E731
+                                    'awayTeam': {'abbrev': 'MTL'}, 'gameType': 2},
+                                   {'id': 5, 'gameDate': '2026-10-07', 'homeTeam': {'abbrev': 'EDM'},
+                                    'awayTeam': {'abbrev': 'CGY'}, 'gameType': 2}]}
+    fetch = Slow(games)
+    got = calendar.season_games(nhlcom.Client(fetch=fetch, min_interval=0), 2026)
+    assert fetch.peak > 1
+    assert got == [('2026-10-07', 'EDM', 'CGY'), ('2026-10-07', 'TOR', 'MTL')]
+
+
+def test_requests_asked_for_at_once_still_start_min_interval_apart():
+    """Several threads ask at once: NHL.com still gets at most one request per `min_interval`."""
+    from concurrent.futures import ThreadPoolExecutor
+    fetch = Slow({}, delay=0.01)
+    c = nhlcom.Client(fetch=fetch, min_interval=0.05)
+    with ThreadPoolExecutor(4) as pool:
+        list(pool.map(c.player, range(8)))
+    starts = sorted(fetch.starts)
+    assert c.requests == 8 and min(b - a for a, b in zip(starts, starts[1:])) >= 0.045
+
+
+def _http(code, after=None):
+    import email.message
+    import urllib.error
+    headers = email.message.Message()
+    if after is not None:
+        headers['Retry-After'] = str(after)
+    return urllib.error.HTTPError('https://api-web.nhle.com/v1/x', code, 'no', headers, None)
+
+
+class Answers:
+    """A fetcher answering each path from a list, in turn (an exception is raised)."""
+    def __init__(self, answers):
+        self.answers, self.urls = answers, []
+
+    def __call__(self, url):
+        self.urls.append(url)
+        got = self.answers[url[len(nhlcom.BASE):]].pop(0)
+        if isinstance(got, Exception):
+            raise got
+        return json.dumps(got).encode()
+
+
+def test_too_many_requests_waits_what_nhl_com_asks_and_asks_again():
+    clock = Clock()
+    fake = Answers({'/roster/EDM/current': [_http(429, 2), ROSTER]})
+    c = nhlcom.Client(fetch=fake, clock=clock, sleep=clock.sleep)
+    assert c.roster('EDM') == ROSTER
+    assert clock.slept == [pytest.approx(2.0)] and c.requests == 2
+
+
+def test_a_moment_of_server_trouble_backs_off_doubling_then_gives_up():
+    clock = Clock()
+    fake = Answers({'/roster/EDM/current': [_http(503), _http(502), ROSTER],
+                    '/roster/CGY/current': [_http(503)] * nhlcom.TRIES})
+    c = nhlcom.Client(fetch=fake, clock=clock, sleep=clock.sleep)
+    assert c.roster('EDM') == ROSTER and clock.slept == [pytest.approx(1.0), pytest.approx(2.0)]
+    with pytest.raises(nhlcom.NhlComError, match='503'):
+        c.roster('CGY')
+    assert len([u for u in fake.urls if 'CGY' in u]) == nhlcom.TRIES
+
+
+def test_a_missing_page_is_not_asked_again():
+    clock = Clock()
+    fake = Answers({'/player/5/landing': [_http(404)]})
+    with pytest.raises(nhlcom.NhlComError, match='404'):
+        nhlcom.Client(fetch=fake, clock=clock, sleep=clock.sleep).player(5)
+    assert clock.slept == [] and len(fake.urls) == 1
+
+
+def test_one_too_many_answer_holds_back_the_other_requests_too():
+    """Asked all at once: one 429 makes every request wait, not only the one it answered."""
+    import threading
+    import time
+    starts, first = {}, threading.Event()
+
+    def fetch(url):
+        name = url.rsplit('/', 2)[-2]
+        starts.setdefault(name, []).append(time.monotonic())
+        if name == 'EDM' and len(starts[name]) == 1:
+            first.set()
+            raise _http(429, 0.3)
+        return json.dumps(ROSTER).encode()
+    c = nhlcom.Client(fetch=fetch)
+    t = threading.Thread(target=c.roster, args=('EDM',))
+    t.start()
+    first.wait(5)
+    time.sleep(0.05)
+    c.roster('CGY')
+    t.join()
+    assert starts['CGY'][0] - starts['EDM'][0] >= 0.28 and len(starts['EDM']) == 2

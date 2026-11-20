@@ -168,6 +168,30 @@ def test_font_recolours_the_sheets_three_inks_and_keeps_its_shape(pil):
     assert 'font' in K.WHOLE
 
 
+def test_font_keeps_the_soft_edge_between_a_two_ink_sheets_inks(pil):
+    """A sheet of two inks (fill, outline) and the soft edge between them: each edge pixel lands between the new
+    colours as it was between the old ones (no stair steps, no blend taken for a third ink and painted `mid`)."""
+    img = pil.new('RGBA', (64, 64), (0, 0, 0, 0))
+    img.paste(pil.new('RGBA', (48, 48), (20, 20, 20, 255)), (8, 8))
+    img.paste(pil.new('RGBA', (40, 40), (235, 235, 235, 255)), (12, 12))
+    for x in range(12, 16):                         # a 4 px blend from the outline into the fill
+        v = 20 + (235 - 20) * (x - 11) // 5
+        img.paste(pil.new('RGBA', (1, 40), (v, v, v, 255)), (x, 12))
+    raw = gnf.make(template(64, 64, 'BC3'), img)
+    fill, edge, mid = (245, 188, 79), (20, 22, 90), (200, 0, 0)
+    out = gnf.to_image(K.font(raw, fill, edge, mid)).convert('RGBA')
+    assert near(out.getpixel((32, 32)), fill + (255,), 20) and near(out.getpixel((10, 32)), edge + (255,), 20)
+    ramp = [out.getpixel((x, 32))[:3] for x in range(11, 17)]
+    assert all(a[0] <= b[0] + 6 and a[1] <= b[1] + 6 and a[2] + 6 >= b[2] for a, b in zip(ramp, ramp[1:]))
+    assert len(set(ramp)) >= 4 and not any(near(c, mid, 60) for c in ramp)      # steps between, none in `mid`
+    assert out.getpixel((2, 2))[3] == 0
+
+
+def test_font_inks_between_fill_and_edge_are_no_third_ink():
+    assert K._off_line((128, 128, 128), (235, 235, 235), (20, 20, 20)) < 1
+    assert K._off_line((160, 144, 96), (224, 224, 224), (16, 16, 16)) > K.FONT_GAP      # a stock sheet's gold ink
+
+
 def test_font_shape_takes_the_digits_from_another_sheet_in_the_same_colours(pil):
     """On a 64 px sheet the digits start at row 13 (215 / 1024): above it the sheet's own glyphs stay."""
     other = pil.new('RGBA', (64, 64), (0, 0, 0, 0))

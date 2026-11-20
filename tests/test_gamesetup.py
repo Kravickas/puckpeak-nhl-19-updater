@@ -176,7 +176,7 @@ def test_install_and_remove_leave_nothing_behind(world):
     # a new per-game config starts from the global one; readbacks Precise and readback linear images on for everyone,
     # fullscreen borderless by default (owner 2026-11-10)
     assert cfg['GPU'] == {'full_screen': True, 'full_screen_mode': 'Fullscreen (Borderless)', 'readbacks_mode': 2,
-                          'readback_linear_images_enabled': True}
+                          'readback_linear_images_enabled': True, 'submit_draw_interval': 1000}
     assert gamesetup.network_settings(str(world['user'])) == gamesetup.NETWORK
     assert m['targets']['redirector'] == 'ot.puckpeak.com'
     st = gamesetup.status(str(world['emu']))
@@ -877,20 +877,22 @@ def test_readbacks_precise_over_the_players_value_and_put_back(world):
     assert not gamesetup.readbacks_on(str(world['user']))
     gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     assert _cfg(world)['GPU'] == {'readbacks_mode': 2, 'fsr_enabled': True, 'readback_linear_images_enabled': True,
-                                  'full_screen': True, 'full_screen_mode': 'Fullscreen (Borderless)'}
+                                  'submit_draw_interval': 1000, 'full_screen': True,
+                                  'full_screen_mode': 'Fullscreen (Borderless)'}
     assert gamesetup.readbacks_on(str(world['user']))
     # the player switches to Relaxed after the patch: Play's refresh (install again) puts Precise back, and the value
     # kept for Unpatch stays the one from before Overtime
     cfg = _cfg(world)
     cfg['GPU']['readbacks_mode'] = 0
     cfg['GPU']['readback_linear_images_enabled'] = False
+    cfg['GPU']['submit_draw_interval'] = 0
     cfg['General']['own_edit'] = 1
     path.write_text(json.dumps(cfg), encoding='utf-8')
     gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     assert {k: _cfg(world)['GPU'][k] for k in gamesetup.GPU_SETTINGS} == gamesetup.GPU_SETTINGS
     entry = next(e for e in gamesetup.load_manifest()['files'] if e['path'].endswith('CUSA11126.json'))
-    assert entry['previous_gpu'] == {'readbacks_mode': 1, 'readback_linear_images_enabled': None, 'full_screen': None,
-                                     'full_screen_mode': None}
+    assert entry['previous_gpu'] == {'readbacks_mode': 1, 'readback_linear_images_enabled': None,
+                                     'submit_draw_interval': None, 'full_screen': None, 'full_screen_mode': None}
     gamesetup.remove(running=lambda: False)
     after = _cfg(world)
     assert after['GPU'] == {'readbacks_mode': 1, 'fsr_enabled': True} and after['General']['own_edit'] == 1
@@ -918,11 +920,12 @@ def test_gpu_key_added_later_learns_the_players_value(world):
     gamesetup._save_manifest(m)
     cfg = _cfg(world)
     cfg['GPU']['readback_linear_images_enabled'] = False
+    cfg['GPU']['submit_draw_interval'] = 0
     path.write_text(json.dumps(cfg), encoding='utf-8')
     gamesetup.install(str(world['emu']), xmlpatch.build('localhost'), running=lambda: False)
     entry = next(e for e in gamesetup.load_manifest()['files'] if e['path'].endswith('CUSA11126.json'))
     learned = {k: entry['previous_gpu'][k] for k in gamesetup.GPU_SETTINGS}
-    assert learned == {'readbacks_mode': 1, 'readback_linear_images_enabled': False}
+    assert learned == {'readbacks_mode': 1, 'readback_linear_images_enabled': False, 'submit_draw_interval': 0}
     assert gamesetup.readbacks_on(str(world['user']))
 
 

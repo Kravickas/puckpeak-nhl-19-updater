@@ -3,20 +3,33 @@
 Used by the "Update to today's NHL" pipeline (skeleton): team rosters (`/roster/{TEAM}/current`), player pages
 (`/player/{id}/landing`), the current standings (`/standings/now`, for the list of teams) and club schedules
 (`/club-schedule-season/{TEAM}/{season}`, for the calendar).
-Requests are spaced at least `min_interval` seconds apart; answers are cached in memory and, when `cache_dir` is
-given, on disk as JSON files, for `ttl` seconds (rosters change at most a few times a day).
+Up to WORKERS requests run at once (`each`), each starting at least `min_interval` seconds after the one before (0:
+none). NHL.com saying "too many" (429) or failing for a moment (5xx) makes every request wait what it asks (Retry-After,
+else BACKOFF doubling) and that one is asked again, TRIES times in all. Answers are cached in memory and, when
+`cache_dir` is given, on disk as JSON files, for `ttl` seconds (rosters change at most a few times a day).
 """
+import concurrent.futures
 import hashlib
 import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.request
 
 from . import durable, net
 
 BASE = 'https://api-web.nhle.com/v1'
 ROSTER_TTL = 20 * 60
+# All at once (a first update: 32 rosters, 32 schedules, the player pages it reads), backing off when NHL.com asks.
+# Before, one request at a time, each a second after the one before had answered: the 64 club requests alone were over
+# a minute.
+MIN_INTERVAL = 0.0
+WORKERS = 64
+TRIES = 4                   # a request answered 429 / 5xx is asked again up to 3 times
+BACKOFF = 1.0               # seconds before the first try again without a Retry-After: 1, 2, 4
+MAX_WAIT = 30.0             # the longest Retry-After waited for
+RETRY_CODES = (429, 500, 502, 503, 504)
 USER_AGENT = 'OvertimeRoster/0.1 (+offline NHL 19 roster editor)'
 
 
@@ -31,7 +44,7 @@ def _http_get(url, timeout=20):
 
 
 class Client:
-    def __init__(self, cache_dir=None, ttl=ROSTER_TTL, fetch=None, clock=time.time, min_interval=1.0,
+    def __init__(self, cache_dir=None, ttl=ROSTER_TTL, fetch=None, clock=time.time, min_interval=MIN_INTERVAL,
                  sleep=time.sleep):
         self.cache_dir = cache_dir
         self.ttl = ttl
@@ -40,7 +53,8 @@ class Client:
         self._sleep = sleep
         self.min_interval = min_interval
         self._mem = {}
-        self._last = None
+        self._last = None       # when the last request started (or is due to)
+        self._resume = 0.0      # no request starts before this (NHL.com said 429 / 5xx)
         self._lock = threading.Lock()
         self.requests = 0  # network requests made (tests, report)
 
@@ -76,28 +90,42 @@ class Client:
 
     # --- requests --------------------------------------------------------------------------------
     def get(self, path):
+        """The answer to `path`, cached or asked for (any thread: the lock covers the cache and the start times, not
+        the request itself, so requests of several threads overlap while they still start `min_interval` apart)."""
         url = BASE + path
         with self._lock:
             body = self._cached(url)
             if body is not None:
                 return body
-            if self._last is not None:
-                wait = self.min_interval - (self._clock() - self._last)
-                if wait > 0:
-                    self._sleep(wait)
+        for attempt in range(TRIES):
+            with self._lock:
+                now = self._clock()
+                start = max(now, self._resume)
+                if self._last is not None:
+                    start = max(start, self._last + self.min_interval)
+                self._last = start
+                self.requests += 1
+            if start > now:
+                self._sleep(start - now)
             try:
                 raw = self._fetch(url)
-            except Exception as err:  # network errors, HTTP errors
+                break
+            except urllib.error.HTTPError as err:
+                if err.code not in RETRY_CODES or attempt == TRIES - 1:
+                    raise NhlComError(f"NHL.com: {path}: {err}") from err
+                pause = _retry_after(err)
+                pause = BACKOFF * 2 ** attempt if pause is None else min(pause, MAX_WAIT)
+                with self._lock:            # every request waits, not only this one
+                    self._resume = max(self._resume, self._clock() + pause)
+            except Exception as err:  # network errors
                 raise NhlComError(f"NHL.com: {path}: {err}") from err
-            finally:
-                self._last = self._clock()
-                self.requests += 1
-            try:
-                body = json.loads(raw)
-            except ValueError as err:
-                raise NhlComError(f"NHL.com: {path}: not JSON") from err
+        try:
+            body = json.loads(raw)
+        except ValueError as err:
+            raise NhlComError(f"NHL.com: {path}: not JSON") from err
+        with self._lock:
             self._store(url, body)
-            return body
+        return body
 
     def standings(self):
         return self.get('/standings/now')
@@ -116,6 +144,25 @@ class Client:
     def club_schedule(self, team, season):
         """Every game of a club in a season (`season` as '20262027'), all game types."""
         return self.get(f'/club-schedule-season/{team}/{season}')
+
+
+def _retry_after(err):
+    """The seconds an HTTP error's Retry-After asks for (None: none, or a date)."""
+    try:
+        value = float((err.headers or {}).get('Retry-After'))
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def each(fn, items, workers=WORKERS):
+    """[fn(item)] in the order of `items`, up to `workers` at once (fn asks a Client: it spaces the requests). The
+    first item that raises, in order, raises here, as in a loop."""
+    items = list(items)
+    if workers <= 1 or len(items) < 2:
+        return [fn(item) for item in items]
+    with concurrent.futures.ThreadPoolExecutor(min(workers, len(items)), thread_name_prefix='nhlcom') as pool:
+        return list(pool.map(fn, items))
 
 
 PRESEASON, REGULAR, PLAYOFFS = 1, 2, 3  # gameType

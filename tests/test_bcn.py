@@ -164,3 +164,33 @@ def test_a_channel_of_one_value_is_exact_in_bc3_and_bc5():
     px[..., 3] = 133
     assert (decode('BC3', bcn.encode('BC3', px), 8, 8)[..., 3] == 133).all()
     assert (decode('BC5', bcn.encode('BC5', px[..., :3]), 8, 8)[..., :2] == (10, 200)).all()
+
+
+@pytest.mark.parametrize('fmt', ['BC1', 'BC3', 'BC5', 'BC7'])
+def test_repeated_blocks_are_encoded_once_and_come_out_the_same(fmt, monkeypatch):
+    """A block that comes more than once is encoded once: every block's bytes are what that block gives encoded on its
+    own, in the texture's order."""
+    rng = np.random.default_rng(11)
+    kinds = rng.integers(0, 256, (5, 4, 4, 4), dtype=np.uint8)
+    pick = rng.integers(0, 5, (6, 9))                   # 54 blocks of 5 kinds
+    px = kinds[pick].transpose(0, 2, 1, 3, 4).reshape(24, 36, 4)
+    seen = []
+    real = bcn._distinct
+
+    def counting(b):
+        out = real(b)
+        seen.append(len(out[0]))
+        return out
+    monkeypatch.setattr(bcn, '_distinct', counting)
+    data = bcn.encode(fmt, px)
+    assert seen == [len(np.unique(pick))]
+    size = 8 if fmt == 'BC1' else 16
+    alone = {k: bcn.encode(fmt, kinds[k].reshape(4, 4, 4)) for k in range(5)}
+    assert data == b''.join(alone[k] for k in pick.ravel())
+    assert len(data) == pick.size * size
+
+
+def test_distinct_keeps_the_first_comers_order():
+    b = np.array([[[3]], [[1]], [[3]], [[2]], [[1]]], np.uint8).repeat(16, 1)
+    u, where = bcn._distinct(b)
+    assert u[:, 0, 0].tolist() == [3, 1, 2] and where.tolist() == [0, 1, 0, 2, 1]

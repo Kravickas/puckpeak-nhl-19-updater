@@ -132,7 +132,7 @@ const BOOST_INFO = [
     "Overtime Native v2 (the default): v1 plus six speed changes: GPU readbacks without stalls, faster texture lookups, game threads at higher priority, a quieter log, shaders built in the background and draws recorded on a second thread. New, so tell us when something looks wrong.",
     "Overtime Native v1: Overtime's own build of shadPS4 for NHL 19, with less RAM reserved, lighter controller polling, steadier frames and the fix for the \"Out of order flip IRQ\" crash.",
     'Both Overtime Native builds come with Overtime releases.',
-    "Kravickas: Kravickas's NHL 19 build, with his fix for the same crash. Get newest gets his newest published build now.",
+    "Kravickas: Kravickas's NHL 19 build, with his fix for the same crash: the newest one his GitHub publishes (branch NHL19-Build). Get newest gets it now.",
     'Play downloads the chosen build the first time, and again when a newer one is published.',
     'Saves, patch and ShadNet login stay the same with either build.'] },
   { head: 'Online', items: ['Multiplayer lobbies play on Overtime Native v2 for everyone, whichever build is chosen here.',
@@ -182,7 +182,7 @@ function BoostCard({ s }) {
           onChange=${(v) => call('setup_build', v)}/>
         <span class="su-bacts"><span class="su-bal">Kravickas build:</span>
         <${Button} small kind="link" disabled=${!b.can_update}
-          title=${b.updatable ? "Download Kravickas's newest published build now" : 'For the Kravickas build. Overtime Native v1 and v2 come with Overtime releases: Play NHL 19 gets a new one by itself'}
+          title=${b.updatable ? "Download Kravickas's newest build from his GitHub now" : 'For the Kravickas build. Overtime Native v1 and v2 come with Overtime releases: Play NHL 19 gets a new one by itself'}
           onClick=${() => call('setup_build_update')}>Get newest<//>
         ${(b.builds || []).filter((x) => x.updatable).map((x) => html`<${Button} small kind="link" title=${`The ${x.label} build's source code (GPL-2.0)`}
           onClick=${() => call('setup_boost_source', x.id)}>Source code ↗<//>`)}</span>

@@ -46,7 +46,7 @@ class FakeCtl:
     def remember(self, **kv):
         self.prefs.update(kv)
 
-    def set_game_dir(self, path):
+    def set_game_dir(self, path, job=False):
         self.game_dir = path
 
 
@@ -1515,3 +1515,144 @@ def test_play_comes_back_when_the_game_closes_after_the_log_window(sc, monkeypat
     assert sc.play['state'] == 'ended' and sc.play['log'] == {'patched': True} and not sc.ctl.patch_running
     assert sc.play_state()['text'] == 'Play NHL 19'
     assert max(checks) < SC.PLAY_WATCH_SECONDS + 5   # the log is read in the first window only
+
+
+def test_patch_makes_the_roster_on_its_own_thread():
+    """patch_ctl.in_background: fn runs on another thread (with its own cached archive tables); result() hands back its
+    value, or raises what it raised."""
+    import threading
+    from overtime_core import eb
+    from overtime_roster.app import patch_ctl
+    seen = {}
+
+    def fn():
+        seen['thread'] = threading.current_thread().name
+        seen['cached'] = getattr(eb._tocs, 'cache', None) is not None
+        return 42
+    assert patch_ctl.in_background(fn).result(timeout=10) == 42
+    assert seen == {'thread': 'patch-roster', 'cached': True}
+
+    def bad():
+        raise ValueError('no roster')
+    with pytest.raises(ValueError, match='no roster'):
+        patch_ctl.in_background(bad).result(timeout=10)
+
+
+def test_patch_serves_the_roster_made_beside_the_other_steps(sc, monkeypatch):
+    """The default roster is made on its own thread while the texts and the clean record run; the database layer gets
+    what it made."""
+    import threading
+    from overtime_roster.app import patch_ctl
+    made = []
+
+    def roster(self):
+        made.append(threading.current_thread().name)
+        return b'DB'
+    monkeypatch.setattr(SC.SetupController, '_default_roster', roster)
+    got = []
+    monkeypatch.setattr(SC.SetupController, '_seattle_ready', lambda self, database: got.append(database) or False)
+    monkeypatch.setattr(patch, 'seattle_ice', lambda raw, schema, own, log=None: raw)     # b'DB' is no database
+    sc.ctl.game = types.SimpleNamespace(ok=True, schema=lambda: None)
+    sc.ctl.patch_want = {**sc.ctl.patch_want, 'roster': True}
+    sc.setup_refresh()
+    sc.setup_patch()
+    assert made == ['patch-roster'] and got == [b'DB']
+    assert 'database' in sc.calls['apply'][-1] and sc.ctl.said[-1][1] == 'good'
+    assert patch_ctl  # imported for the fixture's patches
+
+
+def test_patch_that_fails_ends_only_after_its_roster_thread(sc, monkeypatch):
+    """A step after the roster's start fails: the job still waits for the roster thread, so no other job builds or
+    reads the cached default beside it."""
+    import threading
+    import time
+    from overtime_roster.app import patch_ctl
+    done = threading.Event()
+
+    def roster(self):
+        time.sleep(0.5)
+        done.set()
+        return b'DB'
+    monkeypatch.setattr(SC.SetupController, '_default_roster', roster)
+
+    def no_text(game_dir, log=None):
+        raise patch_ctl.Refused('no text file')
+    monkeypatch.setattr(patch_ctl, 'game_text', no_text)
+    sc.ctl.patch_want = {**sc.ctl.patch_want, 'roster': True}
+    sc.setup_refresh()
+    sc.setup_patch()
+    assert done.is_set()                                    # the roster had finished when the job ended
+    assert 'no text file' in sc.ctl.said[-1][0] and not sc.calls['apply']
+    assert not any(t.name == 'patch-roster' for t in threading.enumerate())
+
+
+def test_patch_file_writes_wait_for_a_job_that_writes_them(sc):
+    """A page call (the server field, the Resolution, Ready's bare patch) while Patch or Unpatch runs: the patch file
+    and the overlay are not written beside it. The server change goes in at the next start ('later'); Ready's bare
+    patch says to wait. Once the job is done they write, and the flag is let go."""
+    from overtime_roster.app import patch_ctl
+    installed = sc.world['user'] / 'patches' / 'Overtime' / 'overtime.xml'
+    sc.setup_refresh()
+    sc.setup_patch()
+    before = installed.read_bytes()
+    sc.ctl.busy = patch_ctl.PATCHING
+    sc.setup_set_server('192.168.1.15')
+    assert installed.read_bytes() == before and 'next start' in sc.ctl.said[-1][0]
+    applied = list(sc.calls['apply'])
+    with pytest.raises(gamesetup.SetupError, match='still running'):
+        patch_ctl.online_minimum(sc)
+    assert sc.calls['apply'] == applied and installed.read_bytes() == before
+    assert sc.ctl.busy == patch_ctl.PATCHING
+    sc.ctl.busy = None
+    assert patch_ctl.refresh_network(sc) == 'written' and sc.ctl.busy is None
+    assert SC.xmlpatch.targets(installed.read_text(encoding='utf-8'))['redirector'] == '192.168.1.15'
+
+
+def test_game_writes_nests_in_the_thread_that_holds_it(sc):
+    """Ready holds the flag and refreshes the patch file inside it: the same thread comes in again; another job's
+    flag is refused."""
+    from overtime_roster.app import patch_ctl
+    with patch_ctl.game_writes(sc.ctl, 'Getting ready...'):
+        with patch_ctl.game_writes(sc.ctl):
+            assert sc.ctl.busy == 'Getting ready...'
+        assert sc.ctl.busy == 'Getting ready...'
+    assert sc.ctl.busy is None
+    sc.ctl.busy = 'Saving...'
+    with pytest.raises(gamesetup.SetupError, match='saving is still running'):
+        with patch_ctl.game_writes(sc.ctl):
+            pass
+    assert sc.ctl.busy == 'Saving...'
+
+
+def test_patch_waits_while_play_starts_the_game(sc):
+    """Play writes the patch file and starts shadPS4 under its own flag (_launching): Patch does not start beside it."""
+    sc.setup_refresh()
+    sc._launching = True
+    sc.setup_patch()
+    assert sc.calls['apply'] == [] and 'still running' in sc.ctl.said[-1][0]
+    sc._launching = False
+    sc.setup_patch()
+    assert sc.calls['apply']
+
+
+def test_packs_coming_down_together_each_show_their_own_share(sc, monkeypatch, tmp_path):
+    """packdownload.download runs the packs at the same time: each row shows its own share (no "Waiting for its
+    turn"), the message the share of all of them."""
+    from overtime_roster.app import packdownload
+    _packs_world(sc, monkeypatch, tmp_path)
+    sc.setup_set_emulator(str(sc.world['emu']))
+    seen = {}
+
+    def together(names, cache_dir, progress=None, game_dir=None, **kw):
+        progress('photos.zip', 1, 4)
+        progress('looks.zip', 3, 4)
+        progress('photos.zip', 2, 4)
+        seen['rows'] = {r['name']: r for r in _downloads(sc)['rows']}
+        seen['said'] = list(sc.ctl.said[-1])
+        return [(n, True, 'Downloaded.') for n in names]
+    monkeypatch.setattr(packdownload, 'download', together)
+    sc._download(['looks.zip', 'photos.zip'])
+    rows = seen['rows']
+    assert rows['looks.zip']['progress'] == 0.75 and rows['photos.zip']['progress'] == 0.5
+    assert all(rows[n]['state'] == 'downloading' and 'turn' not in rows[n]['text'] for n in ('looks.zip', 'photos.zip'))
+    assert seen['said'][0] == 'Downloading 2 packs... 62 %'

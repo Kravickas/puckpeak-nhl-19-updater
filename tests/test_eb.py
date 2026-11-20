@@ -82,3 +82,35 @@ def test_cached_tocs_parse_each_archive_once_and_see_a_changed_one(tmp_path, mon
     with eb.EbArchive(out) as arc:      # outside the block: parsed each time
         pass
     assert len(parsed) == 3
+
+
+def test_new_archive_hash_is_the_file_written(tmp_path):
+    """_write hashes on its own thread: the sha256 returned is the one of the bytes on disk."""
+    import hashlib
+    files = {f'data/f{i}.bin': bytes([i]) * (3 << 20) + bytes(i) for i in range(12)}     # more pieces than HASH_AHEAD
+    out = str(tmp_path / 'a.big')
+    sha = eb.new_archive(out, files)
+    assert sha == hashlib.sha256(open(out, 'rb').read()).hexdigest()
+    assert open(out, 'rb').read() == eb.archive_bytes(files)
+
+
+def test_new_archive_that_fails_while_written_leaves_nothing(tmp_path):
+    """A piece that cannot be read stops the write: the error comes up, the hashing thread ends, no file is left."""
+    import threading
+
+    class Broken:
+        def __init__(self, n):
+            self.n = n
+
+        def __len__(self):
+            return self.n
+
+        def read(self):
+            raise OSError('the pack changed')
+    files = {f'data/f{i}.bin': bytes(1 << 20) for i in range(20)}
+    files['data/zz.bin'] = Broken(10)
+    out = str(tmp_path / 'b.big')
+    with pytest.raises(OSError, match='the pack changed'):
+        eb.new_archive(out, files)
+    assert not os.listdir(tmp_path)
+    assert not any(t.name == 'eb-hash' for t in threading.enumerate())

@@ -2,7 +2,7 @@
 import sys
 
 APP_NAME = 'Overtime Roster'
-VERSION = '0.98.0'
+VERSION = '0.98.1'
 __version__ = VERSION
 SITE, SITE_LABEL = 'https://www.puckpeak.com', 'www.puckpeak.com'   # the header's link (shell.open_site)
 DISCORD = 'https://gg.puckpeak.com'     # the Puck Peak Discord (a redirect): Setup's first button, as in Legacy

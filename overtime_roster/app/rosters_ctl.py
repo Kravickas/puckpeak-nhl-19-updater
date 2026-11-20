@@ -43,9 +43,21 @@ class RostersCtl(Part):
         self._fitting = False   # a job reads the saves not read yet
 
     # --- beta1's Source tab ------------------------------------------------------------------------------------------
-    def set_game_dir(self, path):
+    def _job_runs(self, job):
+        """True (and the Help bar says so) while a job runs that is not the caller: Patch and Update read ctl.game and
+        ctl.save_dir between their steps, so the folders are not swapped under them. Call under the lock."""
+        c = self.ctl
+        if not c.busy or job:
+            return False
+        c.say(f'Wait a moment: {str(c.busy).rstrip(". ")} is still running.', 'caution')
+        return True
+
+    def set_game_dir(self, path, job=False):
+        """`job`: the caller is the job holding the busy flag (a PKG install sets the folder it installed)."""
         c = self.ctl
         with c.lock:
+            if self._job_runs(job):
+                return {'error': 'busy'}
             c.game_dir = (path or '').strip().strip('"')
             gamesetup.use_game(c.game_dir)      # its title id names the save folder and the custom config
             c.game = sources.GameData(c.game_dir)
@@ -53,9 +65,11 @@ class RostersCtl(Part):
             c.remember(game_dir=c.game_dir)
         self.refresh_sources()
 
-    def set_save_dir(self, path):
+    def set_save_dir(self, path, job=False):
         c = self.ctl
         with c.lock:
+            if self._job_runs(job):
+                return {'error': 'busy'}
             c.save_dir = (path or '').strip().strip('"')
             c.remember(save_dir=c.save_dir)
         self.refresh_sources()

@@ -101,3 +101,34 @@ def test_a_failing_slice_never_stops_the_pushes(app, monkeypatch):
     assert arrives('rail') is not None               # ... and the pushes went on
     assert any(isinstance(e, ZeroDivisionError) for e in logged)
     assert any(isinstance(e, RuntimeError) for e in logged)
+
+
+def test_every_message_is_numbered_newer_than_the_one_before(app):
+    """The page drops a slice older than the one it has (store.js): ready's answer and the pushes run at once, so each
+    message carries seq, taken as its slices are taken."""
+    host, c, _api = app
+    first = host.first()
+    c.changed('roster')
+    c.say('One')
+    quick, rest = host.take('quick'), host.take('slices')
+    assert first['seq'] < quick['seq'] < rest['seq']
+    c.changed('rail')
+    assert host.take()['seq'] == rest['seq'] + 1
+
+
+def test_ready_twice_at_once_starts_one_pair_of_pushers(app):
+    import threading
+    host, _c, _api = app
+    before = set(threading.enumerate())     # pushers of the other tests' hosts live on (daemon threads)
+    go = threading.Barrier(8)
+
+    def start():
+        go.wait()
+        host.start_pushing()
+    ts = [threading.Thread(target=start) for _ in range(8)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    names = [t.name for t in set(threading.enumerate()) - before]
+    assert names.count('push') == 1 and names.count('push-quick') == 1

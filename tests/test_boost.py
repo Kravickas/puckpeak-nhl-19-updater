@@ -1,5 +1,6 @@
-"""The shadPS4 builds (overtime_roster.app.boost, Setup's Boost performance card, the header's Play NHL 19): Kravickas and
-Nightly from a local release fixture into the app's own folder; QtLauncher's files (apps before 0.90.2)."""
+"""The shadPS4 builds (overtime_roster.app.boost, Setup's Boost performance card, the header's Play NHL 19): Nightly from a
+local release fixture and Kravickas from a local GitHub releases fixture (kravbuild) into the app's own folder;
+QtLauncher's files (apps before 0.90.2)."""
 import hashlib
 import json
 import os
@@ -11,7 +12,7 @@ import zipfile
 import pytest
 
 from overtime_core import art, overlay
-from overtime_roster.app import boost, emufile, gamesetup, packdownload, setup_controller as SC
+from overtime_roster.app import boost, emufile, gamesetup, kravbuild, packdownload, setup_controller as SC
 
 from test_gamesetup import EMU_BYTES
 from test_setup_controller import sc, world  # noqa: F401  (fixtures)
@@ -27,11 +28,23 @@ THEIR_ENTRY = {'codename': 'Local', 'date': '2026-11-01', 'name': 'NHL 19', 'pat
 INSTALL = boost.install         # the real one (test_setup_controller's sc fixture fakes it)
 
 
+def github_release(asset, tag='NHL19-Build-2026-11-14-749170d', when='2026-11-14T10:00:00Z', digest=True,
+                   commit='749170db584d9f229ffe8d58b1af9e51172d4173'):
+    """One release as GitHub's releases list gives it, with `asset` (a file) as kravbuild.ASSET."""
+    data = asset.read_bytes()
+    return {'tag_name': tag, 'name': tag, 'draft': False, 'prerelease': False, 'published_at': when,
+            'target_commitish': commit, 'html_url': f'https://github.com/{kravbuild.REPO}/releases/tag/{tag}',
+            'assets': [{'name': kravbuild.ASSET, 'state': 'uploaded', 'size': len(data),
+                        'browser_download_url': asset.as_uri(),
+                        **({'digest': 'sha256:' + hashlib.sha256(data).hexdigest()} if digest else {})}]}
+
+
 def release(root, content=BUILD, names=(PROGRAM,), nightly=NIGHTLY, native2=NATIVE2):
-    """A release folder with the three builds as packs (nightly / native2 None: that one is not served); latest.json's
+    """A release folder with Overtime Native v1 and v2 as packs of latest.json (nightly / native2 None: that one is not
+    served) and the Kravickas build as the newest release of a GitHub releases list (content=None: none); latest.json's
     URL."""
     (root / 'packs').mkdir(parents=True, exist_ok=True)
-    packs, sums = {}, ''
+    packs, sums, github = {}, '', []
     for name, body in ((boost.PACK, content), (packdownload.NIGHTLY_PACK, nightly),
                        (packdownload.NATIVE2_PACK, native2)):
         if body is None:
@@ -40,11 +53,15 @@ def release(root, content=BUILD, names=(PROGRAM,), nightly=NIGHTLY, native2=NATI
         with zipfile.ZipFile(pack, 'w') as z:
             for member in (names if name == boost.PACK else (PROGRAM,)):
                 z.writestr(member, body)
+        if name == boost.PACK:
+            github.append(github_release(pack))
+            continue
         data = pack.read_bytes()
         packs[name] = {'file': f'packs/{name}', 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
         sums += f"{packs[name]['sha256']}  packs/{name}\n"
     (root / 'latest.json').write_text(json.dumps({'version': '0.30.0', 'packs': packs}))
     (root / 'SHA256SUMS.txt').write_text(sums)
+    (root / 'releases.json').write_text(json.dumps(github))
     return pathlib.Path(root / 'latest.json').as_uri()
 
 
@@ -61,13 +78,16 @@ def launcher(world):  # noqa: F811
 def served(world, monkeypatch):  # noqa: F811
     url = release(world['tmp'] / 'release')
     monkeypatch.setenv('OVERTIME_RELEASE_URL', url)
+    monkeypatch.setenv('OVERTIME_KRAVICKAS_RELEASES', (world['tmp'] / 'release' / 'releases.json').as_uri())
     monkeypatch.delenv('OVERTIME_ART_PACKS', raising=False)
     monkeypatch.setattr(overlay, 'launcher_running', lambda: False)
     monkeypatch.setattr(SC, 'patch_cache', lambda: str(world['tmp'] / 'cache'))
     monkeypatch.setattr(boost, 'install', INSTALL)
     packdownload.forget()
+    kravbuild.forget()
     yield world['tmp'] / 'release'
     packdownload.forget()
+    kravbuild.forget()
 
 
 @pytest.fixture
@@ -255,6 +275,7 @@ def test_a_newer_build_is_offered_and_play_gets_it(sc, served, world, started): 
     sc.setup_play()
     release(served, HEAD + b' newer')
     packdownload.forget()
+    kravbuild.forget()
     sc._scan()
     card = card_of(sc)
     assert next(b for b in card['builds'] if b['id'] == 'kravickas')['newer']
@@ -271,6 +292,7 @@ def test_play_gets_a_newly_published_overtime_native_without_the_update_button(s
     sc.setup_play()
     release(served, native2=HEAD + b' native 2 newer')
     packdownload.forget()
+    kravbuild.forget()
     sc._scan()
     card = card_of(sc)
     assert next(b for b in card['builds'] if b['id'] == 'native2')['newer'] and not card['can_update']
@@ -298,6 +320,7 @@ def test_offline_play_starts_the_build_here(sc, served, world, started):  # noqa
     sc.setup_play()
     (served / 'latest.json').unlink()                               # the release host does not answer
     packdownload.forget()
+    kravbuild.forget()
     sc._scan()
     sc.boost['sha']['native2'] = 'cd' * 32                          # and the record names another build
     sc.boost_table = {packdownload.NATIVE2_PACK: type('R', (), {'digest': 'ef' * 32, 'size': 1})()}
@@ -380,6 +403,7 @@ def test_an_online_ready_switches_to_the_lobby_build_with_no_click_and_keeps_it_
     assert sc.online_boost() == 'already'
     release(served, native2=HEAD + b' newer')
     packdownload.forget()
+    kravbuild.forget()
     sc._scan()
     assert sc.online_boost() == 'on' and pathlib.Path(n).read_bytes() == HEAD + b' newer'
 
@@ -392,3 +416,83 @@ def test_an_online_ready_leaves_the_build_alone_while_shadps4_runs_or_nothing_is
     assert 'Close shadPS4' in sc.online_boost() and sc.emulator == own
     sc.boost_table = {}
     assert sc.online_boost() == 'none published'
+
+
+# --- the Kravickas build from his GitHub (kravbuild.py) --------------------------------------------------------------
+def test_the_newest_nhl19_build_release_with_its_file_is_the_one(tmp_path):
+    zipped = tmp_path / 'a.zip'
+    zipped.write_bytes(b'PK one')
+    old = github_release(zipped, 'NHL19-Build-2026-11-10-aaaaaaa', '2026-11-10T08:00:00Z', commit='a' * 40)
+    new = github_release(zipped, 'NHL19-Build-2026-11-14-749170d', '2026-11-14T10:00:00Z')
+    draft = dict(github_release(zipped, 'NHL19-Build-2026-11-15-bbbbbbb', '2026-11-15T09:00:00Z'), draft=True)
+    other = github_release(zipped, 'nhl-test-2026-11-16-ccccccc', '2026-11-16T09:00:00Z')    # another branch's tag
+    bare = dict(github_release(zipped, 'NHL19-Build-2026-11-17-ddddddd', '2026-11-17T09:00:00Z'), assets=[])
+    table, info = kravbuild.parse([old, draft, other, bare, new])
+    rel = table[kravbuild.PACK]
+    assert rel.exe_url == zipped.as_uri() and rel.digest == hashlib.sha256(b'PK one').hexdigest()
+    assert rel.size == 6 and rel.asset == packdownload.KRAVICKAS_PACK and rel.can_install()
+    assert info == {'tag': 'NHL19-Build-2026-11-14-749170d', 'commit': '749170d', 'date': '2026-11-14',
+                    'page': f'https://github.com/{kravbuild.REPO}/releases/tag/NHL19-Build-2026-11-14-749170d'}
+    assert kravbuild.parse([draft, other, bare]) == ({}, None) and kravbuild.parse({'message': 'rate'}) == ({}, None)
+
+
+def test_a_github_file_without_its_sha256_is_not_installed(tmp_path):
+    zipped = tmp_path / 'a.zip'
+    zipped.write_bytes(b'PK one')
+    table, _info = kravbuild.parse([github_release(zipped, digest=False)])
+    assert not table[kravbuild.PACK].can_install()
+
+
+@pytest.mark.windows_only    # the Kravickas build is a Windows build (boost.BUILDS elsewhere: v2)
+def test_the_github_build_has_its_own_pack_beside_the_lobby_one():
+    # onlineemu keeps shadps4_nhl19.zip (the release host's, when a lobby is pinned to it): the GitHub one never
+    # replaces it in the cache
+    assert boost.BUILDS['kravickas']['pack'] == packdownload.KRAVICKAS_PACK != packdownload.EMULATOR_PACK
+    assert packdownload.KRAVICKAS_PACK in packdownload.TOOL_PACKS
+    assert packdownload.CHECKS[packdownload.KRAVICKAS_PACK] is packdownload.check_emulator
+    assert boost.BUILDS['kravickas']['source'] == 'https://github.com/Kravickas/shadPS4/tree/NHL19-Build'
+
+
+@pytest.mark.windows_only    # the Kravickas build is a Windows build (boost.BUILDS elsewhere: v2)
+def test_the_card_names_the_newest_github_build(sc, served, world):  # noqa: F811
+    sc.setup_set_emulator(str(world['emu']))
+    sc.setup_build('kravickas')
+    card = card_of(sc)
+    assert card['news'] == "Newest on Kravickas's GitHub: NHL19-Build 749170d (2026-11-14)."
+    assert card['upstream'].startswith('NHL19-Build-2026-11-14-749170d: https://github.com/Kravickas/shadPS4/')
+    assert 'downloads it first' in card['text']
+    sc.setup_build('nightly')
+    assert card_of(sc)['news'] == ''
+
+
+@pytest.mark.windows_only    # the Kravickas build is a Windows build (boost.BUILDS elsewhere: v2)
+def test_github_offline_plays_the_build_here_and_says_so_without_one(sc, served, world, started, monkeypatch):  # noqa: F811
+    sc.setup_set_emulator(str(world['emu']))
+    sc.setup_build('kravickas')
+    monkeypatch.setenv('OVERTIME_KRAVICKAS_RELEASES', (served / 'gone.json').as_uri())
+    kravbuild.forget()
+    sc._scan()
+    assert card_of(sc)['text'] == kravbuild.OFFLINE
+    sc.setup_play()                                                 # not here, GitHub away: nothing starts
+    assert started == [] and sc.ctl.said[-1] == (kravbuild.OFFLINE, 'bad')
+    monkeypatch.setenv('OVERTIME_KRAVICKAS_RELEASES', (served / 'releases.json').as_uri())
+    kravbuild.forget()
+    sc.setup_play()
+    k = boost.exe_path('kravickas')
+    assert started == [k]
+    monkeypatch.setenv('OVERTIME_KRAVICKAS_RELEASES', (served / 'gone.json').as_uri())
+    kravbuild.forget()
+    sc._scan()
+    sc.setup_play()                                                 # here: it plays as it is
+    assert started == [k, k] and 'ready' in card_of(sc)['text']
+
+
+@pytest.mark.windows_only    # the Kravickas build is a Windows build (boost.BUILDS elsewhere: v2)
+def test_no_release_on_github_says_so(sc, served, world, started):  # noqa: F811
+    release(served, content=None)
+    kravbuild.forget()
+    sc.setup_set_emulator(str(world['emu']))
+    sc.setup_build('kravickas')
+    assert card_of(sc)['text'] == f'Kravickas: {kravbuild.NONE}' and not card_of(sc)['can_update']
+    sc.setup_play()
+    assert started == [] and sc.ctl.said[-1] == (kravbuild.NONE, 'bad')

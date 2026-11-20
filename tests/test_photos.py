@@ -193,3 +193,26 @@ def test_a_made_portrait_is_kept_and_made_again_only_when_its_inputs_change(tmp_
     photos.supplement(links, [], tmp_path, raw, get=lambda url: headshot(), today=DAY)
     assert calls == [1] and sorted(p.name for p in tmp_path.glob('*.gnf')) != made   # a new encoder: made again
     assert len(list(tmp_path.glob('*.gnf'))) == 1                                      # the old one gone
+
+
+def test_new_portraits_are_made_in_worker_processes_and_kept_ones_read_here(tmp_path, monkeypatch):
+    """Several new photos: made in processes (the BC7 encoder on every core), the same bytes as made here; the next
+    Update reads them back on the calling thread and starts no pool. A small template keeps the test quick."""
+    from overtime_core import workers
+    raw = template(64, 32, 'BC7')
+    links = [link(ANN), link(BOB), link(CY), link(DEE)]
+    pools = []
+    real_pool = workers._process_pool
+    monkeypatch.setattr(workers, '_process_pool', lambda n: pools.append(n) or real_pool(n))
+    monkeypatch.setattr(workers, 'count', lambda: 3)
+    monkeypatch.setenv('OVERTIME_NO_PROCESSES', '0')
+    files, rows, counts = photos.supplement(links, [], tmp_path, raw, get=lambda url: headshot(), today=DAY)
+    assert counts['drawn'] == 4 and len(files) == 4 and pools == [3]        # 4 photos, at most one process each
+    by_key = {photos.picture_key(u): u for *_w, u in links}
+    for data in files.values():
+        assert gnf.Gnf(data).texture.fmt == 'BC7'
+    here = {photos.to_gnf(raw, open(tmp_path / (photos.file_name(k) + '.webp'), 'rb').read()) for k in by_key}
+    assert set(files.values()) == here
+    monkeypatch.setattr(photos, 'to_gnf', lambda *a: pytest.fail('made again'))
+    again = photos.supplement(links, [], tmp_path, raw, get=lambda url: headshot(), today=DAY)
+    assert again[0] == files and pools == [3]

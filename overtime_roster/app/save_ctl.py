@@ -269,7 +269,7 @@ class SaveCtl(Part):
             c.steps = {k: {'state': 'idle', 'text': ''} for k, _ in install.STEPS}
             session, target, name = c.session, c.target, name or c.save_name_text
             slot = c.slot if target == install.TARGET_SAVE else None
-            written = list(session.history)
+        written = []        # the changes in the file: taken in work, under the lock it writes under
         c.changed('save', 'source', 'editor')
         c.say('Saving...', 'info', 0.0)
         order = [k for k, _ in install.STEPS]
@@ -283,6 +283,7 @@ class SaveCtl(Part):
 
         def work():
             with c.lock:  # nobody edits while the roster is written
+                written[:] = session.history    # an edit made after the click is in the file too
                 out = install.run(session, c.game, target, name, c.save_dir, paths.app_dir('exports'),
                                   step=step, log=c.host.log, overwrite=slot)
                 keep = None

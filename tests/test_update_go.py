@@ -13,7 +13,7 @@ import pytest
 from overtime_core import rosterupdate as U, savefile, sfo, tdb
 from overtime_core.roster import Issue
 from overtime_roster.app import controller as C, install, jobs, patch, paths, savegame, sources, update
-from overtime_roster.app import office, update_ctl as UC
+from overtime_roster.app import office, save_ctl as SC, update_ctl as UC
 from overtime_roster.app.session import Change, RosterSession
 
 DATA = os.path.join(os.path.dirname(__file__), 'data')
@@ -742,3 +742,122 @@ def test_the_card_says_the_club_logos_were_skipped(app, monkeypatch, tmp_path):
     lines = {l['part']: l['text'] for l in view(host)['result']['lines']}
     assert lines['Club logos'] == 'Club logos skipped: the club logo pack is not downloaded. Press Update again.'
     assert any(line.startswith('club logos: skipped (') for line in host.lines)
+
+
+def test_go_plans_again_when_the_roster_was_edited_after_its_plan(app, monkeypatch):
+    """The plan is made under the lock and the roster changed under it again later; a page call that edits the roster
+    in between (another thread, the lock is free then) makes the plan stale: Go plans again before it changes the
+    roster, so it never applies a plan made before that edit."""
+    c, host, fakes = app
+    open_roster(c, fakes, 'RosterCustom0')
+    plan = fakes.plan
+
+    def plan_then_edit(db, gathered, aliases=None):
+        out = plan(db, gathered, aliases)
+        if len(fakes.planned) == 1:
+            def edit():                     # the page's edit call, on its own thread, once the lock is free
+                with c.lock:
+                    c.session.history.append(Change('Moved a player'))
+                    c.parts['save'].saved = list(c.session.history)
+            edit_thread = threading.Thread(target=edit)
+            edit_thread.start()
+            fakes.edit_thread = edit_thread
+        return out
+    monkeypatch.setattr(update, 'plan', plan_then_edit)
+    step = UC.UpdateCtl._upd_step
+
+    def upd_step(self, key, state, text=''):
+        step(self, key, state, text)
+        if key == 'plan' and state == 'ok' and getattr(fakes, 'edit_thread', None):
+            fakes.edit_thread.join(5)       # the edit lands between the plan and the change
+    monkeypatch.setattr(UC.UpdateCtl, '_upd_step', upd_step)
+    c.calls['update_go']()
+    assert [h.label for h in c.session.history][:1] == ['Moved a player']
+    assert len(fakes.planned) == 2 and len(fakes.ran) == 1      # planned again on the edited roster, then run
+
+
+def test_the_folders_stay_while_a_job_runs(app, tmp_path):
+    """A page call (Setup's Folders list, Find game) or a look's follow while Patch or Update runs: the game and saves
+    folders a job reads (ctl.game, ctl.save_dir) are not swapped under it. The job that holds the flag itself (a PKG
+    install) still sets the game folder it installed."""
+    c, host, fakes = app
+    other = tmp_path / 'other'
+    other.mkdir()
+    game, saves, kept = c.game_dir, c.save_dir, c.game
+    with c.lock:
+        c.busy = 'Patching the game...'
+    c.set_game_dir(str(other))
+    c.set_save_dir(str(other))
+    c.parts['setup'].folder_set('game', str(other))
+    c.parts['setup'].setup_set_game(str(other))
+    assert (c.game_dir, c.save_dir) == (game, saves) and c.game is kept
+    assert not c.parts['setup'].custom.get('game')
+    c.parts['rosters'].set_game_dir(str(other), job=True)       # the job holding the flag
+    assert c.game_dir == str(other)
+    with c.lock:
+        c.busy = None
+    c.set_save_dir(str(other))
+    assert c.save_dir == str(other)
+
+
+
+def test_two_jobs_failing_at_once_rotate_error_log_once(app, monkeypatch):
+    """Both see a full error.log: only one moves it to error.old.log, so the older half is never overwritten."""
+    c, host, fakes = app
+    monkeypatch.setattr(jobs, 'LOG_MAX', 10000)     # over by the old blocks, a new block alone is far under it
+    path = paths.app_dir('logs', 'error.log')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('OLDEST BLOCK\n' * 1000)
+    both = threading.Barrier(2)
+    real, real_replace = os.path.getsize, os.replace
+    moved = []
+
+    def replace(a, b):
+        if a == path:
+            moved.append(b)
+        return real_replace(a, b)
+
+    def size(p):
+        got = real(p)
+        if p == path:
+            try:
+                both.wait(0.5)      # the old code: the two checks meet here, before either rotates
+            except threading.BrokenBarrierError:
+                pass
+        return got
+    monkeypatch.setattr(os.path, 'getsize', size)
+    monkeypatch.setattr(os, 'replace', replace)
+
+    def fail(i):
+        try:
+            raise ValueError(f'job {i} failed')
+        except ValueError as err:
+            jobs.log_block(err)
+    ts = [threading.Thread(target=fail, args=(i,)) for i in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert len(moved) == 1
+    old = open(path[:-4] + '.old.log', encoding='utf-8').read()
+    assert 'OLDEST BLOCK' in old
+    text = open(path, encoding='utf-8').read() + old
+    assert 'ValueError: job 0 failed' in text and 'ValueError: job 1 failed' in text
+
+
+def test_an_edit_made_while_the_save_job_starts_counts_as_saved(app, monkeypatch):
+    """Edits are not refused while busy: one that lands between Save and its job taking the lock is in the file, so
+    the Save bar must not call it unsaved."""
+    c, host, fakes = app
+    open_roster(c, fakes, 'RosterCustom0')
+    monkeypatch.setattr(SC.overlay, 'emulator_running', lambda: False)
+    inline = jobs.run
+
+    def late_edit(work, done=None, failed=None, expected=()):
+        with c.lock:
+            c.session.history.append(Change('Edited a player'))     # the edit before work() takes the lock
+        return inline(work, done, failed, expected)
+    monkeypatch.setattr(jobs, 'run', late_edit)
+    c.parts['save'].save_start()
+    assert c.busy is None and len(c.session.history) == 1
+    assert c.parts['save'].unsaved() == 0
